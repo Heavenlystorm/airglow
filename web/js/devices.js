@@ -24,7 +24,7 @@ function renderList() {
     const lit = d.zones.filter((z) => z.config.enabled).length;
     const sub = d.online ? `${d.type}, ${lit} of ${d.zones.length} zone${d.zones.length === 1 ? "" : "s"} lit` : (d.error || "Not connected");
     return `<button class="dev-item" role="option" data-dev="${esc(d.id)}" aria-selected="${current === d.id}">
-      <i class="dot ${d.online ? "on" : "off"}"></i><span>${esc(d.name)}</span><span class="sub">${esc(sub)}</span></button>`;
+      <i class="dot ${d.online ? "on" : "off"}"></i><span>${esc(d.name)}${d.experimental ? ` <span class="tag">Experimental</span>` : ""}</span><span class="sub">${esc(sub)}</span></button>`;
   };
   const o = S.state?.openrgb || {};
   setHTML($("#dev-list"), `
@@ -77,6 +77,7 @@ function renderDetail() {
   }
   const how = d.kind === "native" ? "Direct USB connection" : "Through OpenRGB";
   setHTML(box, `<div class="dev-head"><div><h1>${esc(d.name)}</h1><p class="meta">${esc(d.vendor)}, ${esc(d.type)}. ${how}.${d.online ? "" : ` <span style="color:var(--warm)">${esc(d.error || "Not connected")}</span>`}</p></div></div>
+    ${d.experimental ? `<p class="hint warn"><b>Experimental support.</b> This controller follows the same protocol as ones Airglow is tested with, but nobody has confirmed it with Airglow yet.${d.note ? ` ${esc(d.note)}` : ""} If something looks wrong, save a diagnostics report (Settings, About) and open an issue.</p>` : ""}
     <p class="hint">Set how many LEDs each zone has and their shape, so effects line up. If you're not sure, press Identify: the first LED blinks green, then a white dot walks through every LED in order.</p>
     ${d.zones.map(zoneCard).join("")}`);
   if (pendingScroll) { document.getElementById(`zc-${pendingScroll}`)?.scrollIntoView({ block: "center" }); pendingScroll = null; }

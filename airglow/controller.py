@@ -181,10 +181,20 @@ class Controller:
         self.apply()
 
     # ------------------------------------------------------------ fans
+    def _fan_devices(self):
+        """Connected native controllers with fan ports, as (device, hub) pairs."""
+        return [(d, d.hub) for d in self.manager.natives.values()
+                if getattr(d, "hub", None) is not None and d.online and getattr(d.hub, "FAN_PORTS", 0)]
+
+    @property
+    def hubs(self):
+        return [h for _, h in self._fan_devices()]
+
     @property
     def hub(self):
-        dev = self.manager.native("nzxt-hub")
-        return dev.hub if dev and dev.online else None
+        """The first connected fan controller (most rigs have one)."""
+        hubs = self.hubs
+        return hubs[0] if hubs else None
 
     def _hub_ports(self, hub):
         return hub.connected_fans() or list(range(hub.FAN_PORTS))
@@ -195,24 +205,21 @@ class Controller:
         target = fans.target_duty(self.store.curves()[self.effective_curve], temp, cfg["fan_failsafe_duty"])
         duty = fans.step_toward(self.fan_duty, target, cfg["fan_max_step"])
         self.fan_temp, self.fan_target, self.fan_duty = temp, round(target), duty
-        hub = self.hub
-        if hub:
+        for dev, hub in self._fan_devices():
             try:
                 hub.poll()
                 hub.set_fan_duty({p: duty for p in self._hub_ports(hub)})
             except (devices.DeviceError, OSError) as e:
-                log.warning("NZXT hub fans: %s", e)
+                log.warning("%s fans: %s", dev.name, e)
 
     def failsafe(self):
-        hub = self.hub
-        if not hub:
-            return
         duty = self.store.settings()["fan_failsafe_duty"]
-        try:
-            hub.set_fan_duty({p: duty for p in self._hub_ports(hub)})
-            log.info("fans set to failsafe %d%%", duty)
-        except (devices.DeviceError, OSError) as e:
-            log.error("could not set failsafe fan speed: %s", e)
+        for dev, hub in self._fan_devices():
+            try:
+                hub.set_fan_duty({p: duty for p in self._hub_ports(hub)})
+                log.info("%s fans set to failsafe %d%%", dev.name, duty)
+            except (devices.DeviceError, OSError) as e:
+                log.error("could not set failsafe fan speed on %s: %s", dev.name, e)
 
     # ------------------------------------------------------------ sensors
     def _poll_sensors(self):
@@ -226,8 +233,9 @@ class Controller:
         return flat
 
     def _app_readings(self):
-        hub = self.hub
-        rpms = [hub.fans[i]["rpm"] for i in hub.connected_fans()] if hub else []
+        hubs = self.hubs
+        hub = bool(hubs)
+        rpms = [h.fans[i]["rpm"] for h in hubs for i in h.connected_fans()]
         return [
             sensors._meta("app/fan_duty", "Case fan speed", "Fans", "control", "%",
                           self.fan_duty if hub else None, short="Fans"),
@@ -332,7 +340,7 @@ class Controller:
 
     # ------------------------------------------------------------ views
     def snapshot(self):
-        hub = self.hub
+        fan_devs = self._fan_devices()
         a = self.automations
         rules = {r["id"]: r for r in self.store.get_rules()}
         devs = [d.info() for d in self.manager.all().values()]
@@ -349,8 +357,9 @@ class Controller:
             },
             "fans": {"curve": self.effective_curve, "base_curve": self.base_curve, "temp": self.fan_temp,
                      "target": self.fan_target, "duty": self.fan_duty,
-                     "ports": [{"port": i + 1, **hub.fans[i]} for i in hub.connected_fans()] if hub else [],
-                     "hub_online": hub is not None},
+                     "ports": [{"port": i + 1, "device": d.name, **h.fans[i]}
+                               for d, h in fan_devs for i in h.connected_fans()],
+                     "hub_online": bool(fan_devs)},
             "sensors": self.sensors,
             "devices": devs,
             "openrgb": {"enabled": self.store.openrgb_enabled(), "status": self.manager.bridge.status},

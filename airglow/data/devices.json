@@ -1,0 +1,56 @@
+{
+  "_about": "Controllers Airglow drives directly over USB, and NZXT accessory sizes. Facts follow liquidctl and OpenRGB (see THIRD_PARTY_NOTICES.md). Entries marked experimental haven't been confirmed on real hardware with Airglow yet: if you own one, please report how it went. Everything else is reached through OpenRGB.",
+  "native": [
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x2022", "name": "NZXT Control Hub", "led_channels": 5, "fan_ports": 5},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x2006", "name": "NZXT Smart Device V2", "led_channels": 2, "fan_ports": 3, "experimental": true},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x200D", "name": "NZXT Smart Device V2", "led_channels": 2, "fan_ports": 3, "experimental": true},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x200F", "name": "NZXT Smart Device V2", "led_channels": 2, "fan_ports": 3, "experimental": true},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x2001", "name": "NZXT HUE 2", "led_channels": 4, "fan_ports": 0, "experimental": true},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x2002", "name": "NZXT HUE 2 Ambient", "led_channels": 2, "fan_ports": 0, "experimental": true},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x2009", "name": "NZXT RGB & Fan Controller", "led_channels": 2, "fan_ports": 3, "experimental": true},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x200E", "name": "NZXT RGB & Fan Controller", "led_channels": 2, "fan_ports": 3, "experimental": true},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x2010", "name": "NZXT RGB & Fan Controller", "led_channels": 2, "fan_ports": 3, "experimental": true},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x2011", "name": "NZXT RGB & Fan Controller", "led_channels": 0, "fan_ports": 3, "experimental": true,
+     "note": "Fans only: this revision changed its lighting protocol."},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x2019", "name": "NZXT RGB & Fan Controller", "led_channels": 0, "fan_ports": 3, "experimental": true,
+     "note": "Fans only: this revision changed its lighting protocol."},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x201F", "name": "NZXT RGB & Fan Controller", "led_channels": 0, "fan_ports": 3, "experimental": true,
+     "note": "Fans only: this revision changed its lighting protocol."},
+    {"driver": "nzxt", "vid": "0x1E71", "pid": "0x2020", "name": "NZXT RGB & Fan Controller", "led_channels": 6, "fan_ports": 3, "experimental": true},
+
+    {"driver": "aura", "vid": "0x0B05", "pid": "0x19AF", "interface": 2, "name": "ASUS Aura"},
+    {"driver": "aura", "vid": "0x0B05", "pid": "0x18F3", "name": "ASUS Aura", "experimental": true},
+    {"driver": "aura", "vid": "0x0B05", "pid": "0x1939", "name": "ASUS Aura", "experimental": true},
+    {"driver": "aura", "vid": "0x0B05", "pid": "0x1AA6", "name": "ASUS Aura", "experimental": true},
+    {"driver": "aura", "vid": "0x0B05", "pid": "0x1BED", "name": "ASUS Aura", "experimental": true}
+  ],
+  "openrgb_skip": {
+    "nzxt": ["NZXT RGB & Fan Controller", "NZXT Hue 2", "NZXT Control Hub", "NZXT Smart Device"],
+    "aura": ["ASUS TUF", "ASUS ROG", "ASUS PRIME", "ASUS ProArt", "ASUS Aura", "AULA"]
+  },
+  "nzxt_accessories": {
+    "0x01": {"name": "HUE+ LED strip", "leds": 10, "fans": 0},
+    "0x02": {"name": "Aer RGB fan", "leds": 8, "fans": 1},
+    "0x04": {"name": "HUE 2 LED strip (10 LEDs)", "leds": 10, "fans": 0},
+    "0x05": {"name": "HUE 2 LED strip (8 LEDs)", "leds": 8, "fans": 0},
+    "0x06": {"name": "HUE 2 LED strip (6 LEDs)", "leds": 6, "fans": 0},
+    "0x08": {"name": "HUE 2 Cable Comb", "leds": 14, "fans": 0},
+    "0x09": {"name": "HUE 2 Underglow 300 mm", "leds": 15, "fans": 0},
+    "0x0A": {"name": "HUE 2 Underglow 200 mm", "leds": 10, "fans": 0},
+    "0x0B": {"name": "Aer RGB 2 fan 120 mm", "leds": 8, "fans": 1},
+    "0x0C": {"name": "Aer RGB 2 fan 140 mm", "leds": 8, "fans": 1},
+    "0x10": {"name": "Kraken X3 ring", "leds": 8, "fans": 1},
+    "0x11": {"name": "Kraken X3 logo", "leds": 1, "fans": 0},
+    "0x13": {"name": "F120 RGB", "leds": 18, "fans": 1},
+    "0x14": {"name": "F140 RGB", "leds": 18, "fans": 1},
+    "0x15": {"name": "F120 RGB Duo", "leds": 20, "fans": 1},
+    "0x16": {"name": "F140 RGB Duo", "leds": 20, "fans": 1},
+    "0x17": {"name": "F120 RGB Core", "leds": 8, "fans": 1},
+    "0x18": {"name": "F140 RGB Core", "leds": 8, "fans": 1},
+    "0x19": {"name": "F120 RGB Core (case version)", "leds": 8, "fans": 1},
+    "0x1C": {"name": "F280 RGB Core (case version)", "leds": 16, "fans": 2},
+    "0x1D": {"name": "F360 RGB Core (case version)", "leds": 24, "fans": 3},
+    "0x1E": {"name": "Kraken Elite ring", "leds": 24, "fans": 1},
+    "0x1F": {"name": "F420 RGB", "leds": 24, "fans": 3}
+  }
+}

@@ -1,20 +1,38 @@
-"""Unified device layer: native drivers (NZXT Control Hub, ASUS Aura) and OpenRGB devices, all exposed as
-devices with zones. The lighting engine only ever sees zones and LED colour lists.
+"""Unified device layer: native USB drivers (NZXT, ASUS Aura) and OpenRGB devices, all exposed as devices with
+zones. The lighting engine only ever sees zones and LED colour lists.
+
+Which USB controllers get a native driver, and NZXT accessory sizes, live in data/devices.json, so supporting
+another model of a known family is a data change, not a code change.
 """
 
+import json
 import logging
 import re
 import threading
 import time
 
 from . import devices as native
+from . import paths
 from .openrgb import OpenRGBClient, OpenRGBError, ZONE_MATRIX
 
 log = logging.getLogger(__name__)
 
-# NZXT accessory ids (from the hub's LED info report) -> LEDs. Only ids confirmed on real hardware are listed;
-# unknown accessories fall back to the channel maximum and the user sets the count (with the identify sweep).
-NZXT_ACCESSORY_LEDS = {0x1F: 24, 0x19: 8}
+
+def load_registry(path=None):
+    """data/devices.json with hex ids turned into ints."""
+    raw = json.loads((path or paths.PACKAGE_DIR / "data" / "devices.json").read_text(encoding="utf-8"))
+    entries = []
+    for e in raw["native"]:
+        entries.append({**e, "vid": int(e["vid"], 16), "pid": int(e["pid"], 16),
+                        "interface": e.get("interface"), "experimental": bool(e.get("experimental"))})
+    accessories = {int(k, 16): v for k, v in raw["nzxt_accessories"].items()}
+    return {"native": entries, "openrgb_skip": raw.get("openrgb_skip", {}), "nzxt_accessories": accessories}
+
+
+REGISTRY = load_registry()
+# NZXT accessory id (from the hub's LED info report) -> {"name", "leds", "fans"}. Unknown accessories fall back to
+# the channel maximum and the user sets the count (with the identify sweep).
+NZXT_ACCESSORIES = REGISTRY["nzxt_accessories"]
 
 
 class Zone:
@@ -33,6 +51,8 @@ class Zone:
 class Device:
     id = name = vendor = kind = ""
     type_name = "Device"
+    experimental = False      # driver not yet confirmed on real hardware (shown in the Devices tab)
+    note = None
 
     def __init__(self):
         self.zones = []
@@ -56,21 +76,43 @@ class Device:
 
     def info(self):
         return {"id": self.id, "name": self.name, "vendor": self.vendor, "kind": self.kind, "type": self.type_name,
-                "online": self.online, "error": self.error, "zones": [z.info() for z in self.zones]}
+                "online": self.online, "error": self.error, "experimental": self.experimental, "note": self.note,
+                "zones": [z.info() for z in self.zones]}
 
 
-# ---------------------------------------------------------------- native: NZXT Control Hub
+# ---------------------------------------------------------------- native: NZXT HUE 2 family
+
+def nzxt_channel(acc):
+    """One channel's accessory ids -> (LEDs, shape, fans). acc is None before the hub has reported."""
+    if acc is None:
+        return 40, "strip", 1                          # not reported yet
+    if not acc:
+        return 0, "strip", 1                           # nothing plugged in
+    if not all(a in NZXT_ACCESSORIES for a in acc):
+        return 40, "strip", 1                          # unknown accessory: the user sets the count
+    parts = [NZXT_ACCESSORIES[a] for a in acc]
+    leds = min(sum(p["leds"] for p in parts), native.NzxtControlHub.LEDS_PER_CHANNEL)
+    if all(p["fans"] for p in parts):
+        return leds, "fans", sum(p["fans"] for p in parts)
+    return leds, "strip", 1                            # strips, or fans mixed with strips
+
 
 class NzxtDevice(Device):
     id, name, vendor, kind, type_name = "nzxt-hub", "NZXT Control Hub", "NZXT", "native", "Fan and lighting hub"
 
     REPORT_GRACE = 5.0        # seconds to wait for the accessory report before trusting the 40-LED fallback
 
-    def __init__(self, hub=None):
+    def __init__(self, hub=None, dev_id="nzxt-hub", spec=None):
         self._zones, self._zones_for = [], object()
         self._opened_at = None
         super().__init__()
         self.hub = hub or native.NzxtControlHub()
+        self.id = dev_id
+        if spec:
+            self.name, self.experimental, self.note = spec["name"], spec["experimental"], spec.get("note")
+            leds, fans = spec["led_channels"], spec["fan_ports"]
+            self.type_name = ("Fan and lighting hub" if leds and fans else "Fan controller" if fans
+                              else "Lighting controller")
 
     @property
     def zones(self):
@@ -79,7 +121,7 @@ class NzxtDevice(Device):
         waiting = acc is None and (self._opened_at is None or time.monotonic() - self._opened_at < self.REPORT_GRACE)
         key = (acc if acc is not None else None, waiting)
         if key != self._zones_for:
-            self._set_zones(acc if acc else [None] * 5)
+            self._set_zones(acc if acc is not None else [None] * getattr(self.hub, "led_channels", 5))
             for z in self._zones:
                 z.provisional = waiting
             self._zones_for = key
@@ -93,14 +135,7 @@ class NzxtDevice(Device):
         """accessories: per channel a list of accessory ids, or None before the hub has reported."""
         self._zones = []
         for ch, acc in enumerate(accessories):
-            if acc is None:
-                leds, shape, fans = 40, "strip", 1          # not reported yet
-            elif not acc:
-                leds, shape, fans = 0, "strip", 1           # nothing plugged in
-            elif all(a in NZXT_ACCESSORY_LEDS for a in acc):
-                leds, shape, fans = sum(NZXT_ACCESSORY_LEDS[a] for a in acc), "fans", len(acc)
-            else:
-                leds, shape, fans = 40, "strip", 1          # unknown accessory: user sets the count
+            leds, shape, fans = nzxt_channel(acc)
             z = Zone(f"ch{ch + 1}", f"Channel {ch + 1}", 40, leds, shape)
             z.fans = fans
             self._zones.append(z)
@@ -126,9 +161,12 @@ class NzxtDevice(Device):
 class AuraDevice(Device):
     id, name, vendor, kind, type_name = "asus-aura", "ASUS Aura", "ASUS", "native", "Motherboard lighting"
 
-    def __init__(self, aura=None):
+    def __init__(self, aura=None, dev_id="asus-aura", spec=None):
         super().__init__()
         self.aura = aura or native.AsusAura()
+        self.id = dev_id
+        if spec:
+            self.name, self.experimental, self.note = spec["name"], spec["experimental"], spec.get("note")
         self._set_zones()
 
     def _set_zones(self):
@@ -145,8 +183,6 @@ class AuraDevice(Device):
 
     def open(self):
         self.aura.open()
-        if self.aura.model:
-            self.name = "ASUS Aura"
         self._set_zones()
 
     def close(self):
@@ -263,28 +299,58 @@ class OpenRGBBridge:
 
 # ---------------------------------------------------------------- manager
 
+DRIVER_IDS = {"nzxt": "nzxt-hub", "aura": "asus-aura"}
+
+
+def detect_natives(hid_list, registry=None, backend=None):
+    """Native devices for every registry controller in an hid.enumerate() list. One device per physical controller
+    (the first matching interface, or the one the registry names); ids stay "nzxt-hub" / "asus-aura" for the first
+    of a kind, so saved zone settings keep working, then "-2", "-3"."""
+    registry = registry or REGISTRY
+    found, seen, counts = [], set(), {}
+    for spec in registry["native"]:
+        for info in hid_list:
+            if (info.get("vendor_id"), info.get("product_id")) != (spec["vid"], spec["pid"]):
+                continue
+            if spec["interface"] is not None and info.get("interface_number") != spec["interface"]:
+                continue
+            key = (spec["vid"], spec["pid"], info.get("serial_number") or "")
+            if key in seen and spec["interface"] is None:
+                continue                                 # another interface of a controller we already have
+            seen.add(key)
+            drv = spec["driver"]
+            counts[drv] = counts.get(drv, 0) + 1
+            dev_id = DRIVER_IDS[drv] + ("" if counts[drv] == 1 else f"-{counts[drv]}")
+            path = info.get("path")
+            if drv == "nzxt":
+                hub = native.NzxtControlHub(backend, pid=spec["pid"], name=spec["name"],
+                                            led_channels=spec["led_channels"], fan_ports=spec["fan_ports"], path=path)
+                found.append(NzxtDevice(hub, dev_id, spec))
+            elif drv == "aura":
+                aura = native.AsusAura(backend=backend, pid=spec["pid"], interface=spec["interface"], path=path)
+                found.append(AuraDevice(aura, dev_id, spec))
+            log.info("found %s (%04x:%04x)%s", spec["name"], spec["vid"], spec["pid"],
+                     ", experimental support" if spec["experimental"] else "")
+    return found
+
+
 class DeviceManager:
     RECONNECT = 5.0
     RESET_DEBOUNCE = 5.0     # Windows sends two resume broadcasts, and the engine and controller notice the gap too
 
-    def __init__(self, hid_backend=None, natives=None, bridge=None):
+    def __init__(self, hid_backend=None, natives=None, bridge=None, registry=None):
+        registry = registry or REGISTRY
         if natives is None:
-            natives = []
             try:
                 import hid
-                present = {(d["vendor_id"], d["product_id"]) for d in (hid_backend or hid).enumerate()}
-            except Exception:
-                present = set()
-            if (0x1E71, 0x2022) in present:
-                natives.append(NzxtDevice())
-            if (0x0B05, 0x19AF) in present:
-                natives.append(AuraDevice())
+                natives = detect_natives((hid_backend or hid).enumerate(), registry, hid_backend)
+            except Exception as e:  # no USB access must never stop OpenRGB devices from working
+                log.warning("USB device scan failed: %s", e)
+                natives = []
         self.natives = {d.id: d for d in natives}
-        skip = []
-        if "nzxt-hub" in self.natives:
-            skip += ["NZXT RGB & Fan Controller", "NZXT Hue 2", "NZXT Control Hub"]
-        if "asus-aura" in self.natives:
-            skip += ["ASUS TUF", "ASUS ROG", "ASUS PRIME", "ASUS Aura", "AULA"]
+        drivers = {"nzxt" if isinstance(d, NzxtDevice) else "aura" for d in natives
+                   if isinstance(d, (NzxtDevice, AuraDevice))}
+        skip = [name for drv in sorted(drivers) for name in registry["openrgb_skip"].get(drv, [])]
         self.bridge = bridge or OpenRGBBridge(skip=tuple(skip))
         self._last_reconnect = 0.0
         self._last_reset = None

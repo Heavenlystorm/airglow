@@ -28,5 +28,6 @@ def log_dir() -> Path:
     return d
 
 
+PACKAGE_DIR = Path(__file__).resolve().parent     # airglow/ (data files ship inside the package)
 WEB_DIR = resource_dir() / "web"
 ICON_FILE = resource_dir() / "airglow.ico"
