@@ -1,7 +1,9 @@
 # Builds Airglow: runs the tests, packages dist\Airglow\ with PyInstaller, then the Setup.exe with Inno Setup.
 # The version comes from airglow\__init__.py. To sign the exe and the installer, set AIRGLOW_SIGN to a command
 # with {file} where the path goes, e.g.  $env:AIRGLOW_SIGN = 'signtool sign /fd sha256 /a "{file}"'
-$ErrorActionPreference = "Stop"
+# Not "Stop": Windows PowerShell 5.1 would treat any log line a tool writes to stderr as a failure. Every step
+# checks its exit code instead.
+$ErrorActionPreference = "Continue"
 Set-Location $PSScriptRoot
 
 python -m unittest discover -s tests -t . -q
