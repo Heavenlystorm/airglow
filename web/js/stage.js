@@ -5,9 +5,8 @@ import { $, S, clamp, emit, esc, fail, get, on, post } from "./core.js";
 
 const U = 1000;                       // canvas units -> viewBox units
 const VB_W = 1600, VB_H = 1000;
-const FRAME_MS = 66;                  // ~15 fps preview
 
-const st = { selected: null, arranging: false, drag: null, view: { s: 1, ox: 0, oy: 0 }, frames: {}, polling: false };
+const st = { selected: null, arranging: false, drag: null, view: { s: 1, ox: 0, oy: 0 }, frames: {} };
 
 const canvas = () => $("#stage-canvas");
 const svg = () => $("#stage-svg");
@@ -198,24 +197,11 @@ export function paintMini(c) {
   }
 }
 
-async function pollFrames() {
-  if (st.polling) return;
-  st.polling = true;
-  while (true) {
-    const onStage = !$('[data-view="lighting"]').hidden;
-    const onOverview = !$('[data-view="overview"]').hidden && !!document.querySelector(".tile-lighting");
-    const visible = (onStage || onOverview) && document.visibilityState === "visible";
-    const t0 = performance.now();
-    if (visible) {
-      try {
-        const f = await get("/api/frames");
-        st.frames = f.zones;
-        if (onStage) draw();
-        if (onOverview) emit("frames");
-      } catch { /* the state poll reports connection problems */ }
-    }
-    await new Promise((r) => setTimeout(r, Math.max(10, (visible ? FRAME_MS : 500) - (performance.now() - t0))));
-  }
+// LED frames arrive on the live stream (live.js) while a view with the preview is showing.
+function onLiveFrames(f) {
+  st.frames = f.zones;
+  if (!$('[data-view="lighting"]').hidden) draw();
+  if (!$('[data-view="overview"]').hidden) emit("frames");
 }
 
 // ------------------------------------------------------------ interaction
@@ -315,5 +301,5 @@ export function initStage() {
   });
   on("zones", () => { renderOverlay(); draw(); });
   renderOverlay();
-  pollFrames();
+  on("frames:live", onLiveFrames);
 }

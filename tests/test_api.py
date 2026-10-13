@@ -47,6 +47,26 @@ class ApiTests(unittest.TestCase):
         except ValueError:
             return resp.status, data
 
+    def test_event_stream_sends_state_then_frames(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/api/stream?frames=1", headers={"Host": f"127.0.0.1:{self.port}"})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        self.assertTrue(resp.getheader("Content-Type").startswith("text/event-stream"))
+        events, current = {}, None
+        while len(events) < 2:
+            line = resp.fp.readline().decode().rstrip("\n")
+            if line.startswith("event: "):
+                current = line[7:]
+            elif line.startswith("data: ") and current:
+                events[current] = json.loads(line[6:])
+        conn.close()
+        self.assertIn("scene", events["state"])
+        self.assertIn("zones", events["frames"])
+
+    def test_event_stream_checks_the_host_too(self):
+        self.assertEqual(self.request("GET", "/api/stream", host="evil.example")[0], 403)
+
     def test_state(self):
         status, s = self.request("GET", "/api/state")
         self.assertEqual(status, 200)

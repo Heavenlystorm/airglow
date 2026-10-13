@@ -10,11 +10,12 @@ import mimetypes
 import os
 import re
 import socket
+import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, autostart, conflicts, fancontrol, paths, system, updates
+from . import __version__, autostart, conflicts, diagnostics, fancontrol, paths, system, updates
 from .automation import validate_rule
 from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP
 from .lighting import effects, geometry
@@ -22,6 +23,8 @@ from .lighting import effects, geometry
 log = logging.getLogger(__name__)
 CSRF_HEADER = "X-Airglow"
 MAX_BODY = 256 * 1024
+STREAM_STATE_EVERY = 2.0      # seconds between state events on /api/stream
+STREAM_FRAME_EVERY = 1 / 15   # LED frames for the live preview, when the page asks for them
 # Windows' registry can map .js to text/plain, which browsers refuse to run as a module.
 TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
          ".svg": "image/svg+xml", ".ico": "image/x-icon", ".png": "image/png", ".json": "application/json"}
@@ -39,9 +42,14 @@ class Server(ThreadingHTTPServer):
 
     def __init__(self, port, ctrl, store, hooks=None):
         self.ctrl, self.store, self.hooks = ctrl, store, hooks or {}
+        self.stopping = threading.Event()        # ends open event streams
         super().__init__(("127.0.0.1", port), Handler)
         bound = self.server_address[1]          # differs from `port` when port=0 (tests)
         self.allowed_hosts = {f"127.0.0.1:{bound}", f"localhost:{bound}"}
+
+    def shutdown(self):
+        self.stopping.set()
+        super().shutdown()
 
     def server_bind(self):
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
@@ -88,6 +96,8 @@ class Handler(BaseHTTPRequestHandler):
             path = parsed.path
             if method == "POST" and self.headers.get(CSRF_HEADER) != "1":
                 raise ApiError(403, "missing request header")
+            if method == "GET" and path == "/api/stream":
+                return self._stream(urllib.parse.parse_qs(parsed.query))
             if path.startswith("/api/"):
                 body = self._body() if method == "POST" else None
                 return self._send(200, route(self.server, method, path, body, urllib.parse.parse_qs(parsed.query)))
@@ -101,6 +111,41 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             log.exception("API error on %s %s", method, self.path)
             self._send(500, {"error": "Airglow hit an internal error. Details are in the log folder (Settings, About)."})
+
+    def _stream(self, query):
+        """Server-sent events: "state" every couple of seconds (what GET /api/state returns), and "frames" for the
+        live preview when the page passes frames=1. Replaces polling; the page reconnects with other options
+        when it needs frames or not, and closes the stream while the window is hidden."""
+        want_frames = (query.get("frames") or ["0"])[0] == "1"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        server, ctrl = self.server, self.server.ctrl
+
+        def send(event, data):
+            self.wfile.write(f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode())
+            self.wfile.flush()
+
+        last_state, last_frame = 0.0, None
+        try:
+            self.wfile.write(b"retry: 2000\n\n")
+            while not server.stopping.is_set():
+                now = time.monotonic()
+                if now - last_state >= STREAM_STATE_EVERY:
+                    send("state", route(server, "GET", "/api/state", None))
+                    last_state = now
+                if want_frames and ctrl.engine.frame_id != last_frame:
+                    last_frame = ctrl.engine.frame_id
+                    send("frames", {"id": last_frame, "fps": round(ctrl.engine.fps, 1), "zones": ctrl.engine.frames})
+                server.stopping.wait(STREAM_FRAME_EVERY if want_frames else 0.25)
+        except (OSError, ValueError):
+            pass                                  # the page went away
+        except Exception:                         # headers are out, so no error response is possible: just end
+            log.exception("event stream failed")
 
     def _static(self, path):
         rel = "index.html" if path in ("", "/") else urllib.parse.unquote(path).lstrip("/")
@@ -274,6 +319,11 @@ def route(server, method, path, body, query=None):
         if hooks.get("show_window"):
             hooks["show_window"]()
         return {"ok": True}
+    if path == "/api/diagnostics":
+        report = diagnostics.write(ctrl, store)
+        if body.get("show", True) and hooks.get("reveal"):
+            hooks["reveal"](report)
+        return {"path": str(report), "name": report.name}
     if path == "/api/open/logs":
         os.startfile(paths.log_dir())  # noqa: S606 - opens our own log folder in Explorer
         return {"ok": True}

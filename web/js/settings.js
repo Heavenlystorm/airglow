@@ -44,6 +44,7 @@ export function renderSettings() {
     </section>
     <section class="set-group"><h2>About</h2>
       ${row(`Airglow ${esc(v.version)}`, `Free and open source under the MIT licence. Settings and logs are stored in <span class="path">${esc(v.data_dir)}</span>`, `<button class="btn" id="s-logs">Open log folder</button>`)}
+      ${row("Diagnostics report", "For a bug report: what Airglow found, its settings, a sensor list and the logs, in one zip. Your user name, PC name and device serial numbers are taken out. Nothing is sent; you attach it yourself.", `<button class="btn" id="s-diag">Save a report</button>`)}
       ${v.updates_available ? row("Updates", "Checks GitHub for a newer release. Airglow never goes online unless you press this.", `<button class="btn" id="s-update">Check for updates</button>`) : ""}
       ${row("Welcome guide", "Shows what Airglow found on this PC and what to check.", `<button class="btn quiet" id="s-welcome">Show it again</button>`)}
     </section>`);
@@ -79,6 +80,7 @@ export function initSettings() {
     const u = e.target.closest("#s-unit [data-v]");
     if (u) save({ temp_unit: u.dataset.v });
     if (e.target.closest("#s-logs")) post("/api/open/logs").catch(fail);
+    if (e.target.closest("#s-diag")) post("/api/diagnostics", {}).then((r) => toast(`Saved ${r.name}. Explorer shows where.`)).catch(fail);
     if (e.target.closest("#s-welcome")) openWelcome();
     if (e.target.closest("#s-update")) {
       post("/api/updates/check").then((r) => toast(r.newer ? `Airglow ${r.latest} is available. Download it from the GitHub releases page.` : `You have the latest version (${r.current}).`)).catch(fail);

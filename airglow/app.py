@@ -4,6 +4,7 @@ import ctypes
 import logging
 import logging.handlers
 import os
+import subprocess
 import sys
 import threading
 import urllib.request
@@ -127,7 +128,9 @@ def main(argv=None):
     from .window import Window
 
     window = None
-    hooks = {"show_window": lambda: window and window.show()}
+    hooks = {"show_window": lambda: window and window.show(),
+             # show a saved diagnostics report in Explorer, selected
+             "reveal": lambda f: subprocess.Popen(["explorer", "/select,", str(f)])}
     server = start_server(port, ctrl, store, hooks)
     if server is None:
         message_box(f"Ports {port} to {port + PORT_TRIES - 1} are all used by other programs, so Airglow can't "
