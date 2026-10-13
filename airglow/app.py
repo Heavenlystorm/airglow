@@ -36,6 +36,38 @@ def single_instance():
     return ctypes.get_last_error() != 183          # ERROR_ALREADY_EXISTS
 
 
+PORT_TRIES = 20               # if the saved port is taken by another program, try the next ones
+
+
+def port_file():
+    """Where the running copy writes the port it actually listens on (a second launch reads it)."""
+    return paths.data_dir() / "port"
+
+
+def running_port(default):
+    try:
+        return int(port_file().read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return default
+
+
+def start_server(port, ctrl, store, hooks, tries=PORT_TRIES):
+    """Listen on the saved port, or the next free one. Returns the server, or None if they're all taken."""
+    for p in range(port, min(port + tries, 65536)):
+        try:
+            server = api.Server(p, ctrl, store, hooks)
+        except OSError:
+            continue
+        if p != port:
+            log.warning("port %d is used by another program; Airglow is on %d this time", port, p)
+        try:
+            port_file().write_text(str(p), encoding="ascii")
+        except OSError as e:
+            log.warning("could not record the port: %s", e)
+        return server
+    return None
+
+
 def ask_running_instance_to_show(port):
     ctypes.windll.user32.AllowSetForegroundWindow(-1)   # ASFW_ANY: let the running copy take focus
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/window/show", data=b"{}", method="POST",
@@ -69,7 +101,7 @@ def main(argv=None):
 
     if not single_instance():
         if not background:
-            ask_running_instance_to_show(port)
+            ask_running_instance_to_show(running_port(port))
         return 0
 
     try:
@@ -96,12 +128,12 @@ def main(argv=None):
 
     window = None
     hooks = {"show_window": lambda: window and window.show()}
-    try:
-        server = api.Server(port, ctrl, store, hooks)
-    except OSError:
-        message_box(f"Port {port} is already used by another program, so Airglow can't start.\n\n"
-                    f"Change \"port\" in {paths.data_dir() / 'config.json'} and try again.")
+    server = start_server(port, ctrl, store, hooks)
+    if server is None:
+        message_box(f"Ports {port} to {port + PORT_TRIES - 1} are all used by other programs, so Airglow can't "
+                    f"start.\n\nChange \"port\" in {paths.data_dir() / 'config.json'} and try again.")
         return 1
+    port = server.server_address[1]
 
     ctrl.start()
     threading.Thread(target=server.serve_forever, name="api", daemon=True).start()

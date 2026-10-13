@@ -1,8 +1,10 @@
 """Minimal OpenRGB SDK client (network protocol, written from the published spec).
 
-We ask for protocol version 3; servers encode controller data for the version the client asks for, so this
-works with OpenRGB 0.6 through 1.x. Only what Airglow needs is implemented: list controllers, switch to
-direct ("custom") mode, resize ARGB zones, and push LED colours.
+We ask for protocol version 5 (OpenRGB 1.0) and the server answers with the highest version both sides know, so
+this works with OpenRGB 0.6 through 1.x. Version 4 adds zone segments (e.g. the fans on one ARGB header) and 5 adds
+zone and controller flags. Controller data is checked to parse exactly; if a newer layout ever doesn't, Airglow asks
+for that controller again in protocol 3, which every supported server speaks. Only what Airglow needs is
+implemented: list controllers, switch to direct ("custom") mode, resize ARGB zones, and push LED colours.
 """
 
 import logging
@@ -13,7 +15,9 @@ import threading
 log = logging.getLogger(__name__)
 
 MAGIC = b"ORGB"
-CLIENT_PROTOCOL = 3
+CLIENT_PROTOCOL = 5
+FALLBACK_PROTOCOL = 3
+NO_LED = 0xFFFFFFFF                # empty cell in a matrix map
 
 REQUEST_CONTROLLER_COUNT = 0
 REQUEST_CONTROLLER_DATA = 1
@@ -73,7 +77,18 @@ class _Reader:
 
 
 def parse_controller(data, version):
-    """Decode a REQUEST_CONTROLLER_DATA reply into a plain dict."""
+    """Decode a REQUEST_CONTROLLER_DATA reply into a plain dict. Raises OpenRGBError if the data doesn't match
+    the layout of that protocol version exactly."""
+    try:
+        ctrl, used = _parse_controller(data, version)
+    except (struct.error, IndexError, UnicodeDecodeError) as e:
+        raise OpenRGBError(f"couldn't read controller data (protocol {version}): {e}") from None
+    if used != len(data):
+        raise OpenRGBError(f"controller data has {len(data) - used} unexpected bytes (protocol {version})")
+    return ctrl
+
+
+def _parse_controller(data, version):
     r = _Reader(data)
     r.take("I")                                        # data size
     ctrl = {"type": r.take("i"), "name": r.string()}
@@ -101,9 +116,18 @@ def parse_controller(data, version):
         z = {"name": r.string(), "type": r.take("i")}
         z["leds_min"], z["leds_max"], z["leds_count"] = r.take("III")
         matrix_len = r.take("H")
+        z["matrix"] = None
         if matrix_len:
             h, w = r.take("II")
-            r.take(f"{h * w}I") if h * w else None
+            cells = r.take(f"{h * w}I") if h * w else ()
+            cells = (cells,) if isinstance(cells, int) else cells
+            z["matrix"] = {"rows": h, "cols": w, "map": [-1 if c == NO_LED else c for c in cells]}
+        z["segments"] = []
+        if version >= 4:
+            for _ in range(r.take("H")):
+                z["segments"].append({"name": r.string(), "type": r.take("i"), "start": r.take("I"),
+                                      "count": r.take("I")})
+        z["flags"] = r.take("I") if version >= 5 else 0
         zones.append(z)
     ctrl["zones"] = zones
     leds = []
@@ -115,8 +139,12 @@ def parse_controller(data, version):
     raw = r.take(f"{n}I") if n else ()
     raw = (raw,) if isinstance(raw, int) else raw
     ctrl["colors"] = [(c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF) for c in raw]
+    ctrl["led_display_names"], ctrl["flags"] = [], 0
+    if version >= 5:
+        ctrl["led_display_names"] = [r.string() for _ in range(r.take("H"))]
+        ctrl["flags"] = r.take("I")
     ctrl["type_name"] = DEVICE_TYPES[ctrl["type"]] if 0 <= ctrl["type"] < len(DEVICE_TYPES) else "Device"
-    return ctrl
+    return ctrl, r.i
 
 
 # ---------------------------------------------------------------- client
@@ -211,10 +239,23 @@ class OpenRGBClient:
             count = struct.unpack("<I", self._request(0, REQUEST_CONTROLLER_COUNT)[:4])[0]
             out = []
             for i in range(count):
-                payload = struct.pack("<I", self.version) if self.version >= 1 else b""
-                out.append({"index": i, **parse_controller(self._request(i, REQUEST_CONTROLLER_DATA, payload), self.version)})
+                out.append({"index": i, **self._controller(i)})
             self.devices_changed = False
             return out
+
+    def _controller(self, i):
+        """One controller's data; the server encodes it for the version we ask for, so a newer layout we can't
+        read is asked for again in the oldest version we fully support."""
+        version = self.version
+        payload = struct.pack("<I", version) if version >= 1 else b""
+        try:
+            return parse_controller(self._request(i, REQUEST_CONTROLLER_DATA, payload), version)
+        except OpenRGBError as e:
+            if version <= FALLBACK_PROTOCOL or not self.connected:
+                raise
+            log.warning("OpenRGB controller %d: %s; asking again in protocol %d", i, e, FALLBACK_PROTOCOL)
+            data = self._request(i, REQUEST_CONTROLLER_DATA, struct.pack("<I", FALLBACK_PROTOCOL))
+            return parse_controller(data, FALLBACK_PROTOCOL)
 
     def set_custom_mode(self, dev_idx):
         with self._lock:

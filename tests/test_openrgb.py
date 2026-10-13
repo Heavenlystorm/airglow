@@ -11,9 +11,12 @@ def s(text):
     return struct.pack("<H", len(b)) + b
 
 
-def controller_blob(version=3, name="NZXT RGB & Fan Controller", zones=(("Channel 1", 1, 0, 40, 24),)):
-    """Encode a controller the way the OpenRGB server does for protocol <= 3."""
-    body = struct.pack("<i", 4) + s(name)
+def controller_blob(version=3, name="NZXT RGB & Fan Controller", zones=(("Channel 1", 1, 0, 40, 24),),
+                    segments=(), matrix=None, ctype=4, drift=False):
+    """Encode a controller the way the OpenRGB server does (layout from Documentation/OpenRGBSDK.md).
+    segments: (name, start, count) for the first zone; matrix: (rows, cols, cells) for the first zone;
+    drift: add a field this client doesn't know, as a future server might."""
+    body = struct.pack("<i", ctype) + s(name)
     if version >= 1:
         body += s("NZXT")
     body += s("desc") + s("1.0") + s("SER123") + s("HID: /dev")
@@ -27,11 +30,27 @@ def controller_blob(version=3, name="NZXT RGB & Fan Controller", zones=(("Channe
     body += struct.pack("<II", 0, 1) + struct.pack("<H", 0)
     body += struct.pack("<H", len(zones))
     total = 0
-    for zname, ztype, lmin, lmax, count in zones:
-        body += s(zname) + struct.pack("<iIII", ztype, lmin, lmax, count) + struct.pack("<H", 0)
+    for zi, (zname, ztype, lmin, lmax, count) in enumerate(zones):
+        body += s(zname) + struct.pack("<iIII", ztype, lmin, lmax, count)
+        if zi == 0 and matrix:
+            rows, cols, cells = matrix
+            body += struct.pack("<H", 8 + 4 * len(cells)) + struct.pack("<II", rows, cols)
+            body += b"".join(struct.pack("<I", c) for c in cells)
+        else:
+            body += struct.pack("<H", 0)
+        if version >= 4:
+            segs = segments if zi == 0 else ()
+            body += struct.pack("<H", len(segs))
+            body += b"".join(s(n) + struct.pack("<iII", 1, start, cnt) for n, start, cnt in segs)
+        if version >= 5:
+            body += struct.pack("<I", 0)                                   # zone flags
+        if drift and version >= 5:
+            body += struct.pack("<I", 7)
         total += count
     body += struct.pack("<H", total) + b"".join(s(f"LED {i}") + struct.pack("<I", i) for i in range(total))
     body += struct.pack("<H", total) + b"".join(struct.pack("<I", 0x0000FF) for _ in range(total))
+    if version >= 5:
+        body += struct.pack("<H", 0) + struct.pack("<I", 0)                   # LED display names, flags
     return struct.pack("<I", 4 + len(body)) + body
 
 
@@ -60,13 +79,13 @@ class ParseTests(unittest.TestCase):
 class FakeServer(threading.Thread):
     """Speaks just enough of the protocol for the client tests; records what it received."""
 
-    def __init__(self, server_version=4, notify=False):
+    def __init__(self, server_version=4, notify=False, drift=False):
         super().__init__(daemon=True)
         self.sock = socket.socket()
         self.sock.bind(("127.0.0.1", 0))
         self.sock.listen(1)
         self.port = self.sock.getsockname()[1]
-        self.server_version, self.notify = server_version, notify
+        self.server_version, self.notify, self.drift = server_version, notify, drift
         self.received = []
 
     def _recv(self, conn, n):
@@ -95,10 +114,60 @@ class FakeServer(threading.Thread):
                     conn.sendall(openrgb.header(0, pid, 4) + struct.pack("<I", 1))
                 elif pid == openrgb.REQUEST_CONTROLLER_DATA:
                     version = struct.unpack("<I", data)[0]
-                    blob = controller_blob(version)
+                    blob = controller_blob(version, drift=self.drift)
                     conn.sendall(openrgb.header(dev, pid, len(blob)) + blob)
         except (ConnectionError, OSError):
             pass
+
+
+class ProtocolFiveTests(unittest.TestCase):
+    def test_segments_matrix_and_flags(self):
+        blob = controller_blob(5, segments=(("Fan 1", 0, 8), ("Fan 2", 8, 8), ("Fan 3", 16, 8)))
+        c = openrgb.parse_controller(blob, 5)
+        self.assertEqual([g["name"] for g in c["zones"][0]["segments"]], ["Fan 1", "Fan 2", "Fan 3"])
+        self.assertEqual(c["zones"][0]["flags"], 0)
+        grid = controller_blob(5, name="Keyboard", zones=(("Keys", 2, 4, 4, 4),), ctype=5,
+                               matrix=(2, 3, [0, 1, openrgb.NO_LED, 2, openrgb.NO_LED, 3]))
+        k = openrgb.parse_controller(grid, 5)
+        self.assertEqual(k["zones"][0]["matrix"], {"rows": 2, "cols": 3, "map": [0, 1, -1, 2, -1, 3]})
+
+    def test_layout_mismatch_is_an_error_not_garbage(self):
+        with self.assertRaises(openrgb.OpenRGBError):
+            openrgb.parse_controller(controller_blob(5, drift=True), 5)
+        with self.assertRaises(openrgb.OpenRGBError):
+            openrgb.parse_controller(controller_blob(3), 5)
+
+    def test_client_falls_back_to_protocol_3(self):
+        srv = FakeServer(server_version=5, drift=True)
+        srv.start()
+        c = openrgb.OpenRGBClient(port=srv.port)
+        c.connect()
+        ctrls = c.controllers()
+        self.assertEqual(ctrls[0]["zones"][0]["leds_count"], 24)
+        asked = [struct.unpack("<I", d)[0] for _, pid, d in srv.received if pid == openrgb.REQUEST_CONTROLLER_DATA]
+        self.assertEqual(asked, [5, 3])
+        c.close()
+        srv.join(2)
+
+
+class DeviceShapeTests(unittest.TestCase):
+    def test_fans_on_a_header_and_keyboard_grid(self):
+        from airglow import hw
+        from airglow.lighting import geometry
+        ctrl = openrgb.parse_controller(controller_blob(5, name="ARGB", zones=(("Header", 1, 0, 120, 24),),
+                                                        segments=(("Fan 1", 0, 8), ("Fan 2", 8, 8), ("Fan 3", 16, 8))), 5)
+        dev = hw.OpenRGBDevice(bridge=None, ctrl={"index": 0, **ctrl})
+        self.assertEqual((dev.zones[0].shape, dev.zones[0].fans), ("fans", 3))
+        kb = openrgb.parse_controller(controller_blob(5, name="Keyboard", zones=(("Keys", 2, 4, 4, 4),), ctype=5,
+                                                      matrix=(2, 3, [0, 1, openrgb.NO_LED, 2, openrgb.NO_LED, 3])), 5)
+        z = hw.OpenRGBDevice(bridge=None, ctrl={"index": 0, **kb}).zones[0]
+        self.assertEqual(z.shape, "matrix")
+        layout = geometry.validate_layout({"shape": "matrix", "leds": 4, "rows": 2, "cols": 3, "map": z.matrix["map"],
+                                           "x": 0.8, "y": 0.5, "length": 0.6}, 4)
+        pos, _, _ = geometry.positions(layout)
+        self.assertEqual(pos.shape, (4, 2))
+        self.assertLess(pos[0][1], pos[2][1])                          # LED 2 is on the second row
+        self.assertAlmostEqual(pos[1][1], pos[0][1])
 
 
 class ClientTests(unittest.TestCase):
@@ -107,7 +176,7 @@ class ClientTests(unittest.TestCase):
         srv.start()
         c = openrgb.OpenRGBClient(port=srv.port)
         c.connect()
-        self.assertEqual(c.version, 3)                    # min(client 3, server 5)
+        self.assertEqual(c.version, 5)                    # min(client 5, server 5)
         ctrls = c.controllers()
         self.assertEqual(ctrls[0]["vendor"], "NZXT")
         c.set_custom_mode(0)
