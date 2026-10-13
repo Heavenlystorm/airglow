@@ -1,0 +1,299 @@
+"""The lighting engine: renders effects for every enabled zone ~30 times a second and streams the result to
+the devices. Only changed frames are written (plus a keep-alive), so static scenes cost almost nothing."""
+
+import logging
+import threading
+import time
+from types import SimpleNamespace
+
+import numpy as np
+
+from ..devices import DeviceError, ORDERS
+from ..openrgb import OpenRGBError
+from . import effects, geometry
+from .inputs import AudioAnalyzer, ScreenSampler
+
+log = logging.getLogger(__name__)
+
+
+class DeviceWriter:
+    """One per device: keeps only the newest frame for each zone and writes it on its own thread, so slow USB
+    devices update in parallel (not one after another) and a slow device never holds up rendering."""
+
+    def __init__(self, dev):
+        self.dev = dev
+        self._pending = {}
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._idle = threading.Event()
+        self._idle.set()
+        self._stopped = False
+        threading.Thread(target=self._run, name=f"write-{dev.id}", daemon=True).start()
+
+    def submit(self, zone_id, colors):
+        with self._lock:
+            self._pending[zone_id] = colors            # replaces an older frame nobody has written yet
+            self._idle.clear()
+        self._wake.set()
+
+    def wait_idle(self, timeout):
+        return self._idle.wait(timeout)
+
+    def stop(self):
+        self._stopped = True
+        self._wake.set()
+
+    def _run(self):
+        while not self._stopped:
+            self._wake.wait(0.5)
+            self._wake.clear()
+            with self._lock:
+                batch, self._pending = self._pending, {}
+            if batch and self.dev.online:
+                try:
+                    for zone_id, colors in batch.items():
+                        self.dev.write_zone(zone_id, colors)
+                    self.dev.flush()
+                except (DeviceError, OpenRGBError, OSError) as e:
+                    log.warning("%s: %s", self.dev.name, e)
+                    self.dev.error = str(e)
+                    self.dev.close()                   # the device manager reconnects it in the background
+            with self._lock:
+                if not self._pending:
+                    self._idle.set()
+
+
+class Engine:
+    FPS = 30
+    KEEPALIVE = 5.0          # re-send unchanged frames this often (some controllers forget)
+    RESUME_GAP = 10.0        # a frame gap this long means the PC slept
+    IDENTIFY_SECONDS = 6.0
+
+    def __init__(self, manager, store, sensors=lambda: {}, async_writes=True):
+        self.manager, self.store, self._sensors = manager, store, sensors
+        self.async_writes = async_writes  # tests write synchronously so they can check results right away
+        self._writers = {}               # device id -> DeviceWriter
+        self._online = {}                # device id -> was online last frame (to re-send after a reconnect)
+        self.scene = dict(store.state["scene"])
+        self.screen, self.audio = ScreenSampler(), AudioAnalyzer()
+        self.frames = {}                 # zone key -> "rrggbb..." for the live preview
+        self.frame_id = 0
+        self.fps = 0.0
+        self._identify = {}              # zone key -> deadline
+        self._last = {}                  # zone key -> (bytes, time sent)
+        self._geom = {}                  # zone key -> (layout snapshot, namespace)
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread = None
+        self._t0 = time.monotonic()
+        self._last_tick = None
+        self.last_frame = None           # monotonic time of the last finished frame (for the health check)
+
+    # ------------------------------------------------------------ commands
+    def set_scene(self, scene):
+        scene = dict(scene)
+        try:                                         # never render with missing or bad parameters
+            scene["params"] = effects.clean_params(scene.get("effect"), scene.get("params"))
+        except ValueError as e:
+            log.warning("bad scene (%s); falling back to solid", e)
+            scene.update(effect="solid", params=effects.clean_params("solid", {}))
+        with self._lock:
+            self.scene = scene
+            self._last.clear()                       # force a full re-send
+
+    def identify(self, zone_key):
+        self._identify[zone_key] = time.monotonic() + self.IDENTIFY_SECONDS
+
+    def invalidate(self, zone_key=None):
+        with self._lock:
+            if zone_key:
+                self._geom.pop(zone_key, None)
+                self._last.pop(zone_key, None)
+            else:
+                self._geom.clear()
+                self._last.clear()
+
+    # ------------------------------------------------------------ rendering
+    def _geometry(self, key, layout):
+        cached = self._geom.get(key)
+        if cached and cached[0] == layout:
+            return cached[1]
+        pos, local, fan = geometry.positions(layout)
+        z = SimpleNamespace(pos=geometry.normalised(pos), canvas=pos, local=local, fan=fan, n=len(pos))
+        self._geom[key] = (dict(layout), z)
+        return z
+
+    def _context(self, needs, params):
+        s = self._sensors() or {}
+        if "screen" in needs:
+            self.screen.touch(display=int(params.get("display", 1)))
+        if "audio" in needs:
+            self.audio.touch()
+        return SimpleNamespace(cpu_temp=s.get("cpu_temp"), gpu_temp=s.get("gpu_temp"),
+                               screen=self.screen.frame if "screen" in needs else None,
+                               audio=self.audio.frame if "audio" in needs else None)
+
+    def _identify_colors(self, z, deadline, now):
+        """First LED flashes green, then a white dot walks the LEDs in order so you can count them."""
+        elapsed = self.IDENTIFY_SECONDS - (deadline - now)
+        out = np.full((z.n, 3), 0.04)
+        if elapsed < 1.0:
+            if int(elapsed * 6) % 2 == 0:
+                out[0] = (0, 1, 0)
+        else:
+            i = int((elapsed - 1.0) / (self.IDENTIFY_SECONDS - 1.0) * z.n) % max(z.n, 1)
+            out[: i] = 0.18
+            out[i] = 1.0
+        return out
+
+    def render_zone(self, key, zcfg, now, t):
+        layout = zcfg["layout"]
+        z = self._geometry(key, layout)
+        deadline = self._identify.get(key)
+        if deadline and deadline > now:
+            return self._identify_colors(z, deadline, now), 100
+        scene = self.scene
+        if not scene.get("on", True):
+            return np.zeros((z.n, 3)), 0
+        eff_id, params = scene["effect"], scene["params"]
+        if zcfg.get("override"):
+            eff_id, params = zcfg["override"]["effect"], zcfg["override"]["params"]
+        eff = effects.EFFECTS.get(eff_id) or effects.EFFECTS["solid"]
+        ctx = self._context(eff.needs, params)
+        try:
+            rgb = eff.render(z, t, params, ctx)
+        except Exception:
+            log.exception("effect %s failed", eff_id)
+            rgb = np.zeros((z.n, 3))
+        return rgb, scene.get("brightness", 100)
+
+    @staticmethod
+    def _to_bytes(rgb, brightness):
+        vals = np.clip(rgb * (brightness / 100.0), 0, 1)
+        return (vals * 255 + 0.5).astype(np.uint8)
+
+    def tick(self):
+        now = time.monotonic()
+        wall = time.time()
+        if self._last_tick is not None and wall - self._last_tick > self.RESUME_GAP:
+            log.info("woke up after %.0f s; reconnecting lighting devices", wall - self._last_tick)
+            self.manager.request_reset()              # on the device thread: reconnecting can take seconds
+            self._last.clear()
+        self._last_tick = wall
+        # Reconnecting and OpenRGB housekeeping run on the device manager's own thread; this loop only
+        # writes to devices that are already connected, so it never waits on the network or USB enumeration.
+
+        t = now - self._t0
+        zones = self.store.zones()
+        frames = {}
+        for dev in list(self.manager.all().values()):
+            online = dev.online
+            if online and not self._online.get(dev.id):            # (re)connected: send every zone again
+                for k in [k for k in self._last if k.startswith(dev.id + "/")]:
+                    del self._last[k]
+            self._online[dev.id] = online
+            if not online:
+                continue
+            wrote = False
+            for zone in dev.zones:
+                key = f"{dev.id}/{zone.id}"
+                zcfg = zones.get(key)
+                if not zcfg or not zcfg.get("enabled") or geometry.total_leds(zcfg["layout"]) == 0:
+                    continue
+                with self._lock:
+                    rgb, bri = self.render_zone(key, zcfg, now, t)
+                rgb_ints = self._to_bytes(rgb, bri)
+                frames[key] = rgb_ints.tobytes().hex()                      # preview shows true colours
+                order = zcfg.get("order", "RGB")
+                ints = rgb_ints[:, list(ORDERS[order])] if order != "RGB" else rgb_ints
+                raw = ints.tobytes()
+                prev = self._last.get(key)
+                if prev and prev[0] == raw and now - prev[1] < self.KEEPALIVE:
+                    continue
+                if self.async_writes:
+                    writer = self._writers.get(dev.id)
+                    if writer is None or writer.dev is not dev:
+                        writer = self._writers[dev.id] = DeviceWriter(dev)
+                    writer.submit(zone.id, [tuple(px) for px in ints.tolist()])
+                    self._last[key] = (raw, now)
+                    continue
+                try:
+                    dev.write_zone(zone.id, [tuple(px) for px in ints.tolist()])
+                    self._last[key] = (raw, now)
+                    wrote = True
+                except (DeviceError, OpenRGBError, OSError) as e:
+                    log.warning("%s: %s", dev.name, e)
+                    dev.error = str(e)
+                    dev.close()
+                    break
+            if wrote:
+                try:
+                    dev.flush()
+                except (DeviceError, OpenRGBError, OSError) as e:
+                    dev.error = str(e)
+        self.frames = frames
+        self.frame_id += 1
+        self.last_frame = time.monotonic()
+        self._identify = {k: d for k, d in self._identify.items() if d > now}
+
+    # ------------------------------------------------------------ lifecycle
+    def _loop(self):
+        period = 1.0 / self.FPS
+        count, window = 0, time.monotonic()
+        while not self._stop.is_set():
+            start = time.monotonic()
+            try:
+                self.tick()
+            except Exception:
+                log.exception("lighting frame failed")
+                time.sleep(0.5)
+            count += 1
+            if start - window >= 2.0:
+                self.fps, count, window = count / (start - window), 0, start
+            # time.sleep uses a high-resolution timer on Windows (Python 3.11+); Event.wait rounds up to ~15.6 ms
+            # steps, which turned a 33 ms frame into 47 ms (21 fps).
+            time.sleep(max(0.0, period - (time.monotonic() - start)))
+
+    def start(self):
+        self._thread = threading.Thread(target=self._loop, name="lighting", daemon=True)
+        self._thread.start()
+
+    @property
+    def healthy(self):
+        """Alive and actually producing frames (a stuck thread is still 'alive')."""
+        if self._thread is None or not self._thread.is_alive():
+            return False
+        return self.last_frame is None or time.monotonic() - self.last_frame < 5.0
+
+    def blackout(self):
+        """Send all zones dark once and wait for it to reach the hardware (used for sleep/shutdown lights-off)."""
+        for dev in list(self.manager.all().values()):
+            if not dev.online:
+                continue
+            writer = self._writers.get(dev.id)
+            for zone in dev.zones:
+                zcfg = self.store.zones().get(f"{dev.id}/{zone.id}")
+                if zcfg and zcfg.get("enabled"):
+                    black = [(0, 0, 0)] * geometry.total_leds(zcfg["layout"])
+                    if writer:
+                        writer.submit(zone.id, black)
+                    else:
+                        try:
+                            dev.write_zone(zone.id, black)
+                        except (DeviceError, OpenRGBError, OSError):
+                            pass
+            if writer:
+                writer.wait_idle(1.5)
+            else:
+                try:
+                    dev.flush()
+                except (DeviceError, OpenRGBError, OSError):
+                    pass
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+        for w in self._writers.values():
+            w.wait_idle(1.0)
+            w.stop()
