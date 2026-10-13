@@ -1,0 +1,19 @@
+# Changelog
+
+## Unreleased
+- More hardware, from a data file (`airglow/data/devices.json`): NZXT RGB & Fan Controller, Smart Device V2 and
+  HUE 2 controllers, four more ASUS Aura motherboard controllers (all marked experimental), every HUE 2
+  accessory's LED count, and fan control across several fan controllers.
+- OpenRGB protocol 5: ARGB headers OpenRGB splits into fans show as fan rings, and keyboards get a grid layout.
+- Windows Dynamic Lighting devices (experimental, off by default).
+- Live updates over one event stream instead of polling; nothing runs in the page while it's hidden in the tray.
+- Settings, About: **Save a report** for bug reports, with personal details removed.
+- If the usual port is taken, Airglow uses the next free one.
+- Settings files carry a format version and are upgraded once.
+- Fixes: zone settings saved every second for some NZXT fan chains, pinned fan readings broke the tray tooltip,
+  editing a preset an automation uses didn't apply, several resets at once after waking from sleep.
+- Pause automations for 15 minutes, an hour or until 06:00; temperature rules no longer flicker at their limit;
+  the power button says when an automation is holding the lights off.
+
+## 1.0.0
+First release.
