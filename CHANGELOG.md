@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 - More hardware, from a data file (`airglow/data/devices.json`): NZXT RGB & Fan Controller, Smart Device V2 and
   HUE 2 controllers, four more ASUS Aura motherboard controllers (all marked experimental), every HUE 2
   accessory's LED count, and fan control across several fan controllers.
