@@ -41,6 +41,7 @@ export function renderSettings() {
     <section class="set-group"><h2>OpenRGB</h2>
       ${row("Use OpenRGB for other devices", esc(S.state?.openrgb?.status || ""), sw("s-orgb", s.openrgb_enabled))}
       ${row("OpenRGB address", "Only change this if OpenRGB runs on another port or another PC.", `<input class="text" id="s-orgb-host" value="${esc(s.openrgb_host)}" style="width:150px" spellcheck="false"><input class="text" id="s-orgb-port" type="number" value="${s.openrgb_port}" style="width:90px">`)}
+      ${row("Windows Dynamic Lighting devices <span class=\"tag\">Experimental</span>", `Keyboards, mice and accessories that Windows controls in Settings, Personalization, Dynamic Lighting. Windows only lets Airglow light them while its window is in front. ${s.dynamic_lighting_enabled ? esc(S.state?.dynamic_lighting?.status || "") : ""}`, sw("s-dyn", s.dynamic_lighting_enabled))}
     </section>
     <section class="set-group"><h2>About</h2>
       ${row(`Airglow ${esc(v.version)}`, `Free and open source under the MIT licence. Settings and logs are stored in <span class="path">${esc(v.data_dir)}</span>`, `<button class="btn" id="s-logs">Open log folder</button>`)}
@@ -67,6 +68,7 @@ export function initSettings() {
     else if (t.id === "s-failsafe") save({ fan_failsafe_duty: +t.value });
     else if (t.id === "s-step") save({ fan_max_step: +t.value });
     else if (t.id === "s-lhm") save({ lhm_url: t.value.trim() });
+    else if (t.id === "s-dyn") save({ dynamic_lighting_enabled: t.checked }, t.checked ? "Looking for Dynamic Lighting devices" : "Dynamic Lighting devices off");
     else if (t.id === "s-orgb") save({ openrgb_enabled: t.checked }, t.checked ? "OpenRGB bridge on" : "OpenRGB bridge off");
     else if (t.id === "s-orgb-host") save({ openrgb_host: t.value.trim() });
     else if (t.id === "s-orgb-port") save({ openrgb_port: +t.value });
