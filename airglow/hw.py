@@ -41,11 +41,13 @@ class Zone:
         self.max_leds, self.default_leds = max_leds, default_leds
         self.shape, self.resizable = shape, resizable
         self.fans = 1
+        self.matrix = None                # {"rows", "cols", "map"} for keyboards and other LED grids
         self.provisional = False          # True while the device hasn't told us its real layout yet
 
     def info(self):
         return {"id": self.id, "name": self.name, "max_leds": self.max_leds, "default_leds": self.default_leds,
-                "shape": self.shape, "fans": self.fans, "resizable": self.resizable, "provisional": self.provisional}
+                "shape": self.shape, "fans": self.fans, "matrix": self.matrix, "resizable": self.resizable,
+                "provisional": self.provisional}
 
 
 class Device:
@@ -220,8 +222,16 @@ class OpenRGBDevice(Device):
         for zi, z in enumerate(ctrl["zones"]):
             resizable = z["leds_min"] != z["leds_max"]
             count = z["leds_count"] if z["leds_count"] or not resizable else min(30, z["leds_max"])
-            shape = "strip" if z["type"] != ZONE_MATRIX else "strip"
-            self.zones.append(Zone(f"z{zi}", z["name"], z["leds_max"] or count, count, shape, resizable))
+            zone = Zone(f"z{zi}", z["name"], z["leds_max"] or count, count, "strip", resizable)
+            m = z.get("matrix")
+            if z["type"] == ZONE_MATRIX and m and count and any(0 <= c < count for c in m["map"]):
+                zone.shape, zone.matrix = "matrix", m
+            segs = z.get("segments") or []
+            # an ARGB header with fans on it, as OpenRGB 0.9+ describes it: "Fan 1", "Fan 2", ... of equal size
+            if (len(segs) > 1 and all("fan" in s["name"].lower() for s in segs)
+                    and len({s["count"] for s in segs}) == 1 and sum(s["count"] for s in segs) == count):
+                zone.shape, zone.fans = "fans", len(segs)
+            self.zones.append(zone)
         self._custom_mode_set = False
 
     @property

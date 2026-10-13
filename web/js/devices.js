@@ -37,15 +37,18 @@ function renderList() {
 function zoneCard(z) {
   const c = z.config, L = c.layout, max = z.zone.max_leds;
   const total = L.shape === "fans" ? L.fans * L.leds_per_fan : L.leds;
+  const grid = z.zone.matrix;
   return `<div class="zone-card${c.enabled ? "" : " off"}" id="zc-${esc(z.key)}" data-key="${esc(z.key)}">
     <div class="zname"><span class="switch" title="${c.enabled ? "Switch this zone off" : "Switch this zone on"}"><input type="checkbox" data-f="enabled"${c.enabled ? " checked" : ""} aria-label="Zone on"><span></span></span>
       <input data-f="name" value="${esc(c.name)}" maxlength="40" aria-label="Zone name" spellcheck="false"></div>
     <div class="btn-row"><button class="btn" data-identify>Identify</button></div>
     <div class="zfields">
-      <label>Shape<select class="select" data-f="shape"><option value="fans"${L.shape === "fans" ? " selected" : ""}>Fans</option><option value="strip"${L.shape === "strip" ? " selected" : ""}>Strip</option></select></label>
+      <label>Shape<select class="select" data-f="shape"><option value="fans"${L.shape === "fans" ? " selected" : ""}>Fans</option><option value="strip"${L.shape === "strip" ? " selected" : ""}>Strip</option>${grid ? `<option value="matrix"${L.shape === "matrix" ? " selected" : ""}>Grid</option>` : ""}</select></label>
       ${L.shape === "fans"
         ? `<label>Fans<input class="text num" type="number" min="1" max="12" data-f="fans" value="${L.fans}"></label>
            <label>LEDs per fan<input class="text num" type="number" min="1" max="64" data-f="leds_per_fan" value="${L.leds_per_fan}"></label>`
+        : L.shape === "matrix"
+        ? `<span class="hint">${L.rows} × ${L.cols} grid, as OpenRGB lays it out</span>`
         : `<label>LEDs<input class="text num" type="number" min="1" max="${max}" data-f="leds" value="${L.leds}"></label>`}
       <label>Colour order<select class="select" data-f="order">${ORDERS.map((o) => `<option${o === c.order ? " selected" : ""}>${o}</option>`).join("")}</select></label>
       <label>Direction<select class="select" data-f="reverse"><option value="0"${L.reverse ? "" : " selected"}>Normal</option><option value="1"${L.reverse ? " selected" : ""}>Reversed</option></select></label>
@@ -145,8 +148,11 @@ export function initDevices() {
       else if (f === "reverse") c.layout.reverse = v === "1";
       else if (f === "shape") {
         const total = c.layout.shape === "fans" ? c.layout.fans * c.layout.leds_per_fan : c.layout.leds;
+        const grid = S.zones?.zones.find((x) => x.key === key)?.zone.matrix;
         c.layout = v === "fans"
           ? { ...c.layout, shape: "fans", fans: 1, leds_per_fan: Math.max(1, Math.min(total, 64)), size: 0.16 }
+          : v === "matrix" && grid
+          ? { ...c.layout, shape: "matrix", leds: Math.max(1, total), rows: grid.rows, cols: grid.cols, map: grid.map, length: 0.6 }
           : { ...c.layout, shape: "strip", leds: Math.max(1, total), length: 0.9 };
       } else c.layout[f] = Math.max(1, parseInt(v, 10) || 1);
     });

@@ -309,6 +309,13 @@ def _fan_split(z, leds):
     return fans, max(leds // fans, 1)
 
 
+def _matrix_layout(z, leds, geometry):
+    m = z["matrix"]
+    layout = geometry.default_layout("strip", max(leds, 1))
+    layout.update(shape="matrix", leds=max(leds, 1), rows=m["rows"], cols=m["cols"], map=list(m["map"]), length=0.6)
+    return layout
+
+
 def _expected_leds(z):
     """How many LEDs a zone we place ourselves ends up with (what ensure_zones compares saved zones against)."""
     leds = z["default_leds"]
@@ -328,7 +335,10 @@ def _place(role, n, z, leds, geometry):
         layout.update(fans=fans, leds_per_fan=per, size=size, angle=90,
                       x=round(0.22 + 0.24 * (n // 3), 3), y=round(0.2 + 0.3 * (n % 3), 3))
         return layout
-    layout = geometry.default_layout("strip", max(leds, 1))
+    if z.get("shape") == "matrix" and z.get("matrix") and leds:
+        layout = _matrix_layout(z, leds, geometry)
+    else:
+        layout = geometry.default_layout("strip", max(leds, 1))
     if role == "gpu":
         layout.update(x=1.0, y=round(0.66 + 0.06 * n, 3), length=0.62)
     elif role == "strip":

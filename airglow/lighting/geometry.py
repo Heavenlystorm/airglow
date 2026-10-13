@@ -9,13 +9,13 @@ import math
 import numpy as np
 
 CANVAS_W, CANVAS_H = 1.6, 1.0
-SHAPES = ("fans", "strip")
+SHAPES = ("fans", "strip", "matrix")
 
 
 def total_leds(layout):
     if layout["shape"] == "fans":
         return layout["fans"] * layout["leds_per_fan"]
-    return layout["leds"]
+    return layout["leds"]          # strip and matrix
 
 
 def positions(layout):
@@ -38,6 +38,20 @@ def positions(layout):
                 local.append(t)
                 fan.append(f)
         pos, local, fan = np.array(pts, float), np.array(local, float), np.array(fan, int)
+    elif layout["shape"] == "matrix":
+        n, rows, cols, width = layout["leds"], layout["rows"], layout["cols"], layout.get("length", 0.6)
+        cell = {}
+        for i, led in enumerate(layout["map"]):
+            if 0 <= led < n and led not in cell:
+                cell[led] = divmod(i, cols)
+        height = width * rows / cols
+        pts, local = [], []
+        for led in range(n):
+            r, c = cell.get(led, (rows - 1, cols - 1))                 # an LED the map leaves out sits in a corner
+            ox, oy = ((c + 0.5) / cols - 0.5) * width, ((r + 0.5) / rows - 0.5) * height
+            pts.append((x + dx * ox - dy * oy, y + dy * ox + dx * oy))
+            local.append(c / max(cols - 1, 1))
+        pos, local, fan = np.array(pts, float).reshape(-1, 2), np.array(local, float), np.zeros(n, int)
     else:
         n, length = layout["leds"], layout.get("length", 0.5)
         t = np.linspace(0, 1, n) if n > 1 else np.array([0.5])
@@ -86,6 +100,18 @@ def validate_layout(layout, max_leds):
         out["fans"] = num("fans", 1, 12, 1, integer=True)
         out["leds_per_fan"] = num("leds_per_fan", 1, 64, 8, integer=True)
         out["size"] = num("size", 0.05, 0.5, 0.16)
+    elif out["shape"] == "matrix":
+        out["leds"] = num("leds", 1, 1024, 1, integer=True)
+        out["rows"] = num("rows", 1, 64, 1, integer=True)
+        out["cols"] = num("cols", 1, 128, 1, integer=True)
+        out["length"] = num("length", 0.05, 2.0, 0.6)
+        cells = layout.get("map")
+        if not isinstance(cells, list) or len(cells) != out["rows"] * out["cols"]:
+            raise ValueError("a grid needs one map entry per cell")
+        try:
+            out["map"] = [int(c) if -1 <= int(c) < out["leds"] else -1 for c in cells]
+        except (TypeError, ValueError):
+            raise ValueError("grid map entries must be LED numbers") from None
     else:
         out["leds"] = num("leds", 1, 300, 10, integer=True)
         out["length"] = num("length", 0.02, 2.0, 0.5)

@@ -16,6 +16,7 @@ const svg = () => $("#stage-svg");
 function ledRadius(z) {
   const L = z.config.layout;
   if (L.shape === "fans") return clamp((L.size * U / 2) * Math.PI / L.leds_per_fan * 0.42, 3, 11);
+  if (L.shape === "matrix") return clamp((L.length * U) / Math.max(L.cols, 1) * 0.32, 2, 8);
   return clamp((L.length * U) / Math.max(L.leds, 1) * 0.36, 3, 9);
 }
 
@@ -70,6 +71,11 @@ export function renderOverlay() {
       }
       const c = fanCentres(z);
       lx = c[0][0] - r; ly = Math.min(...c.map((p) => p[1])) - r - 22;
+    } else if (L.shape === "matrix") {
+      const a = L.angle * Math.PI / 180, w = L.length * U / 2, h = w * L.rows / L.cols, ca = Math.cos(a), sa = Math.sin(a);
+      const pts = [[-w, -h], [w, -h], [w, h], [-w, h]].map(([ox, oy]) => [L.x * U + ca * ox - sa * oy, L.y * U + sa * ox + ca * oy]);
+      hit = `<polygon class="hit" points="${pts.map((p) => p.join(",")).join(" ")}" stroke-width="2" style="fill:${sel ? "rgba(236,235,230,.06)" : "transparent"}"/>`;
+      lx = Math.min(...pts.map((p) => p[0])); ly = Math.min(...pts.map((p) => p[1])) - 18;
     } else {
       const a = L.angle * Math.PI / 180, h = L.length * U / 2;
       const x1 = L.x * U - Math.cos(a) * h, y1 = L.y * U - Math.sin(a) * h, x2 = L.x * U + Math.cos(a) * h, y2 = L.y * U + Math.sin(a) * h;

@@ -169,5 +169,33 @@ class ApiTests(unittest.TestCase):
         self.assertIn("object", r["error"])
 
 
+
+class PortFallbackTests(unittest.TestCase):
+    def test_taken_port_moves_to_the_next_and_is_recorded(self):
+        import socket
+        from pathlib import Path
+        from unittest import mock
+        from airglow import app
+        with tempfile.TemporaryDirectory() as tmp:
+            store = config.Store(tmp)
+            ctrl = Controller(store, manager=FakeManager(), signals=signals, read_sensors=dict, async_writes=False)
+            blocker = socket.socket()
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                blocker.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            blocker.bind(("127.0.0.1", 0))
+            blocker.listen(1)
+            taken = blocker.getsockname()[1]
+            record = Path(tmp, "port")
+            with mock.patch.object(app, "port_file", return_value=record):
+                server = app.start_server(taken, ctrl, store, {}, tries=5)
+                try:
+                    self.assertIsNotNone(server)
+                    self.assertGreater(server.server_address[1], taken)
+                    self.assertEqual(app.running_port(1), server.server_address[1])
+                finally:
+                    server.server_close()
+                    blocker.close()
+
+
 if __name__ == "__main__":
     unittest.main()
