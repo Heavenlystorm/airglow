@@ -159,7 +159,7 @@ function wireEditor() {
 function renderPorts() {
   const F = S.state.fans, s = S.state.sensors;
   setHTML($("#ports"), F.hub_online
-    ? (F.ports.length ? F.ports.map((p) => `<li><span>Fan ${p.port}</span><span class="bar"><i style="width:${p.duty}%"></i></span><span class="rpm">${p.rpm.toLocaleString()} rpm</span></li>`).join("")
+    ? (F.ports.length ? F.ports.map((p) => `<li><span>${new Set(F.ports.map((q) => q.device)).size > 1 ? `${esc(p.device)}, fan` : "Fan"} ${p.port}</span><span class="bar"><i style="width:${p.duty}%"></i></span><span class="rpm">${p.rpm.toLocaleString()} rpm</span></li>`).join("")
                       : `<li class="empty-note">No fans are spinning on the NZXT hub.</li>`)
     : `<li class="empty-note">No NZXT hub connected, so there are no fans for Airglow to drive. Motherboard fans can follow FanControl profiles from your presets.</li>`);
   setHTML($("#other-fans"), (s.fans || []).map((f) => `<li><span>${esc(cap(f.name))}</span><span>${f.rpm.toLocaleString()} rpm</span></li>`).join(""));

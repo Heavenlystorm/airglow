@@ -10,6 +10,7 @@ a = Analysis(
     pathex=[root],
     datas=[
         (os.path.join(root, "web"), "web"),
+        (os.path.join(root, "airglow", "data"), os.path.join("airglow", "data")),
         (os.path.join(root, "airglow.ico"), "."),
         (os.path.join(root, "LICENSE"), "."),
         (os.path.join(root, "THIRD_PARTY_NOTICES.md"), "."),

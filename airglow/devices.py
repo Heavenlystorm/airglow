@@ -96,14 +96,17 @@ class HidDevice:
     write_len = 64
     name = "device"
 
-    def __init__(self, backend=None):
+    def __init__(self, backend=None, path=None):
         if backend is None:
             import hid as backend
         self._hid = backend
+        self.path = path                # a specific controller when several of the same model are plugged in
         self._dev = None
         self._lock = threading.RLock()
 
     def _matches(self, info):
+        if self.path is not None and info.get("path") != self.path:
+            return False
         return self.interface is None or info.get("interface_number") == self.interface
 
     def open(self):
@@ -147,25 +150,33 @@ class HidDevice:
 
 
 class NzxtControlHub(HidDevice):
-    """NZXT Control Hub (1e71:2022): 5 ARGB channels, 5 fan ports."""
+    """NZXT HUE 2 generation controllers: Control Hub (5 ARGB channels, 5 fan ports), RGB & Fan Controller,
+    Smart Device V2, HUE 2. They share one protocol and differ in channel counts (see data/devices.json)."""
 
     vid, pid, name = 0x1E71, 0x2022, "NZXT Control Hub"
     write_len = 64
     LEDS_PER_CHANNEL = 40
     FAN_PORTS = 5
 
-    def __init__(self, backend=None):
-        super().__init__(backend)
-        self.channels = 5
+    def __init__(self, backend=None, pid=0x2022, name="NZXT Control Hub", led_channels=5, fan_ports=5, path=None):
+        super().__init__(backend, path)
+        self.pid, self.name = pid, name
+        self.led_channels = led_channels
+        self.FAN_PORTS = fan_ports
+        self.channels = led_channels
         self.accessories = None          # per channel: list of accessory ids, filled by the LED info report
         self.fans = [{"rpm": 0, "duty": 0} for _ in range(self.FAN_PORTS)]
 
     def open(self):
         super().open()
         with self._lock:
-            self.write([0x20, 0x03])                                  # LED info -> channel count + accessories
-            self.write([0x60, 0x03])                                  # fan report config
-            self.write([0x60, 0x02, 0x01, 0xE8, 3, 0x01, 0xE8, 3])    # fan report every second
+            if self.led_channels:
+                self.write([0x20, 0x03])                              # LED info -> channel count + accessories
+            else:
+                self.accessories = []                                 # fans-only model
+            if self.FAN_PORTS:
+                self.write([0x60, 0x03])                              # fan report config
+                self.write([0x60, 0x02, 0x01, 0xE8, 3, 0x01, 0xE8, 3])   # fan report every second
             # The LED info reply arrives a few ms later; wait for it so zones start with the real LED counts.
             deadline = time.monotonic() + 0.5
             while self.accessories is None and time.monotonic() < deadline:
@@ -176,7 +187,7 @@ class NzxtControlHub(HidDevice):
 
     def _handle(self, p):
         if p[0] == 0x21 and p[1] == 0x03 and p[14]:
-            self.channels = min(p[14], 5)
+            self.channels = min(p[14], self.led_channels)
             self.accessories = nzxt_parse_accessories(p, self.channels)
         elif p[0] == 0x67 and p[1] == 0x02:
             self.fans = nzxt_parse_fans(p, self.FAN_PORTS)
@@ -206,7 +217,7 @@ class NzxtControlHub(HidDevice):
                 self.write(packet)
 
     def set_fan_duty(self, duties):
-        if duties:
+        if duties and self.FAN_PORTS:
             with self._lock:
                 self.write(nzxt_fan_packet(duties, self.FAN_PORTS))
 
@@ -219,8 +230,9 @@ class AsusAura(HidDevice):
     LEDS_PER_ARGB = 120
     MAINBOARD_DIRECT_IDX = 4
 
-    def __init__(self, argb_order="RGB", board_order="RGB", backend=None):
-        super().__init__(backend)
+    def __init__(self, argb_order="RGB", board_order="RGB", backend=None, pid=0x19AF, interface=2, path=None):
+        super().__init__(backend, path)
+        self.pid, self.interface = pid, interface
         self.argb_order, self.board_order = argb_order, board_order
         self.model = ""
         self.argb_channels = 0
