@@ -2,70 +2,110 @@
 
 # Airglow
 
-Free lighting, fan and sensor control for Windows PCs. One small app instead of a stack of vendor tools: see your
-rig lit up live on screen, keep an eye on the readings you care about, shape your fan curves, and let simple rules
-handle the rest.
+Lighting, fan and sensor control for Windows PCs, in one small app instead of a stack of vendor tools. Free and open
+source (MIT), no account, nothing sent anywhere.
 
-*Airglow is the faint light of the upper atmosphere, the glow at the edge of the night sky. Its green comes from
-oxygen at 557.7 nm, which is where the colour in the icon comes from.*
+![The Overview: a live preview of the lighting, temperatures, load, power and fans](docs/screenshots/overview.png)
 
-- **An Overview you arrange yourself.** Tiles for any reading your PC has (temperatures, load, power, clocks,
-  memory, drives, network, fans) as a number with a ten-minute graph, a gauge, a large graph comparing two
-  readings, or a bar. Drag tiles to move them, drag a corner to resize, swap the reading in two clicks. Pin up to
-  four readings to the top bar and the tray tooltip.
-- **Live preview of your actual rig.** Your fans are drawn as rings and your strips as lines, where you put them,
-  lit with exactly what the hardware is showing.
-- **Effects that sweep across every device:** solid, breathing, colour cycle, rainbow wave, gradient, comet,
-  temperature, screen ambience and music, each with its own settings. Any zone can run its own effect.
-- **Fan curves you can drag,** with a live marker for the current temperature, a 20% floor so fans never stall,
-  and full speed from 90 °C whatever the curve says.
-- **Automations written as sentences:** "Between 23:00 and 07:00, turn the lights off." "When Cyberpunk2077.exe is
-  running, use Gaming." When a rule stops applying, your own settings come back by themselves.
-- **Lights off when the PC sleeps** (many boards keep RGB on in sleep), optional lights off while locked, and
-  recovery after sleep or unplugging.
-- **Private by default.** No account, no cloud, no telemetry. Update checks happen only when you press the button.
+What it does:
+- Shows your rig live on screen: fans as rings and strips as lines, placed where they sit in your case and lit with
+  exactly what the hardware is showing.
+- Effects that sweep across every device at once (solid, breathing, colour cycle, rainbow, gradient, comet,
+  temperature, screen ambience, music), each with its own settings. Any zone can run its own effect.
+- Fan curves you drag into shape. Fans never go below 20 %, and from 90 °C they run at full speed whatever the
+  curve says.
+- Automations you read as sentences, like "Between 23:00 and 07:00, turn the lights off" or "When
+  Cyberpunk2077.exe is running, use Gaming". When a rule stops applying, your own settings come back.
+- An Overview of tiles you arrange yourself, for any reading your PC has, with ten minutes of history.
+- Lights off while the PC sleeps (many boards keep RGB on), and recovery after sleep or unplugging.
+
+| Lighting | Fans | Automations |
+|---|---|---|
+| ![Lighting](docs/screenshots/lighting.png) | ![Fans](docs/screenshots/fans.png) | ![Automations](docs/screenshots/automations.png) |
+
+## Getting started
+1. Download `Airglow-Setup-<version>.exe` from [Releases](../../releases) and run it. It installs for your Windows
+   user only (no admin prompt) and can start with Windows. If SmartScreen says "Windows protected your PC", choose
+   More info, Run anyway (see [Is it safe?](#is-it-safe)).
+2. Close other RGB software (SignalRGB, iCUE, NZXT CAM, Armoury Crate, ...). Two programs driving the same LEDs
+   makes them flicker. Airglow notices them and offers to close them.
+3. Open Airglow. The welcome screen lists what it found. Then, depending on your hardware:
+   - **Temperatures and power:** install [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor),
+     run it, and turn on Options, Remote Web Server, Run. Without it you still get memory, network, disk and
+     processor load, but fan curves have no temperature to follow and run at the failsafe speed.
+   - **Most RGB devices** (RAM, graphics cards, keyboards, mice, strips, coolers): install
+     [OpenRGB](https://openrgb.org), start it with its SDK server on (Settings, SDK Server, Start Server, or run it
+     with `--server`). The devices appear in Airglow's Devices tab.
+   - **Motherboard fans:** Airglow switches [FanControl](https://getfancontrol.com) profiles per preset.
+4. In Devices, check each zone's LED count and shape. Not sure? Press Identify: the first LED blinks green, then a
+   white dot walks through every LED in order.
+
+Needs Windows 10 1809 or newer with the Edge WebView2 runtime (built into Windows 11). Airglow is Windows-only.
 
 ## Supported hardware
 | Connection | Devices |
 |---|---|
-| Built in, over USB | NZXT Control Hub and RGB & Fan Controller (lighting and fans, accessory LED counts detected), ASUS Aura USB motherboards |
-| Through [OpenRGB](https://openrgb.org) | Hundreds more: RAM, graphics cards, keyboards, mice, strips, coolers. Run OpenRGB with its SDK server on, and the devices appear in Airglow |
-| Sensors | Every sensor [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) reports (with its remote web server on). Memory, network and disk activity also work without it |
-| Motherboard fans | [FanControl](https://getfancontrol.com) profiles, switched per preset |
+| Directly over USB | NZXT Control Hub. ASUS Aura USB motherboard controller `0B05:19AF`. |
+| Directly over USB, experimental | NZXT RGB & Fan Controller, Smart Device V2, HUE 2 and HUE 2 Ambient; ASUS Aura motherboard controllers `18F3`, `1939`, `1AA6`, `1BED`. These speak the same protocol as the tested ones but haven't been confirmed with Airglow yet. If you own one, please [report how it went](CONTRIBUTING.md#reporting-a-problem). |
+| Through OpenRGB | Everything OpenRGB supports. ARGB headers it splits into fans show as fan rings, keyboards as a grid. |
+| Windows Dynamic Lighting, experimental | Keyboards, mice and accessories with HID LampArray support. Off by default (Settings, More devices): Windows only lets Airglow light them while its window is in front. |
+| Sensors | Everything LibreHardwareMonitor reports. Memory, network, disk and processor load also work without it. |
+| Motherboard fans | Through FanControl profiles. |
 
-Close other RGB software first (SignalRGB, iCUE, NZXT CAM, Armoury Crate…). Airglow detects them and offers to close them.
+The full list of directly supported controllers, and how to add one, is in
+[`airglow/data/devices.json`](airglow/data/devices.json) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Install
-Download `Airglow-Setup-x.y.z.exe` and run it. It installs for your user only (no admin prompt), adds a Start
-menu entry, and can start with Windows. Uninstall from Windows Settings, Apps.
+## Troubleshooting
+- **A device is missing or says "busy":** another RGB program has it open. Close it (check the tray too) and wait
+  a few seconds.
+- **No temperatures:** LibreHardwareMonitor isn't running or its web server is off. The address is in Settings,
+  Sensors (default `http://localhost:8085`).
+- **OpenRGB devices don't show:** OpenRGB's SDK server must be running. Airglow retries every 10 seconds.
+- **Colours look wrong on a strip:** change its colour order (RGB, GRB, ...) in Devices.
+- **Anything else:** Settings, About, **Save a report**, then open an issue with the zip. It holds the logs and
+  what Airglow found, with your user name, PC name and device serial numbers taken out.
 
-Requires Windows 10 1809 or newer with the Edge WebView2 runtime (built into Windows 11).
+Settings live in `%APPDATA%\Airglow`, logs in its `logs` folder.
 
-## Build from source
+## Is it safe?
+- It only listens on `127.0.0.1`, and every change needs a header websites can't send, so a web page can't drive
+  your hardware ([SECURITY.md](SECURITY.md)).
+- No telemetry, no account. The only internet access is the update check, and only when you press the button.
+- Fans fail safe: if sensors stop, Airglow runs them at the failsafe speed; at 90 °C they go to 100 %; when Airglow
+  quits it leaves them at the failsafe speed.
+- The installer isn't code-signed yet, which is why SmartScreen warns about it. You can build it yourself from
+  this repository (below) and compare.
+
+## Building from source
 ```
-pip install hidapi pystray pillow pywebview numpy mss soundcard psutil pyinstaller
-python -m unittest discover -s tests -t .   # 142 tests
-python run.py                               # run from source
-.\build.ps1                                 # tests, then dist\Airglow\ and dist\Airglow-Setup-x.y.z.exe
-python tools\dev_server.py                  # UI on :8790 with simulated devices and your real sensors
+pip install -r requirements-dev.txt
+python -m unittest discover -s tests -t .     # the tests need no hardware
+python run.py                                 # run from source
+python tools\dev_server.py --demo             # the UI on http://127.0.0.1:8790 with a simulated rig and sensors
+.\build.ps1                                   # tests, then dist\Airglow\ and dist\Airglow-Setup-<version>.exe
 ```
-Building the installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php).
+Building the installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php). Releasing and signing:
+[docs/RELEASING.md](docs/RELEASING.md).
 
 ## How it works
-- `airglow/devices.py`: USB drivers for the NZXT hub and ASUS Aura. Packet builders are pure functions with tests based on captures from real hardware.
-- `airglow/openrgb.py`: an independent OpenRGB SDK client (protocol version 3, works with OpenRGB 0.6 to 1.x).
-- `airglow/lighting/`: zone geometry, effects (numpy, around 30 fps), screen and audio inputs that only run while an effect uses them, and the engine that streams changed frames.
-- `airglow/sensors.py`: every LibreHardwareMonitor sensor by its stable id, Windows readings, and portable `auto/...` shortcuts (such as `auto/cpu_temp`) that resolve to the right sensor on any PC. `airglow/history.py` keeps ten minutes of all of them.
-- `airglow/automation.py`: state-based rules. The highest active rule wins, separately for lights and for fans.
-- `airglow/controller.py`: works out the effective scene from your settings, automations, sleep and lock. Also runs the fan curves and the failsafe.
-- `airglow/api.py`: local HTTP API on `127.0.0.1:8787`. Writes need a custom header and a matching Host, so websites can't drive your hardware.
-- `web/`: the interface (plain JavaScript modules, no framework, works offline). Motion follows the Windows "Animation effects" setting.
-
-Settings live in `%APPDATA%\Airglow`; logs in its `logs` folder (rotating). For troubleshooting, set
-`AIRGLOW_DEBUG_CRASHES=1` to record native crash stacks, or `AIRGLOW_DEBUG_STACKS=10` to dump all threads after 10 seconds.
+- `airglow/devices.py`, `airglow/hw.py`: USB drivers for the NZXT and ASUS controllers (packet builders are pure
+  functions, tested against captures from real hardware) and the device layer. Which controllers get a driver comes
+  from `airglow/data/devices.json`.
+- `airglow/openrgb.py`: an independent client for the OpenRGB SDK protocol (version 5, falls back to 3).
+- `airglow/dynlight.py`: Windows Dynamic Lighting devices through `Windows.Devices.Lights`.
+- `airglow/lighting/`: zone geometry, effects (numpy, about 30 fps), screen and audio inputs that only run while an
+  effect uses them, and the engine that streams changed frames to each device on its own thread.
+- `airglow/sensors.py`: every LibreHardwareMonitor sensor by its stable id, plus `auto/...` shortcuts (such as
+  `auto/cpu_temp`) that find the right sensor on any PC.
+- `airglow/automation.py`: state-based rules; the highest active rule wins, separately for lights and fans.
+- `airglow/controller.py`: works out what should happen from your settings, automations, sleep and lock, and runs
+  the fan curves and the failsafe.
+- `airglow/api.py`: the local HTTP API and a server-sent event stream for the UI.
+- `web/`: the interface, plain JavaScript modules with no framework or build step.
 
 The NZXT and ASUS packet formats follow what liquidctl and OpenRGB document for these controllers (credits in
-`THIRD_PARTY_NOTICES.md`). Airglow is an independent implementation and includes none of their code.
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Airglow is an independent implementation and includes none of
+their code.
 
 ## Licence
-MIT. See `LICENSE`. Bundled components and their licences are listed in `THIRD_PARTY_NOTICES.md`.
+MIT, see [LICENSE](LICENSE). Bundled components and their licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

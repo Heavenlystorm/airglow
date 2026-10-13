@@ -1,0 +1,3 @@
+# Building the installer (plus Inno Setup 6, which isn't a Python package)
+-r requirements.txt
+pyinstaller==6.22.3

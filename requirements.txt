@@ -1,0 +1,17 @@
+# What Airglow needs to run from source (Windows, Python 3.12). Versions are the ones the release is built and tested with.
+hidapi==0.15.0
+pystray==0.19.5
+pillow==12.2.0
+pywebview==6.2.1
+numpy==2.4.3
+mss==10.1.0
+soundcard==0.4.6
+psutil==7.2.2
+# Windows Dynamic Lighting devices (optional at runtime: without them that setting just reports it isn't available)
+winrt-runtime==3.2.1
+winrt-Windows.Devices.Lights==3.2.1
+winrt-Windows.Devices.Enumeration==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Foundation.Numerics==3.2.1
+winrt-Windows.UI==3.2.1
