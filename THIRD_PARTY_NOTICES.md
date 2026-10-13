@@ -17,6 +17,7 @@ Airglow's installer bundles the following open-source components. Each keeps its
 | SoundCard | 0.4.6 | BSD 3-Clause | Music-reactive effects (WASAPI loopback) |
 | cffi / pycparser | 2.1.1 / 3.11 | MIT-0 / BSD 3-Clause | SoundCard dependencies |
 | psutil | 7.2.2 | BSD 3-Clause | Running-program detection for automations |
+| pywinrt (winrt-runtime and Windows.* projections) | 3.2.1 | MIT | Windows Dynamic Lighting devices |
 | typing_extensions | 4.16.0 | PSF 2.0 | Dependency |
 | PyInstaller bootloader | 6.22.3 | GPL 2.0 with the bootloader exception | Allows distributing the packaged app under any licence |
 

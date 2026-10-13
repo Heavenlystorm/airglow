@@ -15,7 +15,11 @@ a = Analysis(
         (os.path.join(root, "LICENSE"), "."),
         (os.path.join(root, "THIRD_PARTY_NOTICES.md"), "."),
     ],
-    hiddenimports=["pystray._win32", "soundcard.mediafoundation"],
+    hiddenimports=["pystray._win32", "soundcard.mediafoundation",
+                   # Windows Dynamic Lighting (imported lazily, so PyInstaller can't see them)
+                   "winrt.runtime", "winrt.windows.devices.lights", "winrt.windows.devices.enumeration",
+                   "winrt.windows.foundation", "winrt.windows.foundation.collections",
+                   "winrt.windows.foundation.numerics", "winrt.windows.ui"],
     excludes=["tkinter", "matplotlib", "IPython", "pytest"],
     module_collection_mode={"pystray": "py"},
     noarchive=False,

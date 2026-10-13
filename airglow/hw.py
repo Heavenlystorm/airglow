@@ -362,6 +362,9 @@ class DeviceManager:
                    if isinstance(d, (NzxtDevice, AuraDevice))}
         skip = [name for drv in sorted(drivers) for name in registry["openrgb_skip"].get(drv, [])]
         self.bridge = bridge or OpenRGBBridge(skip=tuple(skip))
+        from .dynlight import DynamicLightingBridge
+        self.dynamic = DynamicLightingBridge()
+        self.dynamic_enabled = lambda: False      # the controller connects this to the setting
         self._last_reconnect = 0.0
         self._last_reset = None
         self._lock = threading.RLock()
@@ -372,7 +375,7 @@ class DeviceManager:
 
     def all(self):
         with self._lock:
-            return {**self.natives, **self.bridge.devices}
+            return {**self.natives, **self.bridge.devices, **self.dynamic.devices}
 
     def get(self, device_id):
         return self.all().get(device_id)
@@ -402,6 +405,10 @@ class DeviceManager:
             self.bridge.refresh(openrgb_enabled)
         except Exception as e:  # the bridge must never stop native devices from working
             log.warning("OpenRGB bridge error: %s", e)
+        try:
+            self.dynamic.refresh(self.dynamic_enabled())
+        except Exception as e:
+            log.warning("Dynamic Lighting error: %s", e)
 
     def start(self, openrgb_enabled):
         """Run device housekeeping (USB reconnects, OpenRGB connects and notifications) on its own thread.

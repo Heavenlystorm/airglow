@@ -26,6 +26,8 @@ class Controller:
                  async_writes=True):
         self.store = store
         self.manager = manager or DeviceManager()
+        if hasattr(self.manager, "dynamic_enabled"):
+            self.manager.dynamic_enabled = lambda: store.settings()["dynamic_lighting_enabled"]
         s = store.state
         self.base_scene = dict(s["scene"])
         self.base_curve = s["fan_curve"] if s["fan_curve"] in store.curves() else "balanced"
@@ -363,6 +365,8 @@ class Controller:
             "sensors": self.sensors,
             "devices": devs,
             "openrgb": {"enabled": self.store.openrgb_enabled(), "status": self.manager.bridge.status},
+            "dynamic_lighting": {"enabled": self.store.settings()["dynamic_lighting_enabled"],
+                                 "status": getattr(getattr(self.manager, "dynamic", None), "status", "Off")},
             "inputs": {"screen": {"active": self.engine.screen.active, "error": self.engine.screen.error},
                        "audio": {"active": self.engine.audio.active, "error": self.engine.audio.error}},
             "fps": round(self.engine.fps, 1),

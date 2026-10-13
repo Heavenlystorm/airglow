@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     "openrgb_port": 6742,
     "lights_off_on_sleep": True,
     "lights_off_on_lock": False,
+    "dynamic_lighting_enabled": False,
     "fan_curves": DEFAULT_CURVES,
     "zones": {},
 }
@@ -145,7 +146,7 @@ def validate_settings(patch):
             out[key] = str(value).rstrip("/")
         elif key in ("fancontrol_exe", "fancontrol_configs_dir"):
             out[key] = str(value or "")
-        elif key in ("openrgb_enabled", "lights_off_on_sleep", "lights_off_on_lock"):
+        elif key in ("openrgb_enabled", "lights_off_on_sleep", "lights_off_on_lock", "dynamic_lighting_enabled"):
             out[key] = bool(value)
         elif key == "openrgb_host":
             if not re.fullmatch(r"[\w.\-]{1,253}", str(value)):
