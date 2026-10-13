@@ -1,0 +1,12 @@
+# build output
+dist/
+build/
+__pycache__/
+*.pyc
+*.log
+*.tmp
+
+# personal, never publish
+backup/
+legacy-v1/
+.claude/

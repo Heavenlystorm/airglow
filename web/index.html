@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airglow</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
+<script type="module" src="js/main.js"></script>
+</head>
+<body>
+
+<header class="appbar">
+  <a class="wordmark" href="#overview"><svg aria-hidden="true"><use href="#i-mark"/></svg>Airglow</a>
+  <nav class="tabs" aria-label="Sections">
+    <span class="tab-ink" aria-hidden="true"></span>
+    <a href="#overview" data-tab="overview">Overview</a>
+    <a href="#lighting" data-tab="lighting">Lighting</a>
+    <a href="#fans" data-tab="fans">Fans</a>
+    <a href="#automations" data-tab="automations">Automations</a>
+    <a href="#devices" data-tab="devices">Devices</a>
+    <a href="#settings" data-tab="settings">Settings</a>
+  </nav>
+  <div class="bar-right">
+    <a class="ambient" id="ambient" href="#overview" title="Pinned readings. Pin others from a tile's settings on the Overview."></a>
+    <button class="power" id="power" aria-pressed="true" title="Lights on or off"><svg aria-hidden="true"><use href="#i-power"/></svg><span class="sr">Lights</span></button>
+  </div>
+</header>
+
+<div class="notice" id="notice" hidden></div>
+
+<main>
+  <!-- ============================================================ Overview -->
+  <section class="view overview-view" data-view="overview" aria-label="Overview" hidden>
+    <div class="ov-bar">
+      <div class="ov-editbar" id="ov-editbar" hidden>
+        <span>Drag tiles to move them, drag a corner to resize. With the keyboard: arrows move, Shift and arrows resize.</span>
+        <button class="text-link" id="ov-reset">Reset to default</button>
+      </div>
+      <button class="chip-btn" id="ov-edit" aria-pressed="false"><svg aria-hidden="true"><use href="#i-move"/></svg>Customize</button>
+    </div>
+    <div class="ov-grid" id="ov-grid"></div>
+  </section>
+
+  <!-- ============================================================ Lighting -->
+  <section class="view lighting-view" data-view="lighting" aria-label="Lighting" hidden>
+    <div class="stage-wrap">
+      <div class="stage" id="stage">
+        <canvas id="stage-canvas" aria-hidden="true"></canvas>
+        <svg id="stage-svg" aria-label="Live preview of your lighting" role="img"></svg>
+        <div class="stage-tools">
+          <button class="chip-btn" id="arrange" aria-pressed="false"><svg aria-hidden="true"><use href="#i-move"/></svg>Arrange</button>
+        </div>
+        <div class="stage-hint" id="stage-hint"></div>
+        <div class="stage-empty" id="stage-empty" hidden>
+          <h2>No lighting found yet</h2>
+          <p>Airglow talks to NZXT hubs and ASUS boards directly, and to everything else through OpenRGB.</p>
+          <a class="btn" href="#devices">Check devices</a>
+        </div>
+      </div>
+      <div class="deck" id="deck" role="radiogroup" aria-label="Effects"></div>
+    </div>
+    <aside class="inspector" id="inspector" aria-label="Effect settings"></aside>
+  </section>
+
+  <!-- ============================================================ Fans -->
+  <section class="view fans-view" data-view="fans" aria-label="Fans" hidden>
+    <div class="readouts" id="readouts"></div>
+    <div class="curve-area">
+      <div class="curve-head">
+        <div>
+          <h1>Fan curve</h1>
+          <p class="lede" id="curve-lede"></p>
+        </div>
+        <div class="seg" id="curve-seg" role="radiogroup" aria-label="Fan curve"></div>
+      </div>
+      <div class="editor-wrap"><svg class="editor" id="editor" viewBox="0 0 900 400" role="application" aria-label="Fan curve editor"></svg></div>
+      <div class="curve-foot">
+        <p class="hint" id="editor-hint"></p>
+        <div class="btn-row">
+          <button class="btn quiet" id="curve-reset">Reset to default</button>
+          <button class="btn quiet" id="curve-discard" disabled>Discard changes</button>
+          <button class="btn primary" id="curve-save" disabled>Save curve</button>
+        </div>
+      </div>
+      <div class="ports-row">
+        <ul class="ports" id="ports" aria-label="NZXT hub fans"></ul>
+        <ul class="other-fans" id="other-fans" aria-label="Other fans"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ Automations -->
+  <section class="view auto-view" data-view="automations" aria-label="Automations" hidden>
+    <div class="page-head">
+      <div>
+        <h1>Automations</h1>
+        <p class="lede">Rules that change your lighting and fans on their own. The highest rule that applies wins, and when it stops applying, your own settings come back.</p>
+      </div>
+      <div class="btn-row">
+        <button class="btn quiet" id="auto-pause" hidden></button>
+        <select class="select" id="auto-pause-for" aria-label="Pause automations" style="width:auto" hidden>
+          <option value="">Pause automations…</option><option value="15">For 15 minutes</option>
+          <option value="60">For an hour</option><option value="morning">Until 06:00</option>
+        </select>
+        <button class="btn primary" id="auto-add">New automation</button>
+      </div>
+    </div>
+    <ol class="rules" id="rules"></ol>
+    <div class="starters" id="starters"></div>
+  </section>
+
+  <!-- ============================================================ Devices -->
+  <section class="view devices-view" data-view="devices" aria-label="Devices" hidden>
+    <div class="dev-list" id="dev-list" role="listbox" aria-label="Devices"></div>
+    <div class="dev-detail" id="dev-detail"></div>
+  </section>
+
+  <!-- ============================================================ Settings -->
+  <section class="view settings-view" data-view="settings" aria-label="Settings" hidden>
+    <h1>Settings</h1>
+    <div class="settings" id="settings"></div>
+  </section>
+</main>
+
+<dialog class="sheet" id="sheet"></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<svg width="0" height="0" class="sprite" aria-hidden="true">
+  <symbol id="i-mark" viewBox="0 0 64 64"><g fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"><path d="M7.85 37.53A25 25 0 0 1 56.15 37.53" class="mark-glow"/><path d="M6 44H58"/></g><path d="M18 44a14 14 0 0 1 28 0z" fill="currentColor"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 16 16"><path d="M3 4.5h6M12 4.5h1M3 11.5h1M7 11.5h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><circle cx="10.5" cy="4.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.5" cy="11.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-close" viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-move" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="M4 10l4-4 4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+  <symbol id="i-rotate" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v2.4h-2.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+</svg>
+</body>
+</html>
