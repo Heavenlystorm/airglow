@@ -41,7 +41,7 @@ kb = FakeLightDevice("openrgb:keychron-k2-he", "Keychron K2 HE", zones=(("z0", 8
 kb.vendor = "Keychron"
 
 data = Path(tempfile.gettempdir()) / "airglow-dev2"
-store = config.Store(data, legacy_dir=None)
+store = config.Store(data)
 manager = FakeManager(DevNzxt(), aura)
 manager.bridge.devices = {gpu.id: gpu, kb.id: kb}
 manager.bridge.status = "Connected, 2 devices"

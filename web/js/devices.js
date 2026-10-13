@@ -111,13 +111,11 @@ function paintStrips() {
   }
 }
 
-async function pollStrips() {
-  while (true) {
-    if (!$('[data-view="devices"]').hidden && document.visibilityState === "visible") {
-      try { frames = (await get("/api/frames")).zones; paintStrips(); } catch { /* reported elsewhere */ }
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
+// LED frames arrive on the live stream (live.js) while this view is showing.
+function onLiveFrames(f) {
+  if ($('[data-view="devices"]').hidden) return;
+  frames = f.zones;
+  paintStrips();
 }
 
 export function renderDevices() {
@@ -166,5 +164,5 @@ export function initDevices() {
   });
   on("state", () => { if (!$('[data-view="devices"]').hidden) renderList(); });
   on("zones", () => { if (!$('[data-view="devices"]').hidden) renderDevices(); });
-  pollStrips();
+  on("frames:live", onLiveFrames);
 }

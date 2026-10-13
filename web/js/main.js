@@ -12,6 +12,7 @@ import { initOverview, onFrames, renderOverview } from "./overview.js";
 import { R, fmt, level, loadCatalog, pushReadings } from "./readings.js";
 import { countTo, enter, moveMarker } from "./motion.js";
 import { pauseAutomations, sentence } from "./automations.js";
+import { startLive, sync as syncLive } from "./live.js";
 
 const TABS = ["overview", "lighting", "fans", "automations", "devices", "settings"];
 let currentView = null;
@@ -119,28 +120,32 @@ function pushSample() {
   while (S.history.length && S.history[0].t < cutoff) S.history.shift();
 }
 
+// A state update, from the live stream or an explicit refresh after a change.
+async function applyState(state) {
+  S.state = state;
+  if (!connected) { connected = true; toast("Reconnected"); }
+  pushSample();
+  pushReadings(S.state.readings);
+  // device list or connection changed: reload zones so the stage and Devices stay accurate
+  const key = JSON.stringify([S.state.zones_rev, S.state.devices.map((d) => [d.id, d.online, d.zones.length])]);
+  if (key !== deviceKey) {
+    deviceKey = key;
+    S.zones = await get("/api/zones");
+    emit("zones");
+  }
+  renderBar();
+  emit("state");
+}
+
+function lost() {
+  if (connected) { connected = false; renderBar(); }
+}
+
 async function refresh() {
   if (document.visibilityState === "hidden") return;   // closed to the tray: nothing to show
-  try {
-    S.state = await get("/api/state");
-    if (!connected) { connected = true; toast("Reconnected"); }
-    pushSample();
-    pushReadings(S.state.readings);
-    // device list or connection changed: reload zones so the stage and Devices stay accurate
-    const key = JSON.stringify([S.state.zones_rev, S.state.devices.map((d) => [d.id, d.online, d.zones.length])]);
-    if (key !== deviceKey) {
-      deviceKey = key;
-      S.zones = await get("/api/zones");
-      emit("zones");
-    }
-    renderBar();
-    emit("state");
-  } catch {
-    if (connected) { connected = false; renderBar(); }
-  }
+  try { await applyState(await get("/api/state")); } catch { lost(); }
 }
 on("refresh", refresh);
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
 on("pins", () => { $("#ambient")._key = null; refresh(); });
 on("frames", onFrames);
 
@@ -168,7 +173,13 @@ async function boot() {
   renderBar();
   route();
   if (!S.state.onboarded) openWelcome();
-  setInterval(refresh, 2000);
+  startLive({
+    state: (s) => applyState(s).then(syncLive).catch(lost),     // a lighting tile may have come or gone
+    lost,
+    // views showing the live LED preview
+    frames: () => !$('[data-view="lighting"]').hidden || !$('[data-view="devices"]').hidden
+      || (!$('[data-view="overview"]').hidden && !!document.querySelector(".tile-lighting")),
+  });
   setInterval(() => loadCatalog().catch(() => {}), 60000);     // new hardware, LHM started later
 }
 
