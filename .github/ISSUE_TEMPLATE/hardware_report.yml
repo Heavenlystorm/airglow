@@ -1,0 +1,52 @@
+name: Hardware report
+description: Tell us how Airglow did with your hardware, whether it worked or not. This is how devices lose their "experimental" label.
+labels: ["hardware report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Nobody owns all the hardware, so reports like this are the most useful thing you can send. Working is worth reporting too.
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Make and model, and the USB id if you know it (Devices tab, or Device Manager).
+      placeholder: "NZXT RGB & Fan Controller (1e71:2019)"
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: How Airglow talks to it
+      options:
+        - Directly over USB (NZXT, ASUS Aura)
+        - Through OpenRGB
+        - Windows Dynamic Lighting
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Did it work?
+      options:
+        - Yes, everything works
+        - Partly (say what doesn't below)
+        - No
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: LED counts, which effects you tried, fan control, anything odd.
+  - type: textarea
+    id: report
+    attributes:
+      label: Diagnostics report
+      description: Optional, but it helps a lot. Settings, About, Save a report, then drag the zip here.
+  - type: input
+    id: version
+    attributes:
+      label: Airglow version
+      placeholder: "1.2.0"

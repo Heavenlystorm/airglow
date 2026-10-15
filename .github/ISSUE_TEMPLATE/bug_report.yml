@@ -1,0 +1,33 @@
+name: Something doesn't work
+description: A device, effect, fan curve or anything else in Airglow behaves wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The quickest way to a fix is a diagnostics report: in Airglow, go to Settings, About and press **Save a report**, then attach the zip below. Your user name, PC name and device serial numbers are taken out, but have a look inside before you share it.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Airglow version
+      description: Shown in Settings, About.
+      placeholder: "1.2.0"
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Diagnostics report
+      description: Drag the zip from Settings, About, Save a report here.
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware involved
+      description: For example "NZXT Control Hub, 3 F120 RGB Core fans on channel 1".

@@ -2,6 +2,12 @@
 
 # Airglow
 
+[![Latest release](https://img.shields.io/github/v/release/Heavenlystorm/airglow)](https://github.com/Heavenlystorm/airglow/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Heavenlystorm/airglow/total)](https://github.com/Heavenlystorm/airglow/releases)
+[![Tests](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml/badge.svg)](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml)
+![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4)
+[![MIT licence](https://img.shields.io/github/license/Heavenlystorm/airglow)](LICENSE)
+
 Airglow controls the RGB lighting, fans and sensors of a Windows PC from one app, so NZXT CAM, Armoury Crate and
 the rest don't all have to run at once. It's free and MIT-licensed. You don't need an account, and it doesn't send
 anything anywhere.
