@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security problem
+    url: https://github.com/Heavenlystorm/airglow/security/advisories/new
+    about: Please report vulnerabilities privately, not as a public issue.
+  - name: A device works in OpenRGB but not in Airglow, or not at all
+    url: https://openrgb.org/devices.html
+    about: Check OpenRGB's device list first. If OpenRGB can't drive it either, the fix belongs there.
