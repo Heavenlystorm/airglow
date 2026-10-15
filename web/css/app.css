@@ -193,15 +193,15 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .lg .num { font: 500 20px/1 var(--display); color: var(--ink); }
 .lg .unit { font: 400 12px var(--display); }
 .chart { position: relative; flex: 1; min-height: 0; margin: 10px -16px 0; }
-.chart svg { position: absolute; left: 0; top: 0; width: 100%; height: calc(100% - 18px); overflow: visible; }
+.chart svg { position: absolute; left: 0; top: 0; width: calc(100% - 56px); height: calc(100% - 18px); overflow: visible; }   /* right gutter holds the axis labels */
 .chart .gl { stroke: var(--line-soft); vector-effect: non-scaling-stroke; }
 .chart .l-0 { stroke: var(--ink); }
 .chart .l-1 { stroke: #8f949b; stroke-dasharray: 4 3; }
 .chart .a-1 { fill-opacity: 0; }
 .ax, .ax-time { position: absolute; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; pointer-events: none; }
-.ax { right: 12px; padding: 0 4px; border-radius: 3px; background: color-mix(in srgb, var(--panel) 85%, transparent); }
-.ax-hi { top: 3px; }
-.ax-mid { top: calc((100% - 18px) / 2 + 3px); }
+.ax { right: 12px; transform: translateY(-50%); }
+.ax-hi { top: 0; }
+.ax-mid { top: calc((100% - 18px) / 2); }
 .ax-time { left: 16px; bottom: 2px; }
 
 .tile-lighting .tile-inner { padding: 0; }
@@ -288,9 +288,10 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 
 /* ------------------------------------------------------------ lighting: stage */
 .lighting-view { display: grid; grid-template-columns: minmax(0, 1fr) 330px; overflow: hidden; }
-.stage-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 16px 0 16px 16px; gap: 14px; }
+.stage-wrap { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 16px 0 16px 16px; gap: 14px; container-type: inline-size; }
 .stage { position: relative; flex: 1; min-height: 240px; user-select: none; -webkit-user-select: none; border-radius: var(--r-stage); background: radial-gradient(120% 90% at 50% 40%, #101216, var(--void)); border: 1px solid var(--line-soft); overflow: hidden; }
-.stage svg#stage-svg, .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* zones are laid out below the tool strip, so Arrange never covers a zone or its label */
+.stage svg#stage-svg, .stage canvas { position: absolute; left: 0; top: 52px; width: 100%; height: calc(100% - 52px); }
 .stage .zone { cursor: pointer; }
 .stage .zone .hit { fill: transparent; stroke: transparent; }
 .stage .zone .ring { fill: none; stroke: rgba(255, 255, 255, .06); }
@@ -314,11 +315,13 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .stage-empty p { color: var(--ink-2); max-width: 44ch; }
 
 /* effect deck */
-.deck { flex: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 8px; padding: 2px 2px 4px; }
-.fx { min-width: 0; padding: 6px 6px 7px; border: 1px solid var(--line-soft); border-radius: var(--r-panel); background: var(--panel); cursor: pointer; text-align: left; transition: border-color .15s, background .15s; }
+.deck { flex: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 6px; padding: 2px 2px 4px; }
+.fx { min-width: 0; padding: 6px 4px 7px; border: 1px solid var(--line-soft); border-radius: var(--r-panel); background: var(--panel); cursor: pointer; text-align: left; transition: border-color .15s, background .15s; }
 .fx:hover { border-color: var(--line); background: var(--raised); }
 .fx[aria-checked="true"] { border-color: var(--ink); background: var(--raised); }
-.fx .name { display: block; margin-top: 7px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx .name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-height: 2.5em; margin-top: 7px; font-size: 12px; line-height: 1.25; color: var(--ink-2); overflow: hidden; hyphens: auto; }
+/* too narrow for all eleven effects in one row (11 × 72px + 6px gaps): two even rows instead of a row and two stragglers */
+@container (max-width: 859px) { .deck { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 .fx[aria-checked="true"] .name { color: var(--ink); }
 .thumb { position: relative; display: block; height: 46px; border-radius: 6px; overflow: hidden; background: #0c0d10; }
 

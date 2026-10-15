@@ -125,6 +125,9 @@ function arc(cx, cy, r, a0, a1) {
   return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
 }
 
+// A minute of history before a line is drawn: fewer points show as a sliver at the tile's edge that looks broken.
+const MIN_POINTS = 6;
+
 // Path through resampled points; gaps (no data yet) are skipped. Same point count every time => smooth morphing.
 function seriesPath(vals, lo, hi, w, h, pad = 2) {
   const n = vals.length;
@@ -169,7 +172,13 @@ function updateSensor(el, t) {
   const id = t.sensors[0], meta = R.meta[id], v = value(id);
   const name = t.label || meta?.name || sensorName(id);
   setHTML(el.querySelector(".tile-name"), esc(name));
-  setHTML(el.querySelector(".tile-src"), esc(t.style === "graph" ? "" : source(meta)));
+  const src = el.querySelector(".tile-src"), srcText = t.style === "graph" ? "" : source(meta);
+  setHTML(src, esc(srcText));
+  // the title wins: when both don't fit, the source moves to the title's tooltip
+  const nameEl = el.querySelector(".tile-name");
+  src.hidden = false;
+  src.hidden = !!srcText && nameEl.scrollWidth > nameEl.clientWidth;
+  nameEl.title = src.hidden ? `${name} · ${srcText}` : "";
   const missing = v == null && t.style !== "graph";
   el.classList.toggle("missing", missing);
   let note = el.querySelector(".tile-note");
@@ -193,7 +202,7 @@ function updateSensor(el, t) {
     if (meta?.unit === "%") { a = Math.min(a, 0); b = Math.max(b, 10); }
     const span = Math.max(b - a, meta?.unit === "°C" ? 8 : meta?.unit === "W" ? 20 : (b || 1) * 0.2);
     const mid = (a + b) / 2;
-    const p = vals.length ? seriesPath(pts, mid - span * 0.6, mid + span * 0.6, 300, 60, 4) : { d: "", area: "" };
+    const p = vals.length >= MIN_POINTS ? seriesPath(pts, mid - span * 0.6, mid + span * 0.6, 300, 60, 4) : { d: "", area: "" };
     setPath(el.querySelector(".spark .line"), p.d);
     setPath(el.querySelector(".spark .area"), p.area);
     const lo10 = vals.length ? fmt(meta, Math.min(...vals)) : null, hi10 = vals.length ? fmt(meta, Math.max(...vals)) : null;
@@ -235,7 +244,8 @@ function updateSensor(el, t) {
       countTo(lg.querySelector(".num"), sf.num);
       setHTML(lg.querySelector(".unit"), esc(sf.unit));
       const [l, h] = i === 0 || metas[1]?.unit === meta?.unit ? [glo, ghi] : range(sid, m);
-      const p = seriesPath(resample(R.series[sid]), l, h, 400, 100, 3);
+      const pts = resample(R.series[sid]);
+      const p = pts.filter((x) => x != null).length >= MIN_POINTS ? seriesPath(pts, l, h, 400, 100, 3) : { d: "", area: "" };
       setPath(el.querySelector(`.l-${i}`), p.d);
       setPath(el.querySelector(`.a-${i}`), p.area);
     });
