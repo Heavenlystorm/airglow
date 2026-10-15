@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 - Automatic setup for LibreHardwareMonitor and OpenRGB (welcome screen, and Settings, Helper programs). Airglow
   downloads pinned versions, checks their checksums, installs them into Program Files behind one Windows admin
   prompt, and starts them at sign-in. LibreHardwareMonitor's web server is set to answer only on this PC, with a
