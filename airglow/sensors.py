@@ -292,10 +292,11 @@ def fmt(meta, value, fahrenheit=False):
     return f"{value:.0f} {unit}".strip()
 
 
-def read_tree(base_url, timeout=1.5):
+def read_tree(base_url, timeout=1.5, headers=None):
     """LHM's sensor tree, or None when it isn't reachable."""
+    req = urllib.request.Request(base_url.rstrip("/") + "/data.json", headers=headers or {})
     try:
-        with urllib.request.urlopen(base_url.rstrip("/") + "/data.json", timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError):
         return None

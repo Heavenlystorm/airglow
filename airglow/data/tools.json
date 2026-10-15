@@ -1,0 +1,49 @@
+{
+  "_about": "Helper programs Airglow can download and set up (Settings, Helper programs). Versions are pinned: a download whose size or SHA-256 doesn't match is refused. To update one, change url, size and sha256 together, taking the checksum from the project's release page or from hashing the official download.",
+  "tools": {
+    "lhm": {
+      "name": "LibreHardwareMonitor",
+      "purpose": "temperatures, power and fan readings",
+      "version": "0.9.6",
+      "licence": "MPL-2.0",
+      "home": "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor",
+      "url": "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/download/v0.9.6/LibreHardwareMonitor.zip",
+      "size": 6632626,
+      "sha256": "086d9f1b5a99e643edc2cfaaac16051685b551e4c5ac0b32a57c58c0e529c001",
+      "folder": "LibreHardwareMonitor",
+      "strip": "",
+      "exe": "LibreHardwareMonitor.exe",
+      "args": "",
+      "task": "Airglow - LibreHardwareMonitor"
+    },
+    "openrgb": {
+      "name": "OpenRGB",
+      "purpose": "RAM, graphics card, keyboard, mouse and strip lighting",
+      "version": "1.0",
+      "licence": "GPL-2.0",
+      "home": "https://openrgb.org",
+      "url": "https://codeberg.org/OpenRGB/OpenRGB/releases/download/release_1.0/OpenRGB_1.0_Windows_64_81bbe18.zip",
+      "size": 22012179,
+      "sha256": "182a52a3c97c4c4ae52c80286b4260c9666c51c3447dbc416ee8945f66192e90",
+      "folder": "OpenRGB",
+      "strip": "OpenRGB Windows 64-bit/",
+      "exe": "OpenRGB.exe",
+      "args": "--server --server-host 127.0.0.1 --server-port {openrgb_port} --startminimized",
+      "task": "Airglow - OpenRGB"
+    }
+  },
+  "pawnio": {
+    "name": "PawnIO driver",
+    "version": "2.2.0",
+    "min_version": "2.0",
+    "url": "https://github.com/namazso/PawnIO.Setup/releases/download/2.2.0/PawnIO_setup.exe",
+    "size": 3410960,
+    "sha256": "1f519a22e47187f70a1379a48ca604981c4fcf694f4e65b734aaa74a9fba3032"
+  },
+  "vcredist": {
+    "name": "Microsoft Visual C++ runtime",
+    "needed_by": ["openrgb"],
+    "url": "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+    "signer": "Microsoft Corporation"
+  }
+}

@@ -15,7 +15,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, autostart, conflicts, diagnostics, fancontrol, paths, system, updates
+from . import __version__, autostart, conflicts, diagnostics, fancontrol, paths, system, tools, updates
 from .automation import validate_rule
 from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP
 from .lighting import effects, geometry
@@ -234,6 +234,8 @@ def route(server, method, path, body, query=None):
             return store.get_rules()
         if path == "/api/apps":
             return system.windowed_exes()
+        if path == "/api/tools":
+            return tools.status(ctrl)
         raise ApiError(404, "not found")
 
     # ---------------------------------------------------------------- POST
@@ -307,6 +309,14 @@ def route(server, method, path, body, query=None):
         return {"paused_until": ctrl.automations.paused_until or None}
     if path == "/api/conflicts/close":
         return {"failed": conflicts.close(str(body.get("name")))}
+    if path in ("/api/tools/setup", "/api/tools/remove"):
+        try:
+            if path.endswith("setup"):
+                ids = body.get("ids")
+                return tools.start_setup(ctrl, store, [str(i) for i in ids] if isinstance(ids, list) else None)
+            return tools.start_remove(ctrl)
+        except tools.SetupError as e:
+            raise ApiError(409, str(e)) from None
     if path == "/api/updates/check":
         try:
             return updates.check()

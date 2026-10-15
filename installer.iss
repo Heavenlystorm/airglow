@@ -66,3 +66,15 @@ begin
   Sleep(800);
   Result := '';
 end;
+
+// Helper programs Airglow set up (Settings, Helper programs) live in Program Files and start at sign-in as admin,
+// so removing them needs the admin prompt; ask first, and skip it for silent uninstalls.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Code: Integer;
+begin
+  if (CurUninstallStep = usUninstall) and not UninstallSilent and DirExists(ExpandConstant('{commonpf64}\Airglow Tools')) then
+    if MsgBox('Airglow set up LibreHardwareMonitor and OpenRGB on this PC. Remove them too?' + #13#10#13#10 +
+              'Windows will ask for permission.', mbConfirmation, MB_YESNO) = IDYES then
+      ShellExec('runas', ExpandConstant('{app}\{#AppExe}'), '--remove-tools', '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
