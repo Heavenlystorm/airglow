@@ -8,8 +8,8 @@ import urllib.request
 
 from . import __version__
 
-# Set to "owner/repo" once the project is published; until then the check is hidden in the UI.
-UPDATE_REPO = ""
+# Where releases are published. Empty hides the check in the UI.
+UPDATE_REPO = "Heavenlystorm/airglow"
 
 
 def _parse(v):
