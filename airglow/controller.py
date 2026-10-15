@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 
-from . import automation, devices, fancontrol, fans, sensors, system
+from . import automation, devices, fancontrol, fans, sensors, system, tools
 from .config import validate_scene
 from .hw import DeviceManager
 from .history import SensorHistory
@@ -228,7 +228,7 @@ class Controller:
         if self._read_sensors:
             summary, flat = self._read_sensors(), []
         else:
-            tree = sensors.read_tree(self.store.settings()["lhm_url"])
+            tree = sensors.read_tree(self.store.settings()["lhm_url"], headers=tools.lhm_headers())
             flat = sensors.flatten(tree) if tree else []
             summary = sensors.summary(flat) if tree else dict(sensors.OFFLINE)
         self.sensors = summary

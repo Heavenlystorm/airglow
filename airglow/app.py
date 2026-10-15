@@ -85,6 +85,10 @@ def message_box(text):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ("--setup-tools", "--remove-tools"):
+        # the elevated half of helper-program setup (see tools.py): no window, no tray, no second app instance
+        from . import tools
+        return tools.elevated_main(argv)
     setup_logging()
     import faulthandler
     if os.environ.get("AIRGLOW_DEBUG_CRASHES"):

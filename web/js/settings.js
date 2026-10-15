@@ -1,6 +1,7 @@
 // Settings screen.
 
 import { $, $$, S, emit, esc, fail, get, on, post, rangeFill, setHTML, toast } from "./core.js";
+import { paintTools, refreshTools } from "./helpers.js";
 import { openWelcome } from "./onboarding.js";
 
 const row = (label, help, ctl) => `<div class="set-row"><div><div class="label">${label}</div>${help ? `<p>${help}</p>` : ""}</div><div class="ctl">${ctl}</div></div>`;
@@ -8,6 +9,7 @@ const sw = (id, on) => `<label class="switch"><input type="checkbox" id="${id}"$
 
 export async function loadSettings() {
   try { S.settings = await get("/api/settings"); renderSettings(); } catch (e) { fail(e); }
+  refreshTools();
 }
 
 export function renderSettings() {
@@ -35,6 +37,10 @@ export function renderSettings() {
         ? (v.fan_profiles.length ? `FanControl has ${v.fan_profiles.length} saved profile${v.fan_profiles.length > 1 ? "s" : ""}. Presets can switch between them.` : "FanControl is installed but has no saved profiles yet. Save some in FanControl to use them in presets.")
         : "These follow your BIOS curve. Install FanControl if you want presets to switch them too.", "")}
     </section>
+    <section class="set-group"><h2>Helper programs</h2>
+      <p class="hint">Temperatures come from LibreHardwareMonitor, and most RGB devices other than NZXT and ASUS from OpenRGB.</p>
+      <div class="tools-box" data-tools="full"></div>
+    </section>
     <section class="set-group"><h2>Sensors</h2>
       ${row("LibreHardwareMonitor address", sensorsOk ? "Connected. Temperatures and power are coming through." : "Not responding. Open LibreHardwareMonitor and turn on Options, Remote Web Server, Run.", `<input class="text" id="s-lhm" value="${esc(s.lhm_url)}" spellcheck="false">`)}
     </section>
@@ -50,6 +56,7 @@ export function renderSettings() {
       ${row("Welcome guide", "Shows what Airglow found on this PC and what to check.", `<button class="btn quiet" id="s-welcome">Show it again</button>`)}
     </section>`);
   $$("#settings input[type=range]").forEach(rangeFill);
+  paintTools();
 }
 
 async function save(patch, label = "Saved") {

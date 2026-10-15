@@ -31,7 +31,13 @@ What it does:
    More info, Run anyway (see [Is it safe?](#is-it-safe)).
 2. Close other RGB software (SignalRGB, iCUE, NZXT CAM, Armoury Crate, ...). Two programs driving the same LEDs
    makes them flicker. Airglow notices them and offers to close them.
-3. Open Airglow. The welcome screen lists what it found. What else you need depends on your hardware:
+3. Open Airglow. The welcome screen lists what it found. Temperatures and most RGB devices come from two other
+   free programs, LibreHardwareMonitor and OpenRGB. Press **Set up automatically** and Airglow downloads them from
+   their official sources, checks each file against a known checksum, installs them into
+   `C:\Program Files\Airglow Tools` and has them start with Windows. Windows asks for permission once. You can
+   remove them again in Settings, Helper programs.
+
+   If you'd rather set them up yourself, or need motherboard fans:
    - For temperatures and power, install
      [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor), run it and turn on
      Options, Remote Web Server, Run. Without it you still see memory, network, disk and processor load, but fan
@@ -74,6 +80,9 @@ For anything else, go to Settings, About and press **Save a report**, then open 
 the logs and what Airglow found, with your user name, PC name and device serial numbers taken out.
 
 Settings are kept in `%APPDATA%\Airglow` and logs in its `logs` folder.
+
+If you let Airglow set up LibreHardwareMonitor, its web server only answers on this PC and needs a password that
+Airglow made up and keeps in `%APPDATA%\Airglow\lhm-auth.json`. Diagnostics reports leave that file out.
 
 ## Is it safe?
 Airglow only listens on `127.0.0.1`, and every change has to carry a header that websites can't send, so a web page

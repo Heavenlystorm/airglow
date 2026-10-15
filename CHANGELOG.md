@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+- Automatic setup for LibreHardwareMonitor and OpenRGB (welcome screen, and Settings, Helper programs). Airglow
+  downloads pinned versions, checks their checksums, installs them into Program Files behind one Windows admin
+  prompt, and starts them at sign-in. LibreHardwareMonitor's web server is set to answer only on this PC, with a
+  password. The PawnIO driver and the Visual C++ runtime are installed too if they're missing. Uninstalling Airglow
+  offers to remove them.
+
 ## 1.1.0
 - More hardware, from a data file (`airglow/data/devices.json`): NZXT RGB & Fan Controller, Smart Device V2 and
   HUE 2 controllers, four more ASUS Aura motherboard controllers (all marked experimental), every HUE 2

@@ -15,7 +15,7 @@ import socket
 import sys
 import zipfile
 
-from . import __version__, conflicts, paths, sensors
+from . import __version__, conflicts, paths, sensors, tools
 
 # Vendors whose USB controllers Airglow could drive natively (listed so a report shows what's plugged in).
 USB_VENDORS = {0x1E71: "NZXT", 0x0B05: "ASUS"}
@@ -82,7 +82,7 @@ def report(ctrl, store):
                 "presets": store.get_presets(), "automations": store.get_rules()}
     files = {"about.json": json.dumps(about, indent=2, ensure_ascii=False, default=str),
              "settings.json": json.dumps(settings, indent=2, ensure_ascii=False, default=str)}
-    tree = sensors.read_tree(store.settings()["lhm_url"])
+    tree = sensors.read_tree(store.settings()["lhm_url"], headers=tools.lhm_headers())
     if tree is not None:                                        # in data.json shape, so it can become a test fixture
         files["lhm_data.json"] = json.dumps(tree, indent=1, ensure_ascii=False)
     files["readings.json"] = json.dumps(list(ctrl.readings.values()), indent=1, ensure_ascii=False, default=str)
