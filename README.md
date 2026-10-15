@@ -2,22 +2,24 @@
 
 # Airglow
 
-Lighting, fan and sensor control for Windows PCs, in one small app instead of a stack of vendor tools. Free and open
-source (MIT), no account, nothing sent anywhere.
+Airglow controls the RGB lighting, fans and sensors of a Windows PC from one app, so NZXT CAM, Armoury Crate and
+the rest don't all have to run at once. It's free and MIT-licensed. You don't need an account, and it doesn't send
+anything anywhere.
 
 ![The Overview: a live preview of the lighting, temperatures, load, power and fans](docs/screenshots/overview.png)
 
 What it does:
-- Shows your rig live on screen: fans as rings and strips as lines, placed where they sit in your case and lit with
-  exactly what the hardware is showing.
-- Effects that sweep across every device at once (solid, breathing, colour cycle, rainbow, gradient, comet,
-  temperature, screen ambience, music), each with its own settings. Any zone can run its own effect.
-- Fan curves you drag into shape. Fans never go below 20 %, and from 90 °C they run at full speed whatever the
-  curve says.
-- Automations you read as sentences, like "Between 23:00 and 07:00, turn the lights off" or "When
-  Cyberpunk2077.exe is running, use Gaming". When a rule stops applying, your own settings come back.
-- An Overview of tiles you arrange yourself, for any reading your PC has, with ten minutes of history.
-- Lights off while the PC sleeps (many boards keep RGB on), and recovery after sleep or unplugging.
+- Draws your fans and strips on screen where they sit in the case, lit with the colours the hardware is actually
+  showing.
+- Runs effects across every device at once: solid, breathing, colour cycle, rainbow, gradient, comet, temperature,
+  screen ambience and two music effects. A single zone can also have an effect of its own.
+- Lets you drag fan curves into shape. Fans never go below 20 %, and at 90 °C they run at full speed no matter what
+  the curve says.
+- Has automations that read like sentences, such as "Between 23:00 and 07:00, turn the lights off" or "When
+  Cyberpunk2077.exe is running, use Gaming". When a rule stops applying, your normal settings come back.
+- Shows any reading your PC has on an Overview of tiles you arrange yourself, with ten minutes of history.
+- Turns the lights off while the PC sleeps (a lot of boards leave RGB on), and sets everything up again after sleep
+  or when a device is unplugged and plugged back in.
 
 | Lighting | Fans | Automations |
 |---|---|---|
@@ -29,16 +31,18 @@ What it does:
    More info, Run anyway (see [Is it safe?](#is-it-safe)).
 2. Close other RGB software (SignalRGB, iCUE, NZXT CAM, Armoury Crate, ...). Two programs driving the same LEDs
    makes them flicker. Airglow notices them and offers to close them.
-3. Open Airglow. The welcome screen lists what it found. Then, depending on your hardware:
-   - **Temperatures and power:** install [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor),
-     run it, and turn on Options, Remote Web Server, Run. Without it you still get memory, network, disk and
-     processor load, but fan curves have no temperature to follow and run at the failsafe speed.
-   - **Most RGB devices** (RAM, graphics cards, keyboards, mice, strips, coolers): install
-     [OpenRGB](https://openrgb.org), start it with its SDK server on (Settings, SDK Server, Start Server, or run it
-     with `--server`). The devices appear in Airglow's Devices tab.
-   - **Motherboard fans:** Airglow switches [FanControl](https://getfancontrol.com) profiles per preset.
-4. In Devices, check each zone's LED count and shape. Not sure? Press Identify: the first LED blinks green, then a
-   white dot walks through every LED in order.
+3. Open Airglow. The welcome screen lists what it found. What else you need depends on your hardware:
+   - For temperatures and power, install
+     [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor), run it and turn on
+     Options, Remote Web Server, Run. Without it you still see memory, network, disk and processor load, but fan
+     curves have no temperature to follow, so the fans stay at the failsafe speed.
+   - Most RGB devices (RAM, graphics cards, keyboards, mice, strips, coolers) go through
+     [OpenRGB](https://openrgb.org). Start it with its SDK server on (Settings, SDK Server, Start Server, or run it
+     with `--server`) and they show up in Airglow's Devices tab.
+   - Motherboard fans are handled by [FanControl](https://getfancontrol.com). Airglow switches its profiles when
+     you change preset.
+4. In Devices, check each zone's LED count and shape. If you're not sure, press Identify. The first LED blinks
+   green, then a white dot walks through every LED in order.
 
 Needs Windows 10 1809 or newer with the Edge WebView2 runtime (built into Windows 11). Airglow is Windows-only.
 
@@ -56,25 +60,33 @@ The full list of directly supported controllers, and how to add one, is in
 [`airglow/data/devices.json`](airglow/data/devices.json) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Troubleshooting
-- **A device is missing or says "busy":** another RGB program has it open. Close it (check the tray too) and wait
-  a few seconds.
-- **No temperatures:** LibreHardwareMonitor isn't running or its web server is off. The address is in Settings,
-  Sensors (default `http://localhost:8085`).
-- **OpenRGB devices don't show:** OpenRGB's SDK server must be running. Airglow retries every 10 seconds.
-- **Colours look wrong on a strip:** change its colour order (RGB, GRB, ...) in Devices.
-- **Anything else:** Settings, About, **Save a report**, then open an issue with the zip. It holds the logs and
-  what Airglow found, with your user name, PC name and device serial numbers taken out.
+If a device is missing or says "busy", another RGB program still has it open. Close that program (check the tray
+too) and give it a few seconds.
 
-Settings live in `%APPDATA%\Airglow`, logs in its `logs` folder.
+If there are no temperatures, LibreHardwareMonitor isn't running or its web server is off. Airglow looks for it at
+the address in Settings, Sensors, which is `http://localhost:8085` by default.
+
+If OpenRGB devices don't show up, make sure OpenRGB's SDK server is running. Airglow tries again every 10 seconds.
+
+If the colours on a strip look wrong, change its colour order (RGB, GRB and so on) in Devices.
+
+For anything else, go to Settings, About and press **Save a report**, then open an issue and attach the zip. It has
+the logs and what Airglow found, with your user name, PC name and device serial numbers taken out.
+
+Settings are kept in `%APPDATA%\Airglow` and logs in its `logs` folder.
 
 ## Is it safe?
-- It only listens on `127.0.0.1`, and every change needs a header websites can't send, so a web page can't drive
-  your hardware ([SECURITY.md](SECURITY.md)).
-- No telemetry, no account. The only internet access is the update check, and only when you press the button.
-- Fans fail safe: if sensors stop, Airglow runs them at the failsafe speed; at 90 °C they go to 100 %; when Airglow
-  quits it leaves them at the failsafe speed.
-- The installer isn't code-signed yet, which is why SmartScreen warns about it. You can build it yourself from
-  this repository (below) and compare.
+Airglow only listens on `127.0.0.1`, and every change has to carry a header that websites can't send, so a web page
+can't touch your hardware. [SECURITY.md](SECURITY.md) has the details.
+
+There's no telemetry and no account. The only time Airglow goes online is the update check, and that only happens
+when you press the button.
+
+The fans fail safe. If the sensors stop reporting, they run at the failsafe speed. At 90 °C they go to 100 %. When
+you quit Airglow, it leaves them at the failsafe speed.
+
+The installer isn't code-signed yet, which is why SmartScreen warns about it. If you'd rather not trust the
+download, build it yourself from this repository (see below) and compare.
 
 ## Building from source
 ```
