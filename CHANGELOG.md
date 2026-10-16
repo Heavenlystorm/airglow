@@ -1,12 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.3.0
 - Device plugins: each directly driven controller family is one module in `airglow/plugins/` that declares its USB
   ids, how to pick the right interface, what it leaves out of OpenRGB and its own settings. The NZXT HUE 2 and
   ASUS Aura USB drivers moved there, and `airglow/data/devices.json` is gone. Saved settings carry over unchanged.
 - Per-device settings, drawn from what the plugin declares: a brightness limit for NZXT hubs, and switching an ASUS
   board's own LEDs off while its ARGB headers stay lit.
 - A new look: an instrument-panel design with clearer readings and calmer surfaces.
+- Much lighter on CPU and GPU while the window is open. Overview readings now update in place instead of gliding,
+  effect thumbnails animate when you point at them (or tab to them), and the live preview only redraws when the
+  colours change. On a test PC the Overview went from 60-90% of one CPU core to about 6%.
 
 ## 1.2.0
 - Automatic setup for LibreHardwareMonitor and OpenRGB (welcome screen, and Settings, Helper programs). Airglow
