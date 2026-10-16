@@ -1,6 +1,6 @@
 // Overview: a grid of tiles you arrange yourself. Sensor tiles (number + graph, gauge, big graph, bar) and control
-// tiles (lighting, presets, fans). Tiles are built once and updated in place, so numbers count and graphs morph
-// instead of flashing, and dragging never fights the 2-second refresh.
+// tiles (lighting, presets, fans). Tiles are built once and updated in place, so readings change without the tile
+// flashing, and dragging never fights the 2-second refresh.
 
 import { $, $$, S, clamp, curveLabel, effectName, emit, esc, fail, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
 import { R, defaultStyle, ensureHistory, fmt, fmtText, level, loadCatalog, range, resample, sensorName, toDisplay, value } from "./readings.js";
@@ -128,7 +128,7 @@ function arc(cx, cy, r, a0, a1) {
 // A minute of history before a line is drawn: fewer points show as a sliver at the tile's edge that looks broken.
 const MIN_POINTS = 6;
 
-// Path through resampled points; gaps (no data yet) are skipped. Same point count every time => smooth morphing.
+// Path through resampled points; gaps (no data yet) are skipped.
 function seriesPath(vals, lo, hi, w, h, pad = 2) {
   const n = vals.length;
   let d = "", area = "", first = null, last = null;
@@ -147,10 +147,8 @@ function seriesPath(vals, lo, hi, w, h, pad = 2) {
 function setPath(el, d) {
   if (!el) return;
   if (el._d === d) return;
-  const same = el._d && el._d.split(/[ML]/).length === d.split(/[ML]/).length;
   el._d = d;
-  // morph with CSS when the shape has the same structure, otherwise swap instantly
-  if (same && !reduced()) el.style.d = `path("${d}")`; else { el.style.transition = "none"; el.style.d = `path("${d}")`; el.offsetWidth; el.style.transition = ""; }
+  el.style.d = `path("${d}")`;
 }
 
 // ------------------------------------------------------------ updating

@@ -179,7 +179,9 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .spark { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 38%; overflow: visible; }
 .spark .line, .chart .line { fill: none; stroke: var(--ink-2); stroke-width: 1.4; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .spark .area, .chart .area { fill: var(--ink); fill-opacity: .055; stroke: none; }
-.spark path, .chart path { transition: d 1.9s linear, stroke .5s, fill .5s; }
+/* readings jump to their new values: a glide that lasts most of the 2 s between readings keeps WebView2 repainting
+   (and its GPU process compositing) nearly nonstop */
+.spark path, .chart path { transition: stroke .5s, fill .5s; }
 .tile[data-level="warm"] .spark .line { stroke: var(--warm); } .tile[data-level="warm"] .spark .area { fill: var(--warm); }
 .tile[data-level="hot"] .spark .line { stroke: var(--hot); } .tile[data-level="hot"] .spark .area { fill: var(--hot); }
 
@@ -189,7 +191,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .gauge svg { width: 100%; height: 100%; overflow: visible; }
 .g-track, .g-fill { fill: none; stroke-width: 9; stroke-linecap: round; }
 .g-track { stroke: var(--well); }
-.g-fill { stroke: var(--ink); transition: stroke-dasharray 1s var(--ease), stroke .5s; }
+.g-fill { stroke: var(--ink); transition: stroke .5s; }
 .tile[data-level="warm"] .g-fill { stroke: var(--warm); } .tile[data-level="hot"] .g-fill { stroke: var(--hot); }
 .gauge text { display: none; fill: var(--ink-3); font: 8.5px var(--text); font-variant-numeric: tabular-nums; }
 .g-read { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
@@ -204,8 +206,8 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 }
 
 .hbar { position: relative; height: 8px; margin-top: auto; border-radius: 1px; background: var(--well); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .6); }
-.hbar .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 1px; background: repeating-linear-gradient(90deg, var(--ink) 0 3px, transparent 3px 4px); transition: width 1s var(--ease), background .5s; }
-.hbar .peak { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ink-3); transition: left 1s var(--ease); }
+.hbar .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 1px; background: repeating-linear-gradient(90deg, var(--ink) 0 3px, transparent 3px 4px); transition: background .5s; }
+.hbar .peak { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ink-3); }
 .tile[data-level="warm"] .hbar .fill { background: repeating-linear-gradient(90deg, var(--warm) 0 3px, transparent 3px 4px); } .tile[data-level="hot"] .hbar .fill { background: repeating-linear-gradient(90deg, var(--hot) 0 3px, transparent 3px 4px); }
 .bar-foot { display: flex; justify-content: space-between; margin: 9px 0 15px; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 
@@ -350,26 +352,33 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .fx[aria-checked="true"] .name { color: var(--ink); }
 .thumb { position: relative; display: block; height: 46px; border-radius: 2px; overflow: hidden; background: var(--void); box-shadow: inset 0 1px 4px rgba(0, 0, 0, .9); }
 
-/* hand-made effect thumbnails */
+/* hand-made effect thumbnails. They hold still until you point at one (or tab to it): eleven loops running at once
+   kept WebView2's GPU process compositing every frame for as long as the Lighting tab was open. They also only
+   animate transform, opacity and filter, which the compositor runs without repainting the page. */
+.fx .thumb, .fx .thumb::before, .fx .thumb::after, .fx .thumb i { animation-play-state: paused; }
+.fx:hover .thumb, .fx:hover .thumb::before, .fx:hover .thumb::after, .fx:hover .thumb i,
+.fx:focus-visible .thumb, .fx:focus-visible .thumb::before, .fx:focus-visible .thumb::after, .fx:focus-visible .thumb i { animation-play-state: running; }
 .t-solid { background: var(--c, #009bde); }
-.t-breathing::before { content: ""; position: absolute; inset: -30%; background: radial-gradient(circle, var(--c, #009bde) 0, transparent 60%); animation: breathe 3.2s ease-in-out infinite; }
+.t-breathing::before { content: ""; position: absolute; inset: -30%; background: radial-gradient(circle, var(--c, #009bde) 0, transparent 60%); animation: breathe 3.2s -1.6s ease-in-out infinite; }   /* starts at full: the frame shown while paused */
 .t-cycle { background: #ff2a2a; animation: hue 6s linear infinite; }
-.t-rainbow { background: linear-gradient(90deg, #f33, #fb3, #3f6, #3ef, #36f, #c3f, #f33, #fb3, #3f6) 0 0 / 200% 100%; animation: slide 3s linear infinite; }
-.t-gradient { background: linear-gradient(110deg, #ff2fb4, #2f5bff, #ff2fb4) 0 0 / 200% 100%; animation: slide 6s linear infinite alternate; }
+.t-rainbow::before, .t-gradient::before { content: ""; position: absolute; top: 0; bottom: 0; left: -100%; width: 200%; }
+.t-rainbow::before { background: linear-gradient(90deg, #f33, #fb3, #3f6, #3ef, #36f, #c3f, #f33, #fb3, #3f6); animation: slide 3s linear infinite; }
+.t-gradient::before { background: linear-gradient(110deg, #ff2fb4, #2f5bff, #ff2fb4); animation: slide 6s linear infinite alternate; }
 .t-comet::before { content: ""; position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px; border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 55%, rgba(255,255,255,.15) 70%, #fff 99%, transparent 100%); -webkit-mask: radial-gradient(circle, transparent 11px, #000 12px); animation: spin 1.4s linear infinite; }
 .t-temperature { background: linear-gradient(90deg, #00b4ff, #8a5cff 50%, #ff2200); }
-.t-temperature::after { content: ""; position: absolute; top: 6px; bottom: 6px; width: 2px; background: #fff; border-radius: 1px; animation: sweep 4s ease-in-out infinite alternate; }
+/* the needle is the left border of a box 74% wide, so moving the box by its own width sweeps it from 12% to 86% */
+.t-temperature::after { content: ""; position: absolute; top: 6px; bottom: 6px; left: 12%; width: 74%; border-left: 2px solid #fff; animation: sweep 4s ease-in-out infinite alternate; }
 .t-screen::before { content: ""; position: absolute; inset: 9px 18px; border-radius: 3px; background: #1c2028; box-shadow: -8px 0 12px #ff5a1f, 8px 0 12px #2f5bff, 0 -6px 10px #22e06b, 0 6px 10px #8a3dff; }
 .t-spectrum { display: flex; align-items: flex-end; gap: 3px; padding: 6px 8px; }
-.t-spectrum i { flex: 1; height: 30%; border-radius: 1px; background: hsl(calc(220 - var(--i) * 30), 100%, 60%); animation: bar .9s ease-in-out infinite alternate; animation-delay: calc(var(--i) * -.17s); }
+.t-spectrum i { flex: 1; height: 92%; border-radius: 1px; transform: scaleY(.33); transform-origin: bottom; background: hsl(calc(220 - var(--i) * 30), 100%, 60%); animation: bar .9s ease-in-out infinite alternate; animation-delay: calc(var(--i) * -.17s); }
 .t-pulse::before { content: ""; position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; margin: -13px; border-radius: 50%; background: var(--c, #8a3dff); box-shadow: 0 0 18px var(--c, #8a3dff); animation: beat .55s cubic-bezier(.3, 0, .2, 1) infinite; }
 .t-off::before { content: ""; position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px; border-radius: 50%; border: 1.5px solid #3a3b40; }
 @keyframes breathe { 0%, 100% { opacity: .15; } 50% { opacity: 1; } }
 @keyframes hue { to { filter: hue-rotate(360deg); } }
-@keyframes slide { to { background-position: -100% 0; } }
+@keyframes slide { to { transform: translateX(50%); } }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes sweep { from { left: 12%; } to { left: 86%; } }
-@keyframes bar { from { height: 18%; } to { height: 92%; } }
+@keyframes sweep { to { transform: translateX(100%); } }
+@keyframes bar { from { transform: scaleY(.2); } to { transform: none; } }
 @keyframes beat { 0% { transform: scale(1.15); opacity: 1; } 100% { transform: scale(.7); opacity: .45; } }
 
 /* inspector */
