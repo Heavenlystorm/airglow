@@ -1,38 +1,20 @@
-"""Unified device layer: native USB drivers (NZXT, ASUS Aura) and OpenRGB devices, all exposed as devices with
-zones. The lighting engine only ever sees zones and LED colour lists.
+"""Unified device layer: native USB controllers (one plugin per family, in airglow/plugins/), OpenRGB devices and
+Windows Dynamic Lighting, all exposed as devices with zones. The lighting engine only ever sees zones and LED colour
+lists.
 
-Which USB controllers get a native driver, and NZXT accessory sizes, live in data/devices.json, so supporting
-another model of a known family is a data change, not a code change.
+Supporting another controller family is one new plugin module; another model of a known family is one more Product
+line in that plugin.
 """
 
-import json
 import logging
 import re
 import threading
 import time
 
 from . import devices as native
-from . import paths
 from .openrgb import OpenRGBClient, OpenRGBError, ZONE_MATRIX
 
 log = logging.getLogger(__name__)
-
-
-def load_registry(path=None):
-    """data/devices.json with hex ids turned into ints."""
-    raw = json.loads((path or paths.PACKAGE_DIR / "data" / "devices.json").read_text(encoding="utf-8"))
-    entries = []
-    for e in raw["native"]:
-        entries.append({**e, "vid": int(e["vid"], 16), "pid": int(e["pid"], 16),
-                        "interface": e.get("interface"), "experimental": bool(e.get("experimental"))})
-    accessories = {int(k, 16): v for k, v in raw["nzxt_accessories"].items()}
-    return {"native": entries, "openrgb_skip": raw.get("openrgb_skip", {}), "nzxt_accessories": accessories}
-
-
-REGISTRY = load_registry()
-# NZXT accessory id (from the hub's LED info report) -> {"name", "leds", "fans"}. Unknown accessories fall back to
-# the channel maximum and the user sets the count (with the identify sweep).
-NZXT_ACCESSORIES = REGISTRY["nzxt_accessories"]
 
 
 class Zone:
@@ -55,10 +37,13 @@ class Device:
     type_name = "Device"
     experimental = False      # driver not yet confirmed on real hardware (shown in the Devices tab)
     note = None
+    plugin = None             # the plugin module that drives it (native devices only)
+    parameters = ()           # per-device settings schema, drawn by the Devices tab
 
     def __init__(self):
         self.zones = []
         self.error = None
+        self.params = {p["id"]: p["default"] for p in self.parameters}
 
     @property
     def online(self):
@@ -76,125 +61,22 @@ class Device:
     def flush(self):
         pass
 
+    def set_params(self, values):
+        """Apply saved per-device settings (already validated against self.parameters); missing ones keep their
+        defaults. Cheap when nothing changed, so it can run every tick."""
+        params = {p["id"]: values.get(p["id"], p["default"]) for p in self.parameters}
+        if params != self.params:
+            self.params = params
+            self.on_params_changed()
+
+    def on_params_changed(self):
+        """Override when a setting needs more than being read at the next write."""
+
     def info(self):
         return {"id": self.id, "name": self.name, "vendor": self.vendor, "kind": self.kind, "type": self.type_name,
                 "online": self.online, "error": self.error, "experimental": self.experimental, "note": self.note,
-                "zones": [z.info() for z in self.zones]}
-
-
-# ---------------------------------------------------------------- native: NZXT HUE 2 family
-
-def nzxt_channel(acc):
-    """One channel's accessory ids -> (LEDs, shape, fans). acc is None before the hub has reported."""
-    if acc is None:
-        return 40, "strip", 1                          # not reported yet
-    if not acc:
-        return 0, "strip", 1                           # nothing plugged in
-    if not all(a in NZXT_ACCESSORIES for a in acc):
-        return 40, "strip", 1                          # unknown accessory: the user sets the count
-    parts = [NZXT_ACCESSORIES[a] for a in acc]
-    leds = min(sum(p["leds"] for p in parts), native.NzxtControlHub.LEDS_PER_CHANNEL)
-    if all(p["fans"] for p in parts):
-        return leds, "fans", sum(p["fans"] for p in parts)
-    return leds, "strip", 1                            # strips, or fans mixed with strips
-
-
-class NzxtDevice(Device):
-    id, name, vendor, kind, type_name = "nzxt-hub", "NZXT Control Hub", "NZXT", "native", "Fan and lighting hub"
-
-    REPORT_GRACE = 5.0        # seconds to wait for the accessory report before trusting the 40-LED fallback
-
-    def __init__(self, hub=None, dev_id="nzxt-hub", spec=None):
-        self._zones, self._zones_for = [], object()
-        self._opened_at = None
-        super().__init__()
-        self.hub = hub or native.NzxtControlHub()
-        self.id = dev_id
-        if spec:
-            self.name, self.experimental, self.note = spec["name"], spec["experimental"], spec.get("note")
-            leds, fans = spec["led_channels"], spec["fan_ports"]
-            self.type_name = ("Fan and lighting hub" if leds and fans else "Fan controller" if fans
-                              else "Lighting controller")
-
-    @property
-    def zones(self):
-        """Rebuilt whenever the hub reports (or changes) its accessories, even if that report arrives late."""
-        acc = self.hub.accessories
-        waiting = acc is None and (self._opened_at is None or time.monotonic() - self._opened_at < self.REPORT_GRACE)
-        key = (acc if acc is not None else None, waiting)
-        if key != self._zones_for:
-            self._set_zones(acc if acc is not None else [None] * getattr(self.hub, "led_channels", 5))
-            for z in self._zones:
-                z.provisional = waiting
-            self._zones_for = key
-        return self._zones
-
-    @zones.setter
-    def zones(self, value):
-        self._zones = value
-
-    def _set_zones(self, accessories):
-        """accessories: per channel a list of accessory ids, or None before the hub has reported."""
-        self._zones = []
-        for ch, acc in enumerate(accessories):
-            leds, shape, fans = nzxt_channel(acc)
-            z = Zone(f"ch{ch + 1}", f"Channel {ch + 1}", 40, leds, shape)
-            z.fans = fans
-            self._zones.append(z)
-
-    @property
-    def online(self):
-        return self.hub.is_open
-
-    def open(self):
-        self.hub.open()
-        if self._opened_at is None:
-            self._opened_at = time.monotonic()
-
-    def close(self):
-        self.hub.close()
-
-    def write_zone(self, zone_id, colors):
-        self.hub.set_channel_colors(int(zone_id[2:]) - 1, colors)
-
-
-# ---------------------------------------------------------------- native: ASUS Aura
-
-class AuraDevice(Device):
-    id, name, vendor, kind, type_name = "asus-aura", "ASUS Aura", "ASUS", "native", "Motherboard lighting"
-
-    def __init__(self, aura=None, dev_id="asus-aura", spec=None):
-        super().__init__()
-        self.aura = aura or native.AsusAura()
-        self.id = dev_id
-        if spec:
-            self.name, self.experimental, self.note = spec["name"], spec["experimental"], spec.get("note")
-        self._set_zones()
-
-    def _set_zones(self):
-        board = max(self.aura.board_leds, 1)
-        self.zones = [Zone("board", "Motherboard", board, board, "strip", resizable=False)]
-        # Until the board reports its headers (or if it never answers), offer three, the common count.
-        known = getattr(self.aura, "config_known", False)
-        for i in range(self.aura.argb_channels if known else max(self.aura.argb_channels, 3)):
-            self.zones.append(Zone(f"argb{i + 1}", f"ARGB header {i + 1}", 120, 30, "strip"))
-
-    @property
-    def online(self):
-        return self.aura.is_open
-
-    def open(self):
-        self.aura.open()
-        self._set_zones()
-
-    def close(self):
-        self.aura.close()
-
-    def write_zone(self, zone_id, colors):
-        if zone_id == "board":
-            self.aura.set_board_colors(colors)
-        else:
-            self.aura.set_argb_colors(int(zone_id[4:]) - 1, colors)
+                "zones": [z.info() for z in self.zones],
+                "plugin": self.plugin, "parameters": list(self.parameters), "params": dict(self.params)}
 
 
 # ---------------------------------------------------------------- OpenRGB devices
@@ -309,38 +191,27 @@ class OpenRGBBridge:
 
 # ---------------------------------------------------------------- manager
 
-DRIVER_IDS = {"nzxt": "nzxt-hub", "aura": "asus-aura"}
-
-
-def detect_natives(hid_list, registry=None, backend=None):
-    """Native devices for every registry controller in an hid.enumerate() list. One device per physical controller
-    (the first matching interface, or the one the registry names); ids stay "nzxt-hub" / "asus-aura" for the first
-    of a kind, so saved zone settings keep working, then "-2", "-3"."""
-    registry = registry or REGISTRY
-    found, seen, counts = [], set(), {}
-    for spec in registry["native"]:
-        for info in hid_list:
-            if (info.get("vendor_id"), info.get("product_id")) != (spec["vid"], spec["pid"]):
-                continue
-            if spec["interface"] is not None and info.get("interface_number") != spec["interface"]:
-                continue
-            key = (spec["vid"], spec["pid"], info.get("serial_number") or "")
-            if key in seen and spec["interface"] is None:
-                continue                                 # another interface of a controller we already have
-            seen.add(key)
-            drv = spec["driver"]
-            counts[drv] = counts.get(drv, 0) + 1
-            dev_id = DRIVER_IDS[drv] + ("" if counts[drv] == 1 else f"-{counts[drv]}")
-            path = info.get("path")
-            if drv == "nzxt":
-                hub = native.NzxtControlHub(backend, pid=spec["pid"], name=spec["name"],
-                                            led_channels=spec["led_channels"], fan_ports=spec["fan_ports"], path=path)
-                found.append(NzxtDevice(hub, dev_id, spec))
-            elif drv == "aura":
-                aura = native.AsusAura(backend=backend, pid=spec["pid"], interface=spec["interface"], path=path)
-                found.append(AuraDevice(aura, dev_id, spec))
-            log.info("found %s (%04x:%04x)%s", spec["name"], spec["vid"], spec["pid"],
-                     ", experimental support" if spec["experimental"] else "")
+def detect_natives(hid_list, plugins=None, backend=None):
+    """Native devices for every controller in an hid.enumerate() list that a plugin claims. Ids are the plugin's
+    ID_PREFIX for the first of a family ("nzxt-hub", "asus-aura"), so saved zone settings keep working, then "-2",
+    "-3"."""
+    from . import plugins as plugin_mod
+    plugins = plugin_mod.load() if plugins is None else plugins
+    found, counts = [], {}
+    for plugin, product, info in plugin_mod.match(plugins, hid_list):
+        counts[plugin.ID_PREFIX] = counts.get(plugin.ID_PREFIX, 0) + 1
+        n = counts[plugin.ID_PREFIX]
+        dev_id = plugin.ID_PREFIX + ("" if n == 1 else f"-{n}")
+        try:
+            dev = plugin.create(info, product, dev_id, backend)
+        except Exception as e:  # one broken plugin must not cost the user every other device
+            log.error("%s: could not set up %s: %s", plugin.NAME, product.name, e)
+            counts[plugin.ID_PREFIX] -= 1
+            continue
+        dev.plugin_module = plugin
+        found.append(dev)
+        log.info("found %s (%04x:%04x) via %s%s", product.name, product.vid, product.pid, plugin.NAME,
+                 ", experimental support" if product.experimental else "")
     return found
 
 
@@ -348,19 +219,19 @@ class DeviceManager:
     RECONNECT = 5.0
     RESET_DEBOUNCE = 5.0     # Windows sends two resume broadcasts, and the engine and controller notice the gap too
 
-    def __init__(self, hid_backend=None, natives=None, bridge=None, registry=None):
-        registry = registry or REGISTRY
+    def __init__(self, hid_backend=None, natives=None, bridge=None, plugins=None):
         if natives is None:
             try:
                 import hid
-                natives = detect_natives((hid_backend or hid).enumerate(), registry, hid_backend)
+                natives = detect_natives((hid_backend or hid).enumerate(), plugins, hid_backend)
             except Exception as e:  # no USB access must never stop OpenRGB devices from working
                 log.warning("USB device scan failed: %s", e)
                 natives = []
         self.natives = {d.id: d for d in natives}
-        drivers = {"nzxt" if isinstance(d, NzxtDevice) else "aura" for d in natives
-                   if isinstance(d, (NzxtDevice, AuraDevice))}
-        skip = [name for drv in sorted(drivers) for name in registry["openrgb_skip"].get(drv, [])]
+        # leave out of OpenRGB whatever a plugin already drives, but only for families that are actually here
+        present = {id(m): m for m in (getattr(d, "plugin_module", None) for d in natives) if m is not None}
+        skip = [name for m in sorted(present.values(), key=lambda m: m.ID_PREFIX)
+                for name in getattr(m, "OPENRGB_SKIP", [])]
         self.bridge = bridge or OpenRGBBridge(skip=tuple(skip))
         from .dynlight import DynamicLightingBridge
         self.dynamic = DynamicLightingBridge()

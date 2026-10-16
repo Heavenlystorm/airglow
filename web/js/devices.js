@@ -1,6 +1,7 @@
 // Devices screen: every device and its zones (LED counts, shape, colour order, identify), and OpenRGB setup.
 
 import { $, $$, S, emit, esc, fail, get, on, post, setHTML, toast } from "./core.js";
+import { fieldHTML, wireFields } from "./lighting.js";
 
 let current = null;              // selected device id, or "openrgb"
 let frames = {};
@@ -82,11 +83,34 @@ function renderDetail() {
   setHTML(box, `<div class="dev-head"><div><h1>${esc(d.name)}</h1><p class="meta">${esc(d.vendor)}, ${esc(d.type)}. ${how}.${d.online ? "" : ` <span style="color:var(--warm)">${esc(d.error || "Not connected")}</span>`}</p></div></div>
     ${d.experimental ? `<p class="hint warn"><b>Experimental support.</b> This controller follows the same protocol as ones Airglow is tested with, but nobody has confirmed it with Airglow yet.${d.note ? ` ${esc(d.note)}` : ""} If something looks wrong, save a diagnostics report (Settings, About) and open an issue.</p>` : ""}
     <p class="hint">Set how many LEDs each zone has and their shape, so effects line up. If you're not sure, press Identify: the first LED blinks green, then a white dot walks through every LED in order.</p>
+    ${paramsBlock(d)}
     ${d.zones.map(zoneCard).join("")}`);
+  wireParams(d);
   if (pendingScroll) { document.getElementById(`zc-${pendingScroll}`)?.scrollIntoView({ block: "center" }); pendingScroll = null; }
 }
 
 let pendingScroll = null;
+
+// Settings a device plugin declares (airglow/plugins/*.py, PARAMETERS), drawn from the same schema as effects.
+function paramsBlock(d) {
+  if (!d.parameters?.length) return "";
+  return `<section class="dev-params" aria-label="Device settings">
+    ${d.parameters.map((p) => fieldHTML(p, d.params?.[p.id] ?? p.default, `dp-${d.id}`)).join("")}</section>`;
+}
+
+let paramTimer = null;
+function wireParams(d) {
+  const root = $("#dev-detail .dev-params");
+  if (!root) return;
+  wireFields(root, { params: d.parameters }, d.params || {}, (params, live) => {
+    clearTimeout(paramTimer);
+    paramTimer = setTimeout(() => post(`/api/devices/${encodeURIComponent(d.id)}/params`, params)
+      .then((r) => {
+        for (const z of S.zones.zones) if (z.device.id === d.id) z.device.params = r.params;
+        if (!live) toast("Saved");
+      }).catch(fail), live ? 250 : 0);
+  });
+}
 
 async function saveZone(key, mutate) {
   const z = S.zones.zones.find((x) => x.key === key);
@@ -106,7 +130,7 @@ function paintStrips() {
     const hex = frames[el.dataset.strip];
     const cells = el.children;
     for (let i = 0; i < cells.length; i++) {
-      cells[i].style.background = hex && hex.length >= (i + 1) * 6 ? `#${hex.substr(i * 6, 6)}` : "#22262c";
+      cells[i].style.background = hex && hex.length >= (i + 1) * 6 ? `#${hex.substr(i * 6, 6)}` : "";
     }
   }
 }

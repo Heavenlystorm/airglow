@@ -259,6 +259,12 @@ class Controller:
         self.history.append({"t": round(time.time()), "cpu": s.get("cpu_temp"), "gpu": s.get("gpu_temp"),
                              "cpu_w": s.get("cpu_power"), "gpu_w": s.get("gpu_power"), "duty": self.fan_duty})
 
+    def _apply_device_params(self):
+        saved = self.store.device_params()
+        for d in self.manager.all().values():
+            if d.parameters:
+                d.set_params(saved.get(d.id, {}))
+
     def tick(self):
         now = time.time()
         if self._last_tick is not None and now - self._last_tick > 10 and self.sleeping:
@@ -275,6 +281,7 @@ class Controller:
             log.info("automation in control: lighting=%s fans=%s", *after)
             self.apply()
         self.store.ensure_zones([d.info() for d in self.manager.all().values()])
+        self._apply_device_params()
         if not self.engine.healthy and self.engine.last_frame is not None and not self._engine_stall_logged:
             log.error("lighting engine stopped producing frames; restart Airglow to recover")
             self._engine_stall_logged = True
@@ -319,6 +326,7 @@ class Controller:
         self.manager.maintain(self.store.openrgb_enabled(), force=True)
         self.manager.start(self.store.openrgb_enabled)
         self.store.ensure_zones([d.info() for d in self.manager.all().values()])
+        self._apply_device_params()
         self.engine.start()
         if self._power:
             self._power.start()

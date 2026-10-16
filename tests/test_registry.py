@@ -1,7 +1,15 @@
+import types
 import unittest
 
-from airglow import devices, hw
-from tests.fakes import FakeHidBackend, FakeHidDevice, FakeHub, FakeLightDevice, FakeManager
+from airglow import devices, hw, plugins
+from airglow.plugins import asus_aura_usb, nzxt_hue2
+from tests.fakes import (
+    FakeHidBackend,
+    FakeHidDevice,
+    FakeHub,
+    FakeLightDevice,
+    FakeManager,
+)
 
 
 def hid_entry(vid, pid, interface=0, path=None, serial=""):
@@ -9,13 +17,43 @@ def hid_entry(vid, pid, interface=0, path=None, serial=""):
             "path": path or f"{vid:04x}:{pid:04x}:{interface}:{serial}".encode()}
 
 
-class RegistryTests(unittest.TestCase):
-    def test_registry_loads_and_every_entry_has_a_driver(self):
-        reg = hw.load_registry()
-        self.assertTrue(reg["native"])
-        for e in reg["native"]:
-            self.assertIn(e["driver"], hw.DRIVER_IDS, e)
-        self.assertEqual(hw.NZXT_ACCESSORIES[0x19]["leds"], 8)
+class PluginTests(unittest.TestCase):
+    def test_builtin_plugins_load_and_meet_the_contract(self):
+        loaded = plugins.load()
+        self.assertEqual([m.ID_PREFIX for m in loaded], ["asus-aura", "nzxt-hub"])
+        for m in loaded:
+            plugins.check(m)                                    # raises on a broken contract
+        self.assertEqual(nzxt_hue2.ACCESSORIES[0x19]["leds"], 8)
+
+    def test_catalog_lists_every_product(self):
+        cat = {c["plugin"]: c for c in plugins.catalog()}
+        self.assertIn({"vid": "1E71", "pid": "2022", "name": "NZXT Control Hub", "experimental": False},
+                      cat["nzxt_hue2"]["products"])
+
+    def test_contract_violations_are_reported(self):
+        bad = types.ModuleType("airglow.plugins.bad")
+        bad.NAME, bad.VENDOR, bad.TRANSPORT, bad.ID_PREFIX = "Bad", "X", "hid", "bad"
+        bad.create = lambda *a: None
+        bad.PRODUCTS = []
+        with self.assertRaisesRegex(plugins.PluginError, "PRODUCTS"):
+            plugins.check(bad)
+        bad.PRODUCTS = [plugins.Product(1, 2, "A"), plugins.Product(1, 2, "B")]
+        with self.assertRaisesRegex(plugins.PluginError, "twice"):
+            plugins.check(bad)
+        bad.PRODUCTS, bad.TRANSPORT = [plugins.Product(1, 2, "A")], "serial"
+        with self.assertRaisesRegex(plugins.PluginError, "transport"):
+            plugins.check(bad)
+
+    def test_a_plugin_that_fails_to_create_does_not_cost_the_others(self):
+        broken = types.ModuleType("broken")
+        broken.NAME, broken.ID_PREFIX = "Broken", "broken"
+        broken.PRODUCTS = [plugins.Product(0x1234, 0x0001, "Broken thing")]
+        def create(*a):
+            raise RuntimeError("boom")
+        broken.create = create
+        found = hw.detect_natives([hid_entry(0x1234, 0x0001), hid_entry(0x1E71, 0x2022)],
+                                  plugins=[broken, nzxt_hue2], backend=FakeHidBackend())
+        self.assertEqual([d.id for d in found], ["nzxt-hub"])
 
     def test_detects_known_controllers_once_each(self):
         found = hw.detect_natives([
@@ -27,12 +65,14 @@ class RegistryTests(unittest.TestCase):
             hid_entry(0x0B05, 0x1939, interface=1, serial="A"),
             hid_entry(0x046D, 0xC52B),                               # a mouse receiver: not ours
         ], backend=FakeHidBackend())
-        self.assertEqual([d.id for d in found], ["nzxt-hub", "nzxt-hub-2", "asus-aura", "asus-aura-2"])
-        self.assertFalse(found[0].experimental)
-        self.assertTrue(found[1].experimental)
-        self.assertEqual(found[1].name, "NZXT RGB & Fan Controller")
-        self.assertEqual(found[1].hub.FAN_PORTS, 3)
-        self.assertEqual(found[2].aura.path, hid_entry(0x0B05, 0x19AF, interface=2)["path"])
+        self.assertEqual(sorted(d.id for d in found), ["asus-aura", "asus-aura-2", "nzxt-hub", "nzxt-hub-2"])
+        by_id = {d.id: d for d in found}
+        self.assertFalse(by_id["nzxt-hub"].experimental)
+        self.assertTrue(by_id["nzxt-hub-2"].experimental)
+        self.assertEqual(by_id["nzxt-hub-2"].name, "NZXT RGB & Fan Controller")
+        self.assertEqual(by_id["nzxt-hub-2"].hub.FAN_PORTS, 3)
+        self.assertEqual(by_id["asus-aura"].aura.path, hid_entry(0x0B05, 0x19AF, interface=2)["path"])
+        self.assertEqual(by_id["nzxt-hub"].plugin, "nzxt_hue2")
 
     def test_openrgb_skips_what_we_drive_natively(self):
         manager = hw.DeviceManager(natives=hw.detect_natives([hid_entry(0x1E71, 0x2022)], backend=FakeHidBackend()))
@@ -40,21 +80,57 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("ASUS ROG", manager.bridge.skip)
 
 
+class DeviceParameterTests(unittest.TestCase):
+    def test_brightness_limit_scales_what_the_hub_is_sent(self):
+        class Hub:
+            accessories, led_channels, colors = None, 5, []
+            def set_channel_colors(self, ch, colors):
+                self.colors.append((ch, colors))
+        nz = nzxt_hue2.NzxtDevice(Hub())
+        nz.write_zone("ch1", [(200, 100, 50)])
+        nz.set_params({"brightness_limit": 50})
+        nz.write_zone("ch1", [(200, 100, 50)])
+        self.assertEqual(nz.hub.colors, [(0, [(200, 100, 50)]), (0, [(100, 50, 25)])])
+
+    def test_board_leds_off_keeps_argb_headers_lit(self):
+        aura = devices.AsusAura(backend=FakeHidBackend(device=FakeHidDevice()))
+        dev = asus_aura_usb.AuraDevice(aura)
+        sent = []
+        aura.set_board_colors = lambda c: sent.append(("board", c))
+        aura.set_argb_colors = lambda ch, c: sent.append((ch, c))
+        dev.set_params({"board_leds": False})
+        dev.write_zone("board", [(255, 0, 0)] * 2)
+        dev.write_zone("argb1", [(255, 0, 0)])
+        self.assertEqual(sent, [("board", [(0, 0, 0)] * 2), (0, [(255, 0, 0)])])
+
+    def test_saved_values_are_validated_against_the_schema(self):
+        import tempfile
+
+        from airglow import config
+        with tempfile.TemporaryDirectory() as tmp:
+            store = config.Store(tmp)
+            clean = store.set_device_params("nzxt-hub", nzxt_hue2.PARAMETERS, {"brightness_limit": 500, "x": 1})
+            self.assertEqual(clean, {"brightness_limit": 100})       # clamped, unknown key dropped
+            self.assertEqual(config.Store(tmp).device_params()["nzxt-hub"], clean)
+            with self.assertRaises(ValueError):
+                store.set_device_params("nzxt-hub", nzxt_hue2.PARAMETERS, {"brightness_limit": "bright"})
+
+
 class NzxtAccessoryTests(unittest.TestCase):
     def test_channel_layouts(self):
-        self.assertEqual(hw.nzxt_channel(None), (40, "strip", 1))
-        self.assertEqual(hw.nzxt_channel([]), (0, "strip", 1))
-        self.assertEqual(hw.nzxt_channel([0x13, 0x13, 0x13]), (40, "fans", 3))       # 54 LEDs, capped at 40
-        self.assertEqual(hw.nzxt_channel([0x17, 0x17]), (16, "fans", 2))
-        self.assertEqual(hw.nzxt_channel([0x1D]), (24, "fans", 3))                    # one 360 mm triple
-        self.assertEqual(hw.nzxt_channel([0x04, 0x04]), (20, "strip", 1))
-        self.assertEqual(hw.nzxt_channel([0x17, 0x04]), (18, "strip", 1))             # fan + strip: a strip
-        self.assertEqual(hw.nzxt_channel([0x7E]), (40, "strip", 1))                   # unknown accessory
+        self.assertEqual(nzxt_hue2.channel_layout(None), (40, "strip", 1))
+        self.assertEqual(nzxt_hue2.channel_layout([]), (0, "strip", 1))
+        self.assertEqual(nzxt_hue2.channel_layout([0x13, 0x13, 0x13]), (40, "fans", 3))       # 54 LEDs, capped at 40
+        self.assertEqual(nzxt_hue2.channel_layout([0x17, 0x17]), (16, "fans", 2))
+        self.assertEqual(nzxt_hue2.channel_layout([0x1D]), (24, "fans", 3))                    # one 360 mm triple
+        self.assertEqual(nzxt_hue2.channel_layout([0x04, 0x04]), (20, "strip", 1))
+        self.assertEqual(nzxt_hue2.channel_layout([0x17, 0x04]), (18, "strip", 1))             # fan + strip: a strip
+        self.assertEqual(nzxt_hue2.channel_layout([0x7E]), (40, "strip", 1))                   # unknown accessory
 
     def test_fans_only_model_has_no_light_zones_and_never_asks_for_led_info(self):
         dev = FakeHidDevice()
         hub = devices.NzxtControlHub(FakeHidBackend(device=dev), pid=0x2011, led_channels=0, fan_ports=3)
-        nz = hw.NzxtDevice(hub)
+        nz = nzxt_hue2.NzxtDevice(hub)
         nz.open()
         self.assertEqual(nz.zones, [])
         self.assertNotIn([0x20, 0x03], [w[:2] for w in dev.writes])
@@ -70,6 +146,7 @@ class NzxtAccessoryTests(unittest.TestCase):
 class MultiHubFanTests(unittest.TestCase):
     def test_fans_run_on_every_fan_controller(self):
         import tempfile
+
         from airglow import config
         from airglow.controller import Controller
         from tests.fakes import signals

@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from airglow import api, config  # noqa: E402
 from airglow.controller import Controller  # noqa: E402
+from airglow.plugins import asus_aura_usb, nzxt_hue2  # noqa: E402
 from tests.fakes import FakeHub, FakeLightDevice, FakeManager  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +28,8 @@ DEMO_LHM_PORT = 8791
 
 
 class DevNzxt(FakeLightDevice):
+    plugin, parameters = "nzxt_hue2", nzxt_hue2.PARAMETERS
+
     def __init__(self):
         super().__init__("nzxt-hub", "NZXT Control Hub", zones=(("ch1", 24), ("ch2", 24), ("ch3", 0), ("ch4", 0), ("ch5", 8)),
                          type_name="Fan and lighting hub")
@@ -40,6 +43,8 @@ class DevNzxt(FakeLightDevice):
 def sample_rig():
     aura = FakeLightDevice("asus-aura", "ASUS Aura", zones=(("board", 1), ("argb1", 30), ("argb2", 30), ("argb3", 30)),
                            type_name="Motherboard lighting")
+    aura.plugin, aura.parameters = "asus_aura_usb", asus_aura_usb.PARAMETERS
+    aura.params = {p["id"]: p["default"] for p in aura.parameters}
     for z, name in zip(aura.zones, ["Motherboard", "ARGB header 1", "ARGB header 2", "ARGB header 3"]):
         z.name, z.max_leds = name, (1 if name == "Motherboard" else 120)
     gpu = FakeLightDevice("openrgb:sample-graphics-card:1", "Sample Graphics Card",

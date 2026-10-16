@@ -129,7 +129,7 @@ function draw() {
         }
         const [x, y] = toScreen(px + dx, py + dy);
         if (!pass) {
-          ctx.fillStyle = z.config.enabled ? "#1c1f24" : "#15171b";
+          ctx.fillStyle = z.config.enabled ? "#1e1e20" : "#141415";
           ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
           continue;
         }
@@ -178,7 +178,7 @@ export function paintMini(c) {
       const rad = Math.max(1.4, ledRadius(z) * s);
       for (let i = 0; i < z.positions.length; i++) {
         const x = ox + z.positions[i][0] * U * s, y = oy + z.positions[i][1] * U * s;
-        if (!pass) { ctx.fillStyle = "#1c1f24"; ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill(); continue; }
+        if (!pass) { ctx.fillStyle = "#1e1e20"; ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill(); continue; }
         if (!hex) continue;
         const R = parseInt(hex.substr(i * 6, 2), 16), G = parseInt(hex.substr(i * 6 + 2, 2), 16), B = parseInt(hex.substr(i * 6 + 4, 2), 16);
         const k = Math.max(R, G, B) / 255;

@@ -3,6 +3,8 @@
 
 import os
 
+from PyInstaller.utils.hooks import collect_submodules
+
 root = os.path.abspath(SPECPATH)
 
 a = Analysis(
@@ -15,7 +17,8 @@ a = Analysis(
         (os.path.join(root, "LICENSE"), "."),
         (os.path.join(root, "THIRD_PARTY_NOTICES.md"), "."),
     ],
-    hiddenimports=["pystray._win32", "soundcard.mediafoundation",
+    # device plugins are found at runtime with pkgutil, so PyInstaller can't see them either
+    hiddenimports=collect_submodules("airglow.plugins") + ["pystray._win32", "soundcard.mediafoundation",
                    # Windows Dynamic Lighting (imported lazily, so PyInstaller can't see them)
                    "winrt.runtime", "winrt.windows.devices.lights", "winrt.windows.devices.enumeration",
                    "winrt.windows.foundation", "winrt.windows.foundation.collections",

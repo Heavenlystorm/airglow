@@ -62,7 +62,7 @@ export function sceneColor(s) {
   if (p.color) return p.color;
   if (p.colors) return p.colors[0];
   if (p.cool) return p.cool;
-  return { rainbow: "#ff5a1f", cycle: "#22e06b", spectrum: "#2f5bff", screen: "#00b4ff", off: "#30343a" }[s?.effect] || "#ecebe6";
+  return { rainbow: "#ff5a1f", cycle: "#22e06b", spectrum: "#2f5bff", screen: "#00b4ff", off: "#3a3b40" }[s?.effect] || "#e9e5da";
 }
 
 // CSS background that previews a scene: solid colour, its gradient, or a colour wheel for rainbow-style effects.

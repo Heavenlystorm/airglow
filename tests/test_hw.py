@@ -1,6 +1,7 @@
 import unittest
 
 from airglow import devices, hw
+from airglow.plugins.nzxt_hue2 import NzxtDevice
 from tests.fakes import FakeHidBackend, FakeHidDevice
 from tests.test_devices import NZXT_FAN_REPORT
 
@@ -17,7 +18,7 @@ class NzxtZoneTests(unittest.TestCase):
 
     def test_zones_from_real_report(self):
         dev = FakeHidDevice(reads=[list(NZXT_LED_INFO), list(NZXT_FAN_REPORT)])
-        nz = hw.NzxtDevice(devices.NzxtControlHub(backend=FakeHidBackend(device=dev)))
+        nz = NzxtDevice(devices.NzxtControlHub(backend=FakeHidBackend(device=dev)))
         nz.open()
         leds = [z.default_leds for z in nz.zones]
         self.assertEqual(leds, [24, 24, 0, 0, 8])                  # exactly what OpenRGB reported
@@ -25,7 +26,7 @@ class NzxtZoneTests(unittest.TestCase):
 
     def test_late_accessory_report_still_updates_zones(self):
         dev = FakeHidDevice(reads=[])                               # nothing arrives during open()
-        nz = hw.NzxtDevice(devices.NzxtControlHub(backend=FakeHidBackend(device=dev)))
+        nz = NzxtDevice(devices.NzxtControlHub(backend=FakeHidBackend(device=dev)))
         nz.open()
         self.assertEqual([z.default_leds for z in nz.zones], [40] * 5)
         self.assertTrue(all(z.provisional for z in nz.zones))      # not trusted yet, so never saved
@@ -35,7 +36,7 @@ class NzxtZoneTests(unittest.TestCase):
         self.assertFalse(any(z.provisional for z in nz.zones))
 
     def test_fallback_becomes_final_after_grace_period(self):
-        nz = hw.NzxtDevice(devices.NzxtControlHub(backend=FakeHidBackend(device=FakeHidDevice())))
+        nz = NzxtDevice(devices.NzxtControlHub(backend=FakeHidBackend(device=FakeHidDevice())))
         nz.open()
         nz._opened_at -= nz.REPORT_GRACE + 1
         self.assertFalse(any(z.provisional for z in nz.zones))
