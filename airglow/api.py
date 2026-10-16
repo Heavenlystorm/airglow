@@ -130,7 +130,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode())
             self.wfile.flush()
 
-        last_state, last_frame = 0.0, None
+        last_state, last_frame, last_zones = 0.0, None, None
         try:
             self.wfile.write(b"retry: 2000\n\n")
             while not server.stopping.is_set():
@@ -139,8 +139,12 @@ class Handler(BaseHTTPRequestHandler):
                     send("state", route(server, "GET", "/api/state", None))
                     last_state = now
                 if want_frames and ctrl.engine.frame_id != last_frame:
-                    last_frame = ctrl.engine.frame_id
-                    send("frames", {"id": last_frame, "fps": round(ctrl.engine.fps, 1), "zones": ctrl.engine.frames})
+                    last_frame, zones = ctrl.engine.frame_id, ctrl.engine.frames
+                    # the engine makes a new frame every tick even when nothing moves (Solid, Off, a paused
+                    # automation): sending only changes lets the page skip repainting the preview, its main cost
+                    if zones != last_zones:
+                        last_zones = zones
+                        send("frames", {"id": last_frame, "fps": round(ctrl.engine.fps, 1), "zones": zones})
                 server.stopping.wait(STREAM_FRAME_EVERY if want_frames else 0.25)
         except (OSError, ValueError):
             pass                                  # the page went away

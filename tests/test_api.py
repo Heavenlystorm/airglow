@@ -2,6 +2,7 @@ import http.client
 import json
 import tempfile
 import threading
+import time
 import unittest
 import urllib.parse
 
@@ -63,6 +64,35 @@ class ApiTests(unittest.TestCase):
         conn.close()
         self.assertIn("scene", events["state"])
         self.assertIn("zones", events["frames"])
+
+    def test_event_stream_skips_frames_that_did_not_change(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/api/stream?frames=1", headers={"Host": f"127.0.0.1:{self.port}"})
+        resp = conn.getresponse()
+
+        def next_frames():
+            current = None
+            while True:
+                line = resp.fp.readline().decode().rstrip("\n")
+                if line.startswith("event: "):
+                    current = line[7:]
+                elif line.startswith("data: ") and current == "frames":
+                    return json.loads(line[6:])
+
+        engine = self.ctrl.engine
+        saved = engine.frames
+        try:
+            next_frames()
+            for _ in range(4):                     # new frame ids, same colours: nothing to send
+                engine.frames = dict(engine.frames)
+                engine.frame_id += 1
+                time.sleep(api.STREAM_FRAME_EVERY * 2)
+            engine.frames = {**engine.frames, "test/z": "ff0000"}
+            engine.frame_id += 1
+            self.assertEqual(next_frames()["zones"].get("test/z"), "ff0000")
+        finally:
+            conn.close()
+            engine.frames = saved
 
     def test_event_stream_checks_the_host_too(self):
         self.assertEqual(self.request("GET", "/api/stream", host="evil.example")[0], 403)
