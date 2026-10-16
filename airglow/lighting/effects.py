@@ -252,9 +252,15 @@ def clean_params(effect_id, params):
     """Validate effect parameters against the schema; missing values take defaults."""
     if effect_id not in EFFECTS:
         raise ValueError(f"unknown effect '{effect_id}'")
+    return clean_values(EFFECTS[effect_id].params, params)
+
+
+def clean_values(schema, params):
+    """Validate values against a parameter schema (effects and device plugins share it); missing values take
+    defaults, unknown ones are dropped."""
     params = params if isinstance(params, dict) else {}
     out = {}
-    for spec in EFFECTS[effect_id].params:
+    for spec in schema:
         v = params.get(spec["id"], spec["default"])
         kind = spec["type"]
         if kind == "color":

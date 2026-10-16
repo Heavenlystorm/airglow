@@ -185,7 +185,10 @@ def _zones_view(ctrl, store):
                 continue
             pos, local, fan = geometry.positions(cfg["layout"])
             out.append({"key": key, "device": {"id": dev.id, "name": dev.name, "vendor": dev.vendor, "kind": dev.kind,
-                                               "type": dev.type_name, "online": dev.online, "error": dev.error},
+                                               "type": dev.type_name, "online": dev.online, "error": dev.error,
+                                               "experimental": dev.experimental, "note": dev.note,
+                                               "plugin": dev.plugin, "parameters": list(dev.parameters),
+                                               "params": dict(dev.params)},
                         "zone": z.info(), "config": cfg,
                         "positions": [[round(float(x), 4), round(float(y), 4)] for x, y in pos],
                         "fan_index": fan.tolist()})
@@ -284,6 +287,17 @@ def route(server, method, path, body, query=None):
         cfg = store.set_zone(key, body, zone.max_leds)
         ctrl.engine.invalidate(key)
         return {"config": cfg}
+    m = re.fullmatch(r"/api/devices/([^/]+)/params", path)
+    if m:
+        dev = ctrl.manager.get(urllib.parse.unquote(m.group(1)))
+        if not dev or not dev.parameters:
+            raise ApiError(404, "That device isn't connected, or has no settings.")
+        try:
+            params = store.set_device_params(dev.id, dev.parameters, body)
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
+        dev.set_params(params)
+        return {"params": params}
     if path == "/api/settings":
         if "start_with_windows" in body:
             autostart.enable() if body.pop("start_with_windows") else autostart.disable()

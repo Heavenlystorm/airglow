@@ -1,8 +1,10 @@
 // Fans screen: temperature/power readouts with history, the curve editor, and fan speeds.
 
+import { ghost } from "./motion.js";
 import { $, S, cap, clamp, curveLabel, emit, esc, fail, fmtTemp, on, post, setHTML, tempLevel, toUnit, toast, unitF } from "./core.js";
 
 const HISTORY_SECONDS = 600;
+const num = (v) => `<span class="num" data-ghost="${ghost(v)}">${v}</span>`;
 
 // ------------------------------------------------------------ readouts
 function spark(points, min, max, color) {
@@ -15,12 +17,12 @@ function spark(points, min, max, color) {
 
 const shortCpu = (n) => (n || "Processor").replace(/^AMD\s+|^Intel\(R\)\s+Core\(TM\)\s+/i, "");
 const shortGpu = (n) => (n || "Graphics card").replace(/^NVIDIA\s+GeForce\s+|^AMD\s+Radeon\s+/i, "");
-const lineColor = (lvl) => (lvl === "hot" ? "#ff5d4f" : lvl === "warm" ? "#ffab40" : "#a8acb2");
+const lineColor = (lvl) => (lvl === "hot" ? "#ef5a48" : lvl === "warm" ? "#e39540" : "#b9b5aa");
 
 function renderReadouts() {
   const s = S.state.sensors, h = S.history;
   const pts = (k) => h.filter((p) => p[k] != null).map((p) => [p.t, p[k]]);
-  const tempBig = (c, lvl) => `<div class="big ${lvl}">${c == null ? "–" : Math.round(toUnit(c))}<span class="u">°${unitF() ? "F" : "C"}</span></div>`;
+  const tempBig = (c, lvl) => `<div class="big ${lvl}">${num(c == null ? "–" : Math.round(toUnit(c)))}<span class="u">°${unitF() ? "F" : "C"}</span></div>`;
   const cpuLvl = tempLevel(s.cpu_temp, 80, 90), gpuLvl = tempLevel(s.gpu_temp, 75, 85);
   const peak = Math.max(150, ...h.map((p) => (p.cpu_w ?? 0) + (p.gpu_w ?? 0)));
   const total = h.filter((p) => p.cpu_w != null && p.gpu_w != null).map((p) => [p.t, p.cpu_w + p.gpu_w]);
@@ -30,7 +32,7 @@ function renderReadouts() {
     <div class="ro"><div class="head"><span>${esc(shortGpu(s.gpu_name))}</span><span>${s.gpu_power != null ? Math.round(s.gpu_power) + " W" : ""}</span></div>
       ${tempBig(s.gpu_temp, gpuLvl)}${spark(pts("gpu"), 20, 100, lineColor(gpuLvl))}</div>
     <div class="ro"><div class="head"><span>Power draw</span><span>processor and graphics</span></div>
-      <div class="big">${s.total_power == null ? "–" : Math.round(s.total_power)}<span class="u">W</span></div>${spark(total, 0, Math.ceil(peak * 1.15 / 50) * 50, "#a8acb2")}</div>`;
+      <div class="big">${num(s.total_power == null ? "–" : Math.round(s.total_power))}<span class="u">W</span></div>${spark(total, 0, Math.ceil(peak * 1.15 / 50) * 50, "#b9b5aa")}</div>`;
   if (!s.online) {
     html += `<p class="ro note">Temperatures come from LibreHardwareMonitor, which isn't responding. Open it from the Start menu, and turn on Options, Remote Web Server, Run.</p>`;
   }

@@ -8,7 +8,8 @@ let selectedZone = null;
 let editingParams = 0;          // timestamp of the last local edit; pauses re-rendering from polled state
 
 // ------------------------------------------------------------ parameter controls (built from the schema)
-function fieldHTML(spec, value, prefix) {
+// Shared with the Devices tab, which draws device plugin settings from the same schema.
+export function fieldHTML(spec, value, prefix) {
   const id = `${prefix}-${spec.id}`;
   if (spec.type === "color") {
     return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span></div>
@@ -38,7 +39,7 @@ function fieldHTML(spec, value, prefix) {
 }
 
 // Wire a block of fields; onChange(newParams) receives the full params object.
-function wireFields(root, effect, params, onChange) {
+export function wireFields(root, effect, params, onChange) {
   const cur = structuredClone(params);
   const send = (live = true) => { editingParams = Date.now(); onChange(structuredClone(cur), live); };
   for (const spec of effect.params) {

@@ -13,15 +13,20 @@ every rig is different and nobody owns all the hardware.
 **Through OpenRGB.** Most devices work this way. If OpenRGB can control it, Airglow can. Problems that also happen in
 OpenRGB itself belong in the [OpenRGB tracker](https://gitlab.com/CalcProgrammer1/OpenRGB/-/issues).
 
-**Native USB controllers.** Airglow drives a few controllers directly. Which ones, and their channel counts, are
-listed in [`airglow/data/devices.json`](airglow/data/devices.json):
-- A model from a family Airglow already speaks (NZXT HUE 2 generation, ASUS Aura USB) can usually be added as one
-  JSON entry: USB vendor and product id, name, channel counts. Mark it `"experimental": true` until someone has
-  confirmed it on real hardware.
+**Native USB controllers.** Airglow drives some controllers directly, through device plugins in
+[`airglow/plugins/`](airglow/plugins/). There's one module per controller family, and nothing else in Airglow
+names it: detection, the OpenRGB hand-off, the Devices tab and per-device settings all come from what the module
+declares. The contract is at the top of [`airglow/plugins/__init__.py`](airglow/plugins/__init__.py).
+- A model from a family Airglow already speaks (NZXT HUE 2 generation, ASUS Aura USB) is one more `Product` line
+  in that plugin: USB vendor and product id, name, and its facts (channel counts). Mark it `experimental=True`
+  until someone has confirmed it on real hardware.
 - If you own an experimental one and it works, say so in an issue (with a diagnostics report) and we'll drop the flag.
-- NZXT accessory LED counts are in the same file under `nzxt_accessories`.
-- A new protocol needs a driver: packet builders as pure functions in `airglow/devices.py` (with tests built from
-  real captures), and a `Device` subclass in `airglow/hw.py`.
+- NZXT accessory LED counts are in `airglow/plugins/nzxt_hue2.py` under `ACCESSORIES`.
+- A new protocol is a new plugin: packet builders as pure functions in `airglow/devices.py` (with tests built from
+  real captures), and a module in `airglow/plugins/` with `PRODUCTS`, a `Device` subclass and `create()`. Give it
+  a new `ID_PREFIX`, and never change one after a release: saved zone settings are keyed by it.
+- A setting that belongs to one kind of device (a brightness cap, onboard LEDs on or off) goes in the plugin's
+  `PARAMETERS`. The Devices tab draws it, and the device reads it from `self.params`.
 
 Sources for device facts must be public documentation or open-source projects with a compatible way of learning
 from them (we credit liquidctl and OpenRGB). Don't contribute anything taken from closed vendor software.

@@ -40,6 +40,7 @@ DEFAULT_CONFIG = {
     "dynamic_lighting_enabled": False,
     "fan_curves": DEFAULT_CURVES,
     "zones": {},
+    "device_params": {},      # device id -> plugin settings (validated against the plugin's PARAMETERS on save)
 }
 
 DEFAULT_PRESETS = [
@@ -420,6 +421,8 @@ class Store:
                         log.warning("ignoring invalid curve %s: %s", name, e)
             elif key == "zones" and isinstance(value, dict):
                 cfg["zones"] = {k: v for k, v in value.items() if isinstance(v, dict) and "layout" in v}
+            elif key == "device_params" and isinstance(value, dict):
+                cfg["device_params"] = {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, dict)}
             elif key == "port":
                 cfg["port"] = value if isinstance(value, int) and 1024 <= value <= 65535 else cfg["port"]
             elif key in DEFAULT_CONFIG:
@@ -508,6 +511,19 @@ class Store:
             self.config["zones"] = {**self.config["zones"], key: clean}
             self._write("config.json", self.config)
             self.zones_rev += 1
+        return clean
+
+    # -- device plugin settings
+    def device_params(self):
+        """device id -> saved plugin settings (read-only; use set_device_params to change)."""
+        return self.config["device_params"]
+
+    def set_device_params(self, device_id, schema, values):
+        from .lighting.effects import clean_values
+        clean = clean_values(schema, {**self.config["device_params"].get(device_id, {}), **(values or {})})
+        with self._lock:
+            self.config["device_params"] = {**self.config["device_params"], device_id: clean}
+            self._write("config.json", self.config)
         return clean
 
     def ensure_zones(self, devices):

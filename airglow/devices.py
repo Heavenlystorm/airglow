@@ -151,7 +151,7 @@ class HidDevice:
 
 class NzxtControlHub(HidDevice):
     """NZXT HUE 2 generation controllers: Control Hub (5 ARGB channels, 5 fan ports), RGB & Fan Controller,
-    Smart Device V2, HUE 2. They share one protocol and differ in channel counts (see data/devices.json)."""
+    Smart Device V2, HUE 2. They share one protocol and differ in channel counts (see plugins/nzxt_hue2.py)."""
 
     vid, pid, name = 0x1E71, 0x2022, "NZXT Control Hub"
     write_len = 64

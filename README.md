@@ -68,8 +68,8 @@ Needs Windows 10 1809 or newer with the Edge WebView2 runtime (built into Window
 | Sensors | Everything LibreHardwareMonitor reports. Memory, network, disk and processor load also work without it. |
 | Motherboard fans | Through FanControl profiles. |
 
-The full list of directly supported controllers, and how to add one, is in
-[`airglow/data/devices.json`](airglow/data/devices.json) and [CONTRIBUTING.md](CONTRIBUTING.md).
+Directly supported controllers come from device plugins, one file per family in
+[`airglow/plugins/`](airglow/plugins/). How to add one is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Troubleshooting
 If a device is missing or says "busy", another RGB program still has it open. Close that program (check the tray
@@ -117,7 +117,7 @@ Building the installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php). 
 ## How it works
 - `airglow/devices.py`, `airglow/hw.py`: USB drivers for the NZXT and ASUS controllers (packet builders are pure
   functions, tested against captures from real hardware) and the device layer. Which controllers get a driver comes
-  from `airglow/data/devices.json`.
+  from the device plugins in `airglow/plugins/`.
 - `airglow/openrgb.py`: an independent client for the OpenRGB SDK protocol (version 5, falls back to 3).
 - `airglow/dynlight.py`: Windows Dynamic Lighting devices through `Windows.Devices.Lights`.
 - `airglow/lighting/`: zone geometry, effects (numpy, about 30 fps), screen and audio inputs that only run while an

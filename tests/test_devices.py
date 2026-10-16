@@ -89,9 +89,9 @@ class HubTests(unittest.TestCase):
 
 class AuraZoneTests(unittest.TestCase):
     def test_only_reported_headers_become_zones(self):
-        from airglow import hw
+        from airglow.plugins.asus_aura_usb import AuraDevice
         aura = devices.AsusAura(backend=FakeHidBackend(device=FakeHidDevice()))
-        dev = hw.AuraDevice(aura)
+        dev = AuraDevice(aura)
         self.assertEqual(len(dev.zones), 4)                         # board + 3 until the board has answered
         aura.argb_channels, aura.config_known = 1, True
         dev._set_zones()
