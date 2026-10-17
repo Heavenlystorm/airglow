@@ -68,9 +68,8 @@ def after_install(version):
     if had_startup or not existing_user:
         autostart.enable()
     log.info("start with Windows: %s%s", autostart.is_enabled(), " (moved from the old install)" if moved else "")
-    if running_marker().exists():
-        # Setup ended the running copy to replace it, and after a silent install (winget) it doesn't start the new one
-        log.info("%s was running before the install; starting it again once Setup has finished", APP_NAME)
+    if should_start_after_setup(existing_user or moved, running_marker().exists(), had_startup):
+        log.info("starting %s again once Setup has finished", APP_NAME)
         try:
             start_after_setup(os.getppid())
         except OSError:
@@ -110,6 +109,12 @@ def clear_running():
         running_marker().unlink(missing_ok=True)
     except OSError as e:
         log.warning("could not clear the running marker: %s", e)
+
+
+def should_start_after_setup(existing_install, was_running, had_startup):
+    """Setup ends a running copy to replace it, and a silent one (winget) doesn't start the new version. Start it again
+    when the user had it running or starting with Windows; a fresh install is left to the user."""
+    return existing_install and (was_running or had_startup)
 
 
 def start_after_setup(setup_pid):
