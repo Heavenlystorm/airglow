@@ -1,0 +1,107 @@
+{
+  "_": "The Studio's layer types. One source for the builder's controls (web/js/studio.js), the renderer (web/runtime/layers.js) and the validator (airglow/fxformat.py). Parameter specs use the same types as built-in effects.",
+  "blends": ["normal", "add", "screen", "multiply"],
+  "types": {
+    "solid": {
+      "name": "Solid", "group": "Colour", "description": "One colour.",
+      "params": [
+        {"id": "color", "label": "Colour", "type": "color", "default": "#009bde"}
+      ]
+    },
+    "gradient": {
+      "name": "Gradient", "group": "Colour", "description": "Your colours blend across the case and drift.",
+      "params": [
+        {"id": "colors", "label": "Colours", "type": "colors", "default": ["#ff2fb4", "#2f5bff"], "min": 2, "max": 4},
+        {"id": "style", "label": "Shape", "type": "choice", "default": "linear", "options": [{"value": "linear", "label": "Straight"}, {"value": "radial", "label": "Round, from the centre"}]},
+        {"id": "angle", "label": "Direction", "type": "range", "default": 0, "min": 0, "max": 359, "step": 1, "unit": "°"},
+        {"id": "speed", "label": "Drift", "type": "range", "default": 20, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "scale", "label": "Size", "type": "range", "default": 50, "min": 5, "max": 100, "step": 1, "unit": ""}
+      ]
+    },
+    "rainbow": {
+      "name": "Rainbow", "group": "Colour", "description": "Bands of every colour sweep across.",
+      "params": [
+        {"id": "speed", "label": "Speed", "type": "range", "default": 40, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "size", "label": "Band size", "type": "range", "default": 50, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "angle", "label": "Direction", "type": "range", "default": 0, "min": 0, "max": 359, "step": 1, "unit": "°"},
+        {"id": "saturation", "label": "Saturation", "type": "range", "default": 100, "min": 0, "max": 100, "step": 1, "unit": ""}
+      ]
+    },
+    "cycle": {
+      "name": "Colour cycle", "group": "Colour", "description": "Everything drifts through the colours together.",
+      "params": [
+        {"id": "speed", "label": "Speed", "type": "range", "default": 30, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "saturation", "label": "Saturation", "type": "range", "default": 100, "min": 0, "max": 100, "step": 1, "unit": ""}
+      ]
+    },
+    "plasma": {
+      "name": "Plasma", "group": "Motion", "description": "Soft, flowing blobs of colour.",
+      "params": [
+        {"id": "colors", "label": "Colours", "type": "colors", "default": ["#00e0c8", "#8a3dff", "#ff2fb4"], "min": 2, "max": 4},
+        {"id": "speed", "label": "Speed", "type": "range", "default": 30, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "scale", "label": "Size", "type": "range", "default": 50, "min": 5, "max": 100, "step": 1, "unit": ""}
+      ]
+    },
+    "wave": {
+      "name": "Wave", "group": "Motion", "description": "Bright stripes roll across the case.",
+      "params": [
+        {"id": "color", "label": "Colour", "type": "color", "default": "#ffffff"},
+        {"id": "speed", "label": "Speed", "type": "range", "default": 40, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "width", "label": "Spacing", "type": "range", "default": 50, "min": 5, "max": 100, "step": 1, "unit": ""},
+        {"id": "sharpness", "label": "Sharpness", "type": "range", "default": 40, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "angle", "label": "Direction", "type": "range", "default": 0, "min": 0, "max": 359, "step": 1, "unit": "°"}
+      ]
+    },
+    "scanner": {
+      "name": "Scanner", "group": "Motion", "description": "A bright bar sweeps across and back.",
+      "params": [
+        {"id": "color", "label": "Colour", "type": "color", "default": "#ff1040"},
+        {"id": "speed", "label": "Speed", "type": "range", "default": 40, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "width", "label": "Width", "type": "range", "default": 25, "min": 2, "max": 100, "step": 1, "unit": ""},
+        {"id": "angle", "label": "Direction", "type": "range", "default": 0, "min": 0, "max": 359, "step": 1, "unit": "°"},
+        {"id": "bounce", "label": "Go back and forth", "type": "toggle", "default": true}
+      ]
+    },
+    "sparkles": {
+      "name": "Sparkles", "group": "Motion", "description": "Single LEDs flash and fade at random.",
+      "params": [
+        {"id": "color", "label": "Colour", "type": "color", "default": "#ffffff"},
+        {"id": "density", "label": "How many", "type": "range", "default": 30, "min": 1, "max": 100, "step": 1, "unit": ""},
+        {"id": "speed", "label": "Speed", "type": "range", "default": 50, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "rainbow", "label": "Random colours", "type": "toggle", "default": false}
+      ]
+    },
+    "pulse": {
+      "name": "Breathing", "group": "Motion", "description": "Fades in and out.",
+      "params": [
+        {"id": "color", "label": "Colour", "type": "color", "default": "#ff5a1f"},
+        {"id": "speed", "label": "Speed", "type": "range", "default": 30, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "floor", "label": "Lowest level", "type": "range", "default": 5, "min": 0, "max": 100, "step": 1, "unit": "%"}
+      ]
+    },
+    "beat": {
+      "name": "Beat pulse", "group": "Music", "audio": true, "description": "Flashes with the beat of what's playing.",
+      "params": [
+        {"id": "color", "label": "Colour", "type": "color", "default": "#8a3dff"},
+        {"id": "sensitivity", "label": "Sensitivity", "type": "range", "default": 60, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "decay", "label": "Fade after the beat", "type": "range", "default": 50, "min": 0, "max": 100, "step": 1, "unit": ""}
+      ]
+    },
+    "spectrum": {
+      "name": "Spectrum", "group": "Music", "audio": true, "description": "Bass to treble across the case, each part glowing with its share of the music.",
+      "params": [
+        {"id": "sensitivity", "label": "Sensitivity", "type": "range", "default": 60, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "hue", "label": "Colour shift", "type": "range", "default": 0, "min": 0, "max": 359, "step": 1, "unit": "°"},
+        {"id": "angle", "label": "Direction", "type": "range", "default": 0, "min": 0, "max": 359, "step": 1, "unit": "°"}
+      ]
+    },
+    "bass": {
+      "name": "Bass glow", "group": "Music", "audio": true, "description": "A glow from the centre that grows with the bass.",
+      "params": [
+        {"id": "color", "label": "Colour", "type": "color", "default": "#ff2fb4"},
+        {"id": "sensitivity", "label": "Sensitivity", "type": "range", "default": 60, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "size", "label": "Size", "type": "range", "default": 60, "min": 5, "max": 100, "step": 1, "unit": ""}
+      ]
+    }
+  }
+}

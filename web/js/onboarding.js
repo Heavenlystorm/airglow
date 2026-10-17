@@ -32,13 +32,40 @@ export function openWelcome() {
     <p class="lede" style="margin:0">Here's what it found on this PC. Everything stays on this computer: no account, no cloud.</p>
     <div class="onb-list">${list}</div>
     <div class="tools-box" data-tools></div>
+    ${onlineItem()}
     <p class="hint">${st.setup_pending ? "Next, tell Airglow what's plugged in where. Each light blinks while you set it up, and it takes about a minute." : "The Overview is yours to arrange: Customize moves and resizes tiles, and any tile can show a different reading."}</p>
     <div class="actions"><button class="btn quiet" id="onb-skip">${st.setup_pending ? "Later" : "Check devices"}</button><span class="spacer"></span>
       <button class="btn primary" id="onb-start">${st.setup_pending ? "Set up lights" : "Start"}</button></div></div>`);
   refreshTools();
-  const done = () => post("/api/onboarded").then(() => emit("refresh")).catch(() => {});
+  const done = () => {
+    if ($("#onb-online")) post("/api/settings", { online_checks: $("#onb-online").checked }).catch(() => {});
+    return post("/api/onboarded").then(() => emit("refresh")).catch(() => {});
+  };
   $("#onb-start").addEventListener("click", () => { done(); if (st.setup_pending) openSetup({ start: true }); else closeSheet(); });
   $("#onb-skip").addEventListener("click", () => { done(); closeSheet(); if (!st.setup_pending) location.hash = "#devices"; });
+}
+
+// Going online is opt-in: asked once, on the welcome sheet, or on its own for people who already went through it.
+const ONLINE_TEXT = "Looks for updates a minute after Airglow starts and every 6 hours. Off means Airglow only goes online when you press a button. You can change this in Settings.";
+
+function onlineItem() {
+  const u = S.state.update;
+  if (!u || u.kind === "scoop" || S.state.online_asked) return "";
+  return `<label class="onb-item"><div style="flex:1"><strong>Keep Airglow up to date automatically</strong><span>${ONLINE_TEXT}</span></div>
+    <span class="switch"><input type="checkbox" id="onb-online"><span></span></span></label>`;
+}
+
+export function openOnlineQuestion() {
+  openSheet(`<div class="body"><h2>Keep Airglow up to date?</h2>
+    <p class="lede" style="margin:0">Airglow can now check GitHub for new versions on its own and install them when it next starts.</p>
+    <p class="hint">${ONLINE_TEXT}</p>
+    <div class="actions"><button class="btn quiet" id="online-no">No, I'll check myself</button><span class="spacer"></span>
+      <button class="btn primary" id="online-yes">Yes, check automatically</button></div></div>`);
+  const answer = (yes) => post("/api/settings", { online_checks: yes })
+    .then((s) => { S.settings = s; toast(yes ? "Airglow will look for updates on its own" : "Airglow only goes online when you ask"); emit("refresh"); })
+    .catch(fail).finally(closeSheet);
+  $("#online-yes").addEventListener("click", () => answer(true));
+  $("#online-no").addEventListener("click", () => answer(false));
 }
 
 export async function closeConflict(button) {

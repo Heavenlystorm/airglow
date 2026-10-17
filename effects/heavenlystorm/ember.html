@@ -1,0 +1,16 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Ember</title>
+<meta name="airglow-effect" content="1">
+<meta name="author" content="heavenlystorm">
+<meta name="description" content="Glowing coals that flare now and then. Warm enough to leave on all evening.">
+<meta name="license" content="MIT">
+<meta name="tags" content="warm, calm">
+<meta property="l1_density" label="Sparks" type="number" min="1" max="100" step="1" default="18">
+
+<script type="application/json" id="layers">
+[
+{"type": "plasma", "enabled": true, "opacity": 100, "blend": "normal", "mask": "all", "params": {"colors": ["#1a0400", "#ff3a00", "#ffb21a"], "speed": 35, "scale": 55}, "expose": {}},
+{"type": "sparkles", "enabled": true, "opacity": 80, "blend": "add", "mask": "all", "params": {"color": "#ffcf7a", "density": 18, "speed": 60, "rainbow": false}, "expose": {"density": "Sparks"}}
+]
+</script>

@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lights and sirens</title>
+<meta name="airglow-effect" content="1">
+<meta name="author" content="heavenlystorm">
+<meta name="description" content="Red and blue bars chasing each other across the case.">
+<meta name="license" content="MIT">
+<meta name="tags" content="fast, red, blue">
+<meta property="l1_speed" label="Speed" type="number" min="0" max="100" step="1" default="55">
+
+<script type="application/json" id="layers">
+[
+{"type": "solid", "enabled": true, "opacity": 100, "blend": "normal", "mask": "all", "params": {"color": "#000000"}, "expose": {}},
+{"type": "scanner", "enabled": true, "opacity": 100, "blend": "add", "mask": "all", "params": {"color": "#ff1040", "speed": 55, "width": 30, "angle": 0, "bounce": true}, "expose": {"speed": "Speed"}},
+{"type": "scanner", "enabled": true, "opacity": 100, "blend": "add", "mask": "all", "params": {"color": "#2f5bff", "speed": 55, "width": 30, "angle": 180, "bounce": true}, "expose": {}}
+]
+</script>

@@ -171,6 +171,14 @@ function draw() {
 // The Overview's lighting tile: every lit zone, zoomed to fit, same glow as the stage.
 // frames: zone key -> hex colours; the live ones by default, or a profile's preview from the gallery
 export function paintMini(c, frames = st.frames) {
+  paintRig(c, frames, { fit: "zones" });
+}
+
+export const litZones = () => (S.zones?.zones || []).filter((z) => z.device.online && z.config.enabled && z.positions.length);
+
+// Draw the rig into a canvas. fit "zones": zoom to the lit zones (tiles, gallery cards); fit "stage": the whole
+// 1.6 x 1.0 stage, so a picture of a Studio effect's 320 x 200 canvas (backdrop) lines up behind the LEDs.
+export function paintRig(c, frames, { fit = "zones", backdrop = null, pad = 22, maxScale = 0.6 } = {}) {
   const r = c.getBoundingClientRect();
   if (!r.width || !r.height) return;
   const dpr = window.devicePixelRatio || 1;
@@ -181,13 +189,22 @@ export function paintMini(c, frames = st.frames) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.globalCompositeOperation = "source-over";
   ctx.clearRect(0, 0, r.width, r.height);
-  const zones = (S.zones?.zones || []).filter((z) => z.device.online && z.config.enabled && z.positions.length);
-  if (!zones.length) return;
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const z of zones) for (const [x, y] of z.positions) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
-  const pad = 22;
-  const s = Math.min((r.width - pad * 2) / Math.max((x1 - x0) * U, 1), (r.height - pad * 2) / Math.max((y1 - y0) * U, 1), 0.6);
+  const zones = litZones();
+  let x0 = 0, y0 = 0, x1 = 1.6, y1 = 1.0;
+  if (fit === "zones") {
+    if (!zones.length) return;
+    x0 = y0 = Infinity; x1 = y1 = -Infinity;
+    for (const z of zones) for (const [x, y] of z.positions) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  }
+  const s = Math.min((r.width - pad * 2) / Math.max((x1 - x0) * U, 1), (r.height - pad * 2) / Math.max((y1 - y0) * U, 1), maxScale);
   const ox = (r.width - (x1 - x0) * U * s) / 2 - x0 * U * s, oy = (r.height - (y1 - y0) * U * s) / 2 - y0 * U * s;
+  if (backdrop) {                                    // the effect's canvas, faint and soft, behind the LEDs
+    ctx.save();
+    ctx.globalAlpha = 0.32;
+    ctx.filter = "blur(10px)";
+    ctx.drawImage(backdrop, ox, oy, 1.6 * U * s, 1.0 * U * s);
+    ctx.restore();
+  }
   for (const pass of [0, 1]) {
     ctx.globalCompositeOperation = pass ? "lighter" : "source-over";
     for (const z of zones) {
