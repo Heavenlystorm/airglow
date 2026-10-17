@@ -7,6 +7,47 @@ import { openWelcome } from "./onboarding.js";
 const row = (label, help, ctl) => `<div class="set-row"><div><div class="label">${label}</div>${help ? `<p>${help}</p>` : ""}</div><div class="ctl">${ctl}</div></div>`;
 const sw = (id, on) => `<label class="switch"><input type="checkbox" id="${id}"${on ? " checked" : ""}><span></span></label>`;
 
+// ------------------------------------------------------------ updates
+const ONLINE_HELP = "Looks for updates a minute after Airglow starts and every 6 hours, and downloads them in the background. When this is off, Airglow only goes online when you press a button.";
+
+function updateText(u) {
+  switch (u.state) {
+    case "checking": return "Checking GitHub for a newer release.";
+    case "downloading": return `Downloading Airglow ${esc(u.latest)}: ${u.progress}%.`;
+    case "ready": return `Airglow ${esc(u.latest)} is downloaded. It's installed the next time Airglow starts, or now if you restart.`;
+    case "latest": return `You have the latest version (${esc(u.current)}).`;
+    case "available": return `Airglow ${esc(u.latest)} is available. This copy can't update itself: download it from the GitHub releases page.`;
+    case "error": return `The last check didn't work: ${esc(u.error)}`;
+    default: return u.kind === "velopack" ? "Checks GitHub for a newer release and installs it." : "Checks GitHub for a newer release.";
+  }
+}
+
+function updateButton(u) {
+  if (u.state === "ready") return `<button class="btn primary" id="s-restart">Restart to update</button>`;
+  const busy = u.state === "checking" || u.state === "downloading";
+  return `<button class="btn" id="s-update"${busy ? " disabled" : ""}>Check for updates</button>`;
+}
+
+function updateRows(v) {
+  const u = S.state?.update || v.update;
+  if (!v.updates_available || !u) return "";
+  if (u.kind === "scoop") return row("Updates", `Installed with Scoop, which keeps it up to date: <span class="path">scoop update airglow</span>`, "");
+  const s = v.settings;
+  const channel = s.update_channel;
+  return row("Check automatically", ONLINE_HELP, sw("s-online", s.online_checks))
+    + (u.kind === "velopack" ? row("Update channel", "Beta gets new features first, and the stable releases too. Going back to Stable keeps this version until a stable release is newer.",
+      `<div class="seg" id="s-channel" role="radiogroup"><button role="radio" data-v="stable" aria-checked="${channel === "stable"}">Stable</button><button role="radio" data-v="beta" aria-checked="${channel === "beta"}">Beta</button></div>`) : "")
+    + `<div id="s-update-row">${row("Updates", updateText(u), updateButton(u))}</div>`;
+}
+
+// the status row follows the live state while Settings is open
+function paintUpdate() {
+  const box = $("#s-update-row");
+  const u = S.state?.update;
+  if (!box || !u) return;
+  setHTML(box, row("Updates", updateText(u), updateButton(u)));
+}
+
 export async function loadSettings() {
   try { S.settings = await get("/api/settings"); renderSettings(); } catch (e) { fail(e); }
   refreshTools();
@@ -52,7 +93,7 @@ export function renderSettings() {
     <section class="set-group"><h2>About</h2>
       ${row(`Airglow ${esc(v.version)}`, `Free and open source under the MIT licence. Settings and logs are stored in <span class="path">${esc(v.data_dir)}</span>`, `<button class="btn" id="s-logs">Open log folder</button>`)}
       ${row("Diagnostics report", "For a bug report: what Airglow found, its settings, a sensor list and the logs, in one zip. Your user name, PC name and device serial numbers are taken out. Nothing is sent; you attach it yourself.", `<button class="btn" id="s-diag">Save a report</button>`)}
-      ${v.updates_available ? row("Updates", "Checks GitHub for a newer release. Airglow never goes online unless you press this.", `<button class="btn" id="s-update">Check for updates</button>`) : ""}
+      ${updateRows(v)}
       ${row("Welcome guide", "Shows what Airglow found on this PC and what to check.", `<button class="btn quiet" id="s-welcome">Show it again</button>`)}
     </section>`);
   $$("#settings input[type=range]").forEach(rangeFill);
@@ -79,6 +120,7 @@ export function initSettings() {
     else if (t.id === "s-orgb") save({ openrgb_enabled: t.checked }, t.checked ? "OpenRGB bridge on" : "OpenRGB bridge off");
     else if (t.id === "s-orgb-host") save({ openrgb_host: t.value.trim() });
     else if (t.id === "s-orgb-port") save({ openrgb_port: +t.value });
+    else if (t.id === "s-online") save({ online_checks: t.checked }, t.checked ? "Airglow will look for updates on its own" : "Airglow only goes online when you ask");
   });
   box.addEventListener("input", (e) => {
     const t = e.target;
@@ -88,11 +130,19 @@ export function initSettings() {
   box.addEventListener("click", (e) => {
     const u = e.target.closest("#s-unit [data-v]");
     if (u) save({ temp_unit: u.dataset.v });
+    const ch = e.target.closest("#s-channel [data-v]");
+    if (ch) save({ update_channel: ch.dataset.v }, ch.dataset.v === "beta" ? "You'll get beta releases" : "You'll get stable releases");
     if (e.target.closest("#s-logs")) post("/api/open/logs").catch(fail);
     if (e.target.closest("#s-diag")) post("/api/diagnostics", {}).then((r) => toast(`Saved ${r.name}. Explorer shows where.`)).catch(fail);
     if (e.target.closest("#s-welcome")) openWelcome();
     if (e.target.closest("#s-update")) {
-      post("/api/updates/check").then((r) => toast(r.newer ? `Airglow ${r.latest} is available. Download it from the GitHub releases page.` : `You have the latest version (${r.current}).`)).catch(fail);
+      post("/api/updates/check").then((u) => { S.state.update = u; paintUpdate(); emit("refresh"); }).catch(fail);
     }
+    if (e.target.closest("#s-restart")) restartToUpdate();
   });
+  on("state", paintUpdate);
+}
+
+export function restartToUpdate() {
+  post("/api/updates/restart").then(() => toast("Restarting to update")).catch(fail);
 }

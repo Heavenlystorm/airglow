@@ -18,14 +18,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from airglow import api, config  # noqa: E402
+from airglow import api, config, updates  # noqa: E402
 from airglow.controller import Controller  # noqa: E402
 from airglow.plugins import asus_aura_usb, nzxt_hue2  # noqa: E402
 from tests.fakes import FakeHub, FakeLightDevice, FakeManager  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
-# the gallery reads this checkout's profiles/ folder, so new profiles can be tried before they're on GitHub
+# the galleries read this checkout's profiles/ and effects/, so new ones can be tried before they're on GitHub
 os.environ.setdefault("AIRGLOW_GALLERY_URL", (Path(__file__).resolve().parent.parent / "profiles").as_uri())
+os.environ.setdefault("AIRGLOW_EFFECTS_URL", (Path(__file__).resolve().parent.parent / "effects").as_uri())
 DEMO = "--demo" in sys.argv
 DEMO_LHM_PORT = 8791
 
@@ -122,6 +123,31 @@ def serve_demo_lhm():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 
+class DemoFeed:
+    """A pretend release feed, so the update flow can be tried in the dev UI: there's always a newer version, and it
+    "downloads" in a few seconds. Nothing is installed."""
+
+    class Asset:
+        Version, NotesMarkdown = "9.9.9", "A pretend update from the dev server."
+
+    class Info:
+        DeltasToTarget = []
+
+    def check_for_updates(self):
+        time.sleep(1)
+        info = self.Info()
+        info.TargetFullRelease = self.Asset()
+        return info
+
+    def download_updates(self, info, progress=None):
+        for p in range(0, 101, 20):
+            time.sleep(0.6)
+            progress and progress(p)
+
+    def wait_exit_then_apply_updates(self, info, **kw):
+        print("dev server: would quit now and let Update.exe install", info.TargetFullRelease.Version)
+
+
 if __name__ == "__main__":
     data = Path(tempfile.gettempdir()) / ("airglow-demo" if DEMO else "airglow-dev2")
     store = config.Store(data)
@@ -135,6 +161,11 @@ if __name__ == "__main__":
     gpu.open(); kb.open()
     ctrl = Controller(store, manager=manager)
     ctrl.start()
-    server = api.Server(8790, ctrl, store)
+    updater = updates.Updater(store, kind="velopack", managers=lambda channel: [DemoFeed()], fetch_meta=lambda: None)
+    server = api.Server(8790, ctrl, store, updater=updater)
+    from airglow import fxlibrary
+    from airglow.lighting import studio
+    fxlibrary.LIBRARY = fxlibrary.Library(data / "effects")     # the dev server keeps its effects with its data
+    studio.HOST.url = "http://127.0.0.1:8790"
     print("dev UI on http://127.0.0.1:8790  (data in", data, ")", "with demo sensors" if DEMO else "")
     server.serve_forever()

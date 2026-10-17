@@ -1,0 +1,16 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Ocean</title>
+<meta name="airglow-effect" content="1">
+<meta name="author" content="heavenlystorm">
+<meta name="description" content="Deep blue with white crests rolling across the case.">
+<meta name="license" content="MIT">
+<meta name="tags" content="ambient, blue">
+<meta property="l1_speed" label="Wave speed" type="number" min="0" max="100" step="1" default="30">
+
+<script type="application/json" id="layers">
+[
+{"type": "gradient", "enabled": true, "opacity": 100, "blend": "normal", "mask": "all", "params": {"colors": ["#001a3a", "#0060c8", "#00b4ff"], "style": "linear", "angle": 90, "speed": 18, "scale": 50}, "expose": {}},
+{"type": "wave", "enabled": true, "opacity": 55, "blend": "add", "mask": "all", "params": {"color": "#d8f4ff", "speed": 30, "width": 60, "sharpness": 70, "angle": 10}, "expose": {"speed": "Wave speed"}}
+]
+</script>

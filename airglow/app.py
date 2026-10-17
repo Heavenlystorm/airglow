@@ -10,7 +10,7 @@ import threading
 import urllib.request
 import webbrowser
 
-from . import APP_NAME, __version__, api, autostart, paths
+from . import APP_NAME, __version__, api, autostart, install, paths, updates
 from .config import Store
 from .controller import Controller
 
@@ -53,11 +53,11 @@ def running_port(default):
         return default
 
 
-def start_server(port, ctrl, store, hooks, tries=PORT_TRIES):
+def start_server(port, ctrl, store, hooks, updater=None, tries=PORT_TRIES):
     """Listen on the saved port, or the next free one. Returns the server, or None if they're all taken."""
     for p in range(port, min(port + tries, 65536)):
         try:
-            server = api.Server(p, ctrl, store, hooks)
+            server = api.Server(p, ctrl, store, hooks, updater)
         except OSError:
             continue
         if p != port:
@@ -86,6 +86,11 @@ def message_box(text):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    install.run_hooks()             # when Velopack started us for an install/uninstall hook, this runs it and exits
+    if argv and argv[0] == "--effect-host":
+        # runs Studio effects for the real lights in its own process (lighting/studio.py starts it)
+        from . import effecthost
+        return effecthost.main(argv)
     if argv and argv[0] in ("--setup-tools", "--remove-tools"):
         # the elevated half of helper-program setup (see tools.py): no window, no tray, no second app instance
         from . import tools
@@ -109,6 +114,7 @@ def main(argv=None):
         if not background:
             ask_running_instance_to_show(running_port(port))
         return 0
+    updates.apply_pending(argv)     # an update downloaded last time: apply it and start again (doesn't return)
 
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Airglow.App")
@@ -138,15 +144,19 @@ def main(argv=None):
              "reveal": lambda f: subprocess.Popen(["explorer", "/select,", str(f)]),
              # the gallery's share page (only GitHub's new-file page for the profiles folder; api.py checks)
              "open_url": lambda url: webbrowser.open(url)}
-    server = start_server(port, ctrl, store, hooks)
+    updater = updates.Updater(store)
+    server = start_server(port, ctrl, store, hooks, updater)
     if server is None:
         message_box(f"Ports {port} to {port + PORT_TRIES - 1} are all used by other programs, so Airglow can't "
                     f"start.\n\nChange \"port\" in {paths.data_dir() / 'config.json'} and try again.")
         return 1
     port = server.server_address[1]
+    from .lighting import studio
+    studio.HOST.url = f"http://127.0.0.1:{port}"     # the effect host loads its page from here
 
     ctrl.start()
     threading.Thread(target=server.serve_forever, name="api", daemon=True).start()
+    updater.start()
 
     tray = None
 
@@ -157,12 +167,15 @@ def main(argv=None):
 
     window = Window(f"http://127.0.0.1:{port}/", start_hidden=background,
                     on_first_hide=lambda: tray and tray.notify("Still running in the tray. Right-click the Airglow icon to quit."))
-    tray = Tray(ctrl, store, show_window=window.show, quit_app=quit_app)
+    updater.quit_app = quit_app
+    tray = Tray(ctrl, store, show_window=window.show, quit_app=quit_app, updater=updater)
     tray.start()
 
     try:
         Window.run(None)            # blocks until the window is destroyed (Quit)
     finally:
+        updater.stop()
+        studio.HOST.stop()
         server.shutdown()
         ctrl.shutdown()
         tray.stop()

@@ -1,0 +1,85 @@
+name: effects
+
+# Community effects in effects/: every pull request that adds or changes one is checked (valid, in the author's own
+# folder, runs for 10 seconds without errors or slow frames) and summarised for the reviewer. Once one is merged,
+# effects/index.json is rebuilt, and every Airglow sees it the next time its community view loads.
+on:
+  pull_request:
+    paths: ["effects/**"]
+  push:
+    branches: [main]
+    paths: ["effects/**", "airglow/fxformat.py", "tools/effects.py", "tools/effects-render.mjs", "web/runtime/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0                  # the owner check and the index both look at git history
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install numpy==2.4.3
+      - name: Effects are valid, and only in your own folder
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          if [ -n "$AUTHOR" ]; then
+            python tools/effects.py --check --author "$AUTHOR" --changed-since "origin/$BASE"
+          else
+            python tools/effects.py --check
+          fi
+      - name: For the reviewer
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          {
+            echo "## Effects in this change"
+            if [ -n "$BASE" ]; then python tools/effects.py --scan --changed-since "origin/$BASE"; else python tools/effects.py --scan; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Every effect runs for 10 seconds
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+          if [ -n "$BASE" ]; then
+            files=$(git diff --name-only --diff-filter=ACMR "origin/$BASE...HEAD" -- 'effects/*/*.html')
+            [ -z "$files" ] && { echo "no effects changed"; exit 0; }
+            node tools/effects-render.mjs $files
+          else
+            node tools/effects-render.mjs
+          fi
+
+  index:
+    if: github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0                  # the index dates each effect by its commits
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install numpy==2.4.3
+      - name: Rebuild effects/index.json
+        run: python tools/effects.py --index
+      - name: Commit it if it changed
+        run: |
+          if git diff --quiet -- effects/index.json; then echo "index unchanged"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add effects/index.json
+          git commit -m "Effects index"
+          git push
