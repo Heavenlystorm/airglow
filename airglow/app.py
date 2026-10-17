@@ -87,6 +87,11 @@ def message_box(text):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     install.run_hooks()             # when Velopack started us for an install/uninstall hook, this runs it and exits
+    if argv and argv[0] == "--after-setup":
+        # the install hook found that Setup had ended a running copy (see install.after_install)
+        if not install.wait_for_setup(argv[1] if len(argv) > 1 else ""):
+            return 0                # Setup started the new version itself
+        argv = ["--background"]
     if argv and argv[0] == "--effect-host":
         # runs Studio effects for the real lights in its own process (lighting/studio.py starts it)
         from . import effecthost
@@ -170,6 +175,7 @@ def main(argv=None):
     updater.quit_app = quit_app
     tray = Tray(ctrl, store, show_window=window.show, quit_app=quit_app, updater=updater)
     tray.start()
+    install.mark_running()
 
     try:
         Window.run(None)            # blocks until the window is destroyed (Quit)
@@ -179,6 +185,7 @@ def main(argv=None):
         server.shutdown()
         ctrl.shutdown()
         tray.stop()
+        install.clear_running()
         log.info("stopped")
     return 0
 
