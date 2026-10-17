@@ -19,6 +19,16 @@ NEON = {"airglow_profile": 1, "id": "neon", "name": "Neon", "author": "someone",
                         {"when": {"type": "time", "start": "23:00", "end": "07:00"}, "then": {"type": "lights_off"}}]}
 
 
+def big_profile():
+    """A valid profile too long for GitHub's address: every area, ten automations, an eight-point fan curve."""
+    return {**NEON, "id": "big", "name": "Big", "description": "d" * 200,
+            "areas": {s: {"effect": "gradient", "params": {"colors": ["#ff2fb4", "#2f5bff", "#00ff00", "#ffffff"]}}
+                      for s in lightsetup.SPOTS},
+            "fans": {"curve": [[20 + i * 5, 20 + i * 7] for i in range(8)]},
+            "automations": [{"when": {"type": "app_running", "exe": "g" * 74 + f"{i:02d}.exe"},
+                             "then": {"type": "preset", "preset": "self"}} for i in range(10)]}
+
+
 class FormatTests(unittest.TestCase):
     def test_a_full_profile_validates(self):
         p = profiles.validate_shared(NEON)
@@ -83,12 +93,23 @@ class GalleryFolderTests(unittest.TestCase):
 
     def test_share_url_is_githubs_new_file_page_with_the_profile(self):
         shared = profiles.validate_shared(NEON)
-        url = gallery.share_url(shared, repo="someone/airglow")
+        url, filled = gallery.share_url(shared, repo="someone/airglow")
+        self.assertTrue(filled)
         self.assertTrue(gallery.is_share_url(url, repo="someone/airglow"))
         q = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
         self.assertEqual(q["filename"], ["neon.json"])
         self.assertEqual(json.loads(q["value"][0])["name"], "Neon")
         self.assertFalse(gallery.is_share_url("https://evil.example/new/main/profiles?x", repo="someone/airglow"))
+        self.assertFalse(gallery.is_share_url("https://github.com/someone/airglow/new/main/effects/x?x", repo="someone/airglow"))
+
+    def test_a_profile_too_long_for_the_address_gets_only_the_file_name(self):
+        shared = profiles.validate_shared(big_profile())
+        url, filled = gallery.share_url(shared)
+        self.assertFalse(filled)
+        self.assertLessEqual(len(url), gallery.MAX_URL)
+        self.assertTrue(gallery.is_share_url(url))
+        self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query), {"filename": ["big.json"]})
+        self.assertEqual(json.loads(gallery.share_file(shared)), shared)
 
 
 class AreaTests(unittest.TestCase):

@@ -125,9 +125,15 @@ function shareSheet(p, back) {
     const author = remember("airglow.githubName", $("#sh-author").value.trim());
     try {
       const r = await post("/api/profiles/share", { id: p.id, author, description: $("#sh-desc").value.trim(),
-        include_fans: !!$("#sh-fans")?.checked, include_automations: !!$("#sh-auto")?.checked });
+        include_fans: !!$("#sh-fans")?.checked, include_automations: !!$("#sh-auto")?.checked, open: false });
+      // GitHub only takes about 8 KB in an address: a longer profile goes on the clipboard, to paste on the page
+      let copied = false;
+      if (!r.filled) { try { await navigator.clipboard.writeText(r.source); copied = true; } catch { copied = false; } }
+      await post("/api/profiles/open-share", { url: r.url });
       openSheet(`<div class="body"><h2>GitHub is open in your browser</h2>
-        <p class="lede" style="margin:0">Sign in if it asks, then press <b>Propose new file</b> and <b>Create pull request</b>. That's it: it's checked automatically and appears in the gallery once it's merged.</p>
+        ${r.filled ? `<p class="lede" style="margin:0">Sign in if it asks, then press <b>Propose new file</b> and <b>Create pull request</b>. That's it: it's checked automatically and appears in the gallery once it's merged.</p>`
+          : `<p class="lede" style="margin:0">Your profile is too big to fill in for you, so only the file name <span class="path">${esc(r.path)}</span> is there. ${copied ? "The profile is on your clipboard:" : "Copy the profile below,"} sign in if it asks, click into the empty file, press <b>Ctrl+V</b>, then <b>Propose new file</b> and <b>Create pull request</b>.</p>
+            ${copied ? "" : `<textarea class="text" rows="6" readonly>${esc(r.source)}</textarea>`}`}
         <p class="hint">Browser didn't open? <a href="${esc(r.url)}" target="_blank" rel="noopener" id="sh-link">Open the page</a>.</p>
         <div class="actions"><span class="spacer"></span><button class="btn primary" data-close>Done</button></div></div>`);
     } catch (err) { $("#sh-err").textContent = err.message; $("#sh-err").hidden = false; }
