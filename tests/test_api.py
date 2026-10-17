@@ -9,6 +9,7 @@ import urllib.parse
 from airglow import api, config
 from airglow.controller import Controller
 from tests.fakes import FakeLightDevice, FakeManager, FakeNzxt, signals
+from tests.test_profiles import big_profile
 
 
 class ApiTests(unittest.TestCase):
@@ -160,9 +161,34 @@ class ApiTests(unittest.TestCase):
         self.server.hooks["open_url"] = shown.append
         status, s = self.request("POST", "/api/profiles/share", {"id": r["id"], "author": "me", "include_automations": True})
         self.assertEqual(status, 200, s)
+        self.assertTrue(s["filled"])
         self.assertEqual(shown, [s["url"]])
         self.assertEqual(s["profile"]["automations"][0]["then"]["preset"], "self")
         self.assertEqual(self.request("POST", "/api/profiles/share", {"id": r["id"]})[0], 400)      # needs an author
+        self.store.set_rules([], lambda x: x)
+        self.store.set_presets([p for p in self.store.get_presets() if p["id"] != r["id"]])
+        self.ctrl.presets_changed()
+
+    def test_share_a_profile_too_long_for_the_address(self):
+        profile = big_profile()
+        status, r = self.request("POST", "/api/profiles/keep", {"profile": profile, "include_fans": True,
+                                                                 "include_automations": True})
+        self.assertEqual(status, 200, r)
+        shown = []
+        self.server.hooks["open_url"] = shown.append
+        status, s = self.request("POST", "/api/profiles/share", {"id": r["id"], "author": "me", "include_fans": True,
+                                                                  "include_automations": True, "open": False})
+        self.assertEqual(status, 200, s)
+        self.assertFalse(s["filled"])
+        self.assertEqual(shown, [])                                                  # the page opens it, once copied
+        self.assertNotIn("value=", s["url"])
+        self.assertEqual(json.loads(s["source"]), s["profile"])
+        self.assertEqual(len(s["profile"]["automations"]), 10)
+        self.assertEqual(s["path"], f"profiles/{s['profile']['id']}.json")
+        self.assertEqual(self.request("POST", "/api/profiles/open-share", {"url": s["url"]})[0], 200)
+        self.assertEqual(shown, [s["url"]])
+        self.assertEqual(self.request("POST", "/api/profiles/open-share", {"url": "https://evil.example/"})[0], 400)
+        self.assertEqual(shown, [s["url"]])
         self.store.set_rules([], lambda x: x)
         self.store.set_presets([p for p in self.store.get_presets() if p["id"] != r["id"]])
         self.ctrl.presets_changed()
