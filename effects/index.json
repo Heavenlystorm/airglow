@@ -1,0 +1,121 @@
+{
+  "generated_by": "tools/effects.py",
+  "schema": 1,
+  "effects": [
+    {
+      "id": "heavenlystorm.aurora",
+      "name": "Aurora",
+      "author": "heavenlystorm",
+      "description": "Slow northern lights drifting across the case, with a few stars.",
+      "tags": [
+        "ambient",
+        "calm"
+      ],
+      "kind": "layers",
+      "audio": false,
+      "license": "MIT",
+      "remix_of": "",
+      "sha256": "3a4bfb5c902eada83472085fe5ff485a33e292cfe34a7afbdd1ffff63328df25",
+      "bytes": 1175,
+      "added": "2026-10-17",
+      "updated": "2026-10-17",
+      "featured": true
+    },
+    {
+      "id": "heavenlystorm.ember",
+      "name": "Ember",
+      "author": "heavenlystorm",
+      "description": "Glowing coals that flare now and then. Warm enough to leave on all evening.",
+      "tags": [
+        "warm",
+        "calm"
+      ],
+      "kind": "layers",
+      "audio": false,
+      "license": "MIT",
+      "remix_of": "",
+      "sha256": "119158d14f064e7ae0e010d20635c420dbb57c7a82b9ef59d970dd152cf7d4e5",
+      "bytes": 871,
+      "added": "2026-10-17",
+      "updated": "2026-10-17",
+      "featured": false
+    },
+    {
+      "id": "heavenlystorm.lava-lamp",
+      "name": "Lava lamp",
+      "author": "heavenlystorm",
+      "description": "Big soft blobs of colour rising and sinking, drawn on the canvas.",
+      "tags": [
+        "calm",
+        "warm"
+      ],
+      "kind": "code",
+      "audio": false,
+      "license": "MIT",
+      "remix_of": "",
+      "sha256": "bcab44ac3c957a8f75f453ce4c81ee989b2fc615f12e23165cde239dce0fc66b",
+      "bytes": 1441,
+      "added": "2026-10-17",
+      "updated": "2026-10-17",
+      "featured": false
+    },
+    {
+      "id": "heavenlystorm.lights-and-sirens",
+      "name": "Lights and sirens",
+      "author": "heavenlystorm",
+      "description": "Red and blue bars chasing each other across the case.",
+      "tags": [
+        "fast",
+        "red",
+        "blue"
+      ],
+      "kind": "layers",
+      "audio": false,
+      "license": "MIT",
+      "remix_of": "",
+      "sha256": "2578e84d3e688459586ddf1babc790b2295b3453f1e65a61b225a6fb3543a929",
+      "bytes": 1003,
+      "added": "2026-10-17",
+      "updated": "2026-10-17",
+      "featured": false
+    },
+    {
+      "id": "heavenlystorm.ocean",
+      "name": "Ocean",
+      "author": "heavenlystorm",
+      "description": "Deep blue with white crests rolling across the case.",
+      "tags": [
+        "ambient",
+        "blue"
+      ],
+      "kind": "layers",
+      "audio": false,
+      "license": "MIT",
+      "remix_of": "",
+      "sha256": "05542ac5d4eb2ccb3a2908af46ab7fdcedc6416d26491ad60b9e3d2fca7b955d",
+      "bytes": 895,
+      "added": "2026-10-17",
+      "updated": "2026-10-17",
+      "featured": false
+    },
+    {
+      "id": "heavenlystorm.party",
+      "name": "Party",
+      "author": "heavenlystorm",
+      "description": "The music's spectrum across the case, with a white flash on every beat.",
+      "tags": [
+        "party"
+      ],
+      "kind": "layers",
+      "audio": true,
+      "license": "MIT",
+      "remix_of": "",
+      "sha256": "ca6eff2a5534d7d17309310f33050b4a9028edfae1d173fd180318db795d53ad",
+      "bytes": 881,
+      "added": "2026-10-17",
+      "updated": "2026-10-17",
+      "featured": true
+    }
+  ],
+  "revoked": []
+}

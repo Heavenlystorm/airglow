@@ -6,8 +6,9 @@ import { initLighting, renderLighting } from "./lighting.js";
 import { initFans, renderFans } from "./fans.js";
 import { initAutomations, renderAutomations } from "./automations.js";
 import { initDevices, renderDevices, showZone } from "./devices.js";
-import { initSettings, loadSettings } from "./settings.js";
-import { openWelcome } from "./onboarding.js";
+import { initSettings, loadSettings, restartToUpdate } from "./settings.js";
+import { initStudio, leaveStudio, renderStudio } from "./studio.js";
+import { openOnlineQuestion, openWelcome } from "./onboarding.js";
 import { openSetup } from "./setup.js";
 import { renderTrial } from "./profiles.js";
 import { initOverview, onFrames, renderOverview } from "./overview.js";
@@ -16,12 +17,13 @@ import { countTo, enter, moveMarker } from "./motion.js";
 import { pauseAutomations, sentence } from "./automations.js";
 import { startLive, sync as syncLive } from "./live.js";
 
-const TABS = ["overview", "lighting", "fans", "automations", "devices", "settings"];
+const TABS = ["overview", "lighting", "studio", "fans", "automations", "devices", "settings"];
 let currentView = null;
 const HISTORY_SECONDS = 600;
 let connected = true;
 let deviceKey = "";
 let setupDismissed = 0;          // "Not now" on the new-lights notice: quiet until even more new lights appear
+let updateDismissed = null;      // "Later" on the update notice, for that version
 
 // ------------------------------------------------------------ routing
 function route() {
@@ -30,6 +32,7 @@ function route() {
   $$(".tabs a").forEach((a) => (a.dataset.tab === view ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
   $$(".view").forEach((v) => (v.hidden = v.dataset.view !== view));
   moveMarker($(".tab-ink"), $(`.tabs a[data-tab="${view}"]`), currentView === null);
+  if (currentView === "studio" && view !== "studio") leaveStudio();
   if (currentView !== null && currentView !== view) enter($(`.view[data-view="${view}"]`));
   currentView = view;
   if (view === "overview") renderOverview();
@@ -38,14 +41,15 @@ function route() {
   if (view === "devices") { if (arg) showZone(decodeURIComponent(arg)); renderDevices(); }
   if (view === "settings") loadSettings();
   if (view === "lighting") renderLighting();
+  if (view === "studio") renderStudio(arg);
 }
 window.addEventListener("hashchange", route);
 
 window.addEventListener("resize", () => moveMarker($(".tab-ink"), $(".tabs a[aria-current]"), true));
 
-// Ctrl+1..6 switch tabs
+// Ctrl+1..7 switch tabs
 document.addEventListener("keydown", (e) => {
-  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key >= "1" && e.key <= "6") {
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key >= "1" && e.key <= "7") {
     e.preventDefault();
     location.hash = "#" + TABS[+e.key - 1];
   }
@@ -80,7 +84,15 @@ function heldOff() {
   return { text: "Something is keeping them off right now." };
 }
 
+// a Studio effect on your lights that Airglow had to turn off (it hung, crashed, or used too much)
+function fxProblem() {
+  const s = S.state;
+  const used = new Set([s.effective?.effect, s.scene?.effect].filter(Boolean));
+  return (s.studio?.problems || []).find((p) => used.has(p.effect));
+}
+
 function renderBar() {
+  const u = S.state.update;
   renderPins();
   renderTrial();
   const held = heldOff();
@@ -105,6 +117,22 @@ function renderBar() {
     n.hidden = false;
     setHTML(n, `<span><b>${k} new light${k === 1 ? "" : "s"}</b> to set up. Tell Airglow what ${k === 1 ? "it is" : "they are"} so effects line up with your case.</span>
       <button class="btn" data-open-setup="start">Set up</button><button class="btn quiet" id="setup-later">Not now</button><span class="spacer"></span>`);
+  } else if (fxProblem()) {
+    const p = fxProblem();
+    n.hidden = false;
+    setHTML(n, `<span>${esc(p.text)}${p.message ? ` (${esc(p.message)})` : ""}</span>
+      <button class="btn" data-fx-retry="${esc(p.effect)}">Try again</button><a class="btn quiet" href="#lighting">Pick another effect</a><span class="spacer"></span>`);
+  } else if (u?.unsupported) {
+    n.hidden = false;
+    setHTML(n, `<span>This version of Airglow is no longer supported, so community features are off. Lighting, fans and devices keep working.</span>
+      ${u.kind === "velopack" ? `<a class="btn" href="#settings">Update</a>` : ""}<span class="spacer"></span>`);
+  } else if (u?.notice) {
+    n.hidden = false;
+    setHTML(n, `<span>${esc(u.notice)}</span><span class="spacer"></span>`);
+  } else if (u?.state === "ready" && updateDismissed !== u.latest) {
+    n.hidden = false;
+    setHTML(n, `<span><b>Airglow ${esc(u.latest)}</b> is downloaded. It's installed the next time Airglow starts.</span>
+      <button class="btn" id="update-restart">Restart now</button><button class="btn quiet" id="update-later">Later</button><span class="spacer"></span>`);
   } else {
     n.hidden = true;
   }
@@ -114,6 +142,10 @@ document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-open-setup]");
   if (b) openSetup({ start: b.dataset.openSetup === "start", only: b.dataset.zone || null });
   if (e.target.closest("#setup-later")) { setupDismissed = S.state.setup_pending; renderBar(); }
+  if (e.target.closest("#update-later")) { updateDismissed = S.state.update?.latest; renderBar(); }
+  if (e.target.closest("#update-restart")) restartToUpdate();
+  const fx = e.target.closest("[data-fx-retry]");
+  if (fx) post("/api/studio/retry", { fx_id: fx.dataset.fxRetry }).then(() => emit("refresh")).catch(fail);
 });
 
 $("#power").addEventListener("click", async () => {
@@ -185,9 +217,11 @@ async function boot() {
   initAutomations();
   initDevices();
   initSettings();
+  initStudio();
   renderBar();
   route();
   if (!S.state.onboarded) openWelcome();
+  else if (!S.state.online_asked && S.state.update && S.state.update.kind !== "scoop") openOnlineQuestion();
   startLive({
     state: (s) => applyState(s).then(syncLive).catch(lost),     // a lighting tile may have come or gone
     lost,

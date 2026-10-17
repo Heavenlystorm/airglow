@@ -24,6 +24,9 @@ What it does:
   screen ambience and two music effects. A single zone can also have an effect of its own.
 - Lets you drag fan curves into shape. Fans never go below 20 %, and at 90 °C they run at full speed no matter what
   the curve says.
+- Has a Studio for making your own effects: stack layers (gradients, waves, sparkles, a pulse on the beat), watch
+  them on a picture of your own case and on your real lights as you go, or write one in JavaScript. Share sends it to
+  a community gallery, where every effect plays on your own layout before you install it.
 - Saves profiles (the lighting look, effects for particular areas of the case, a fan curve) and shares them through
   a community gallery, where every profile plays live on your own layout before you try it on your lights.
 - Has automations that read like sentences, such as "Between 23:00 and 07:00, turn the lights off" or "When
@@ -37,9 +40,12 @@ What it does:
 | ![Lighting](docs/screenshots/lighting.png) | ![Fans](docs/screenshots/fans.png) | ![Automations](docs/screenshots/automations.png) |
 
 ## Getting started
-1. Download `Airglow-Setup-<version>.exe` from [Releases](../../releases) and run it. It installs for your Windows
-   user only (no admin prompt) and can start with Windows. If SmartScreen says "Windows protected your PC", choose
-   More info, Run anyway (see [Is it safe?](#is-it-safe)).
+1. Download `Airglow-stable-Setup.exe` from [Releases](../../releases) and run it, or install it with
+   `winget install Heavenlystorm.Airglow`, or with Scoop (`scoop bucket add airglow
+   https://github.com/Heavenlystorm/scoop-airglow`, then `scoop install airglow`). It installs for your Windows user
+   only (no admin prompt), starts with Windows, and can keep itself up to date if you let it. If SmartScreen says
+   "Windows protected your PC", choose More info, Run anyway (see [Is it safe?](#is-it-safe)). Installing over
+   Airglow 1.5 or older moves it to the new installer and keeps your settings.
 2. Close other RGB software (SignalRGB, iCUE, NZXT CAM, Armoury Crate, ...). Two programs driving the same LEDs
    makes them flicker. Airglow notices them and offers to close them.
 3. Open Airglow. The welcome screen lists what it found. Temperatures and most RGB devices come from two other
@@ -97,10 +103,14 @@ Airglow made up and keeps in `%APPDATA%\Airglow\lhm-auth.json`. Diagnostics repo
 
 ## Is it safe?
 Airglow only listens on `127.0.0.1`, and every change has to carry a header that websites can't send, so a web page
-can't touch your hardware. [SECURITY.md](SECURITY.md) has the details.
+can't touch your hardware. Effects made in the Studio, yours and the community's, run in a sandbox with no network,
+no files and nothing of Airglow's: all they can do is say what colour each LED is. [SECURITY.md](SECURITY.md) has
+the details.
 
-There's no telemetry and no account. The only time Airglow goes online is the update check, and that only happens
-when you press the button.
+There's no telemetry and no account. Airglow goes online for three things only: the update check, which runs on its
+own only if you turn on "Check automatically" (it asks once, and it's off unless you say yes); the community
+galleries for profiles and effects, while you have them open; and setting up the helper programs, when you press the button. The first two only talk to
+GitHub; helper setup downloads from each program's official source.
 
 The fans fail safe. If the sensors stop reporting, they run at the failsafe speed. At 90 °C they go to 100 %. When
 you quit Airglow, it leaves them at the failsafe speed.
@@ -114,10 +124,10 @@ pip install -r requirements-dev.txt
 python -m unittest discover -s tests -t .     # the tests need no hardware
 python run.py                                 # run from source
 python tools\dev_server.py --demo             # the UI on http://127.0.0.1:8790 with a simulated rig and sensors
-.\build.ps1                                   # tests, then dist\Airglow\ and dist\Airglow-Setup-<version>.exe
+.\build.ps1                                   # tests, then dist\Airglow\ and the release in dist\releases\
 ```
-Building the installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php). Releasing and signing:
-[docs/RELEASING.md](docs/RELEASING.md).
+Packing the release needs Velopack's `vpk` (`dotnet tool install -g vpk --version 1.2.161`). Releases themselves are
+built by GitHub Actions when a version tag is pushed: [docs/RELEASING.md](docs/RELEASING.md).
 
 ## How it works
 - `airglow/devices.py`, `airglow/hw.py`: USB drivers for the NZXT and ASUS controllers (packet builders are pure
@@ -134,6 +144,9 @@ Building the installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php). 
   the fan curves and the failsafe.
 - `airglow/api.py`: the local HTTP API and a server-sent event stream for the UI.
 - `web/`: the interface, plain JavaScript modules with no framework or build step.
+- The Studio: `airglow/fxformat.py` (the effect file format and its checks), `airglow/lighting/studio.py` (Studio
+  effects on the real lights, through a separate effect host process), `web/runtime/` (the sandbox every effect runs
+  in) and `web/js/studio.js`. Design and security: [docs/EFFECT-STUDIO.md](docs/EFFECT-STUDIO.md).
 
 The NZXT and ASUS packet formats follow what liquidctl and OpenRGB document for these controllers (credits in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Airglow is an independent implementation and includes none of

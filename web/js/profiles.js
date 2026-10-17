@@ -252,7 +252,7 @@ function endTrial() {
 }
 
 export function renderTrial() {
-  const t = S.state?.trial;
+  const t = S.state?.trial?.kind === "studio" ? null : S.state?.trial;     // the Studio has its own switch
   let d = $("#trial-dock");
   if (!t) { if (d) d.hidden = true; if (T.profile) endTrial(); return; }
   if (!d) {

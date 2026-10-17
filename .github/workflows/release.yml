@@ -1,0 +1,91 @@
+name: release
+
+# Pushing a version tag builds and publishes a release: v1.6.0 goes to the stable channel, v1.6.0-beta.1 to beta.
+# Releases are never built on a laptop. docs/RELEASING.md has the steps around it.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  VPK_VERSION: "1.2.161"        # keep in step with velopack in requirements.txt
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      # whether the optional secrets exist (a step's "if" can't read secrets directly)
+      HAS_WINGET: ${{ secrets.WINGET_TOKEN != '' }}
+      HAS_SCOOP: ${{ secrets.SCOOP_BUCKET_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements-dev.txt
+
+      - name: Tag matches the version
+        id: v
+        shell: bash
+        run: python tools/release.py check-tag "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Install vpk
+        shell: bash
+        run: |
+          dotnet tool install -g vpk --version "$VPK_VERSION"
+          echo "$USERPROFILE/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Build and pack
+        shell: pwsh
+        env:
+          AIRGLOW_SIGN: ${{ secrets.AIRGLOW_SIGN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if (-not $env:AIRGLOW_SIGN) { "::warning::No signing secret yet, so this release is unsigned." }
+          ./build.ps1 -Delta
+
+      - name: Publish the GitHub release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $pre = @(); if ("${{ steps.v.outputs.prerelease }}" -eq "true") { $pre = @("--pre") }
+          vpk upload github --repoUrl "https://github.com/${{ github.repository }}" --token $env:GITHUB_TOKEN `
+            --outputDir dist\releases --channel ${{ steps.v.outputs.channel }} --tag $env:GITHUB_REF_NAME `
+            --releaseName "Airglow ${{ steps.v.outputs.version }}" --publish --merge @pre
+          if ($LASTEXITCODE -ne 0) { throw "vpk upload failed" }
+
+      # winget and Scoop get stable releases only. Each step waits for its secret: see docs/RELEASING.md.
+      - name: winget
+        if: steps.v.outputs.channel == 'stable' && env.HAS_WINGET == 'true'
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: Heavenlystorm.Airglow
+          installers-regex: '-Setup\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
+
+      - name: Scoop bucket
+        if: steps.v.outputs.channel == 'stable' && env.HAS_SCOOP == 'true'
+        shell: bash
+        env:
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          zip=$(ls dist/releases/*-Portable.zip | head -1)
+          url="https://github.com/${{ github.repository }}/releases/download/$GITHUB_REF_NAME/$(basename "$zip")"
+          git clone --depth 1 "https://x-access-token:${SCOOP_BUCKET_TOKEN}@github.com/Heavenlystorm/scoop-airglow.git" bucket-repo
+          mkdir -p bucket-repo/bucket
+          python tools/release.py scoop "$VERSION" "$zip" "$url" > bucket-repo/bucket/airglow.json
+          cd bucket-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/airglow.json
+          git commit -m "airglow $VERSION"
+          git push

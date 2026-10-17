@@ -7,6 +7,8 @@ numpy==2.4.3
 mss==10.1.0
 soundcard==0.4.6
 psutil==7.2.2
+# Install, update and uninstall hooks and self-updating (keep in step with vpk in .github/workflows)
+velopack==1.2.161
 # Windows Dynamic Lighting devices (optional at runtime: without them that setting just reports it isn't available)
 winrt-runtime==3.2.1
 winrt-Windows.Devices.Lights==3.2.1

@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Party</title>
+<meta name="airglow-effect" content="1">
+<meta name="author" content="heavenlystorm">
+<meta name="description" content="The music&#x27;s spectrum across the case, with a white flash on every beat.">
+<meta name="license" content="MIT">
+<meta name="tags" content="party">
+<meta name="permissions" content="audio">
+<meta property="l0_sensitivity" label="Sensitivity" type="number" min="0" max="100" step="1" default="65">
+
+<script type="application/json" id="layers">
+[
+{"type": "spectrum", "enabled": true, "opacity": 100, "blend": "normal", "mask": "all", "params": {"sensitivity": 65, "hue": 0, "angle": 0}, "expose": {"sensitivity": "Sensitivity"}},
+{"type": "beat", "enabled": true, "opacity": 60, "blend": "add", "mask": "all", "params": {"color": "#ffffff", "sensitivity": 55, "decay": 30}, "expose": {}}
+]
+</script>

@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+- **The Studio**, a new tab for making your own effects. Pick a starting point (or remix any effect), stack layers
+  such as gradients, plasma, waves, sparkles, a scanner, breathing and three that follow the music, choose how each
+  mixes in and which area of the case it lights, and watch it on a picture of your own case, and on your real lights
+  with "Also on my lights". Tick "Show as a control" to let others tweak a setting. "Test beat" plays a fake beat so
+  music effects can be built in silence. Saved effects work everywhere built-in ones do.
+- Effects can also be written in JavaScript: switch the editor to Code (CodeMirror, with errors and log output under
+  the preview), start from a canvas, per-LED or shader template, or edit in VS Code and see every save live.
+- Share sends an effect to the community gallery as a pull request on GitHub, where it's checked automatically and
+  reviewed. Community effects (Studio, Community effects) play on your own layout before you install them; updates
+  keep the previous version for one rollback, and effects that are taken down are turned off.
+- Every Studio effect runs sandboxed in a separate effect host process, without network, files or access to Airglow.
+  One that hangs, is too slow or uses too much memory is turned off with the reason, and Lighting offers Try again.
+- Airglow can keep itself up to date. Turn on "Check automatically" (Airglow asks once; it's off unless you say yes)
+  and it looks for a new version a minute after it starts and every 6 hours, downloads it in the background and
+  installs it the next time it starts, or right away with "Restart to update". Updates are small, since only what
+  changed is downloaded. With it off, Airglow still only goes online when you press a button.
+- A beta channel in Settings, About, for new features first.
+- A new installer (Velopack). Installing over 1.5 or older moves Airglow to it: the old copy and its shortcuts go,
+  your settings, profiles and helper programs stay, and "Start with Windows" keeps pointing at Airglow.
+- Also on winget (`winget install Heavenlystorm.Airglow`) and Scoop.
+- Releases are built and published by GitHub Actions from a version tag.
+
 ## 1.5.0
 - Presets are now profiles, and you can share them. A profile is the lighting look plus, optionally, effects for
   particular areas (front fans, top, graphics card...), its own fan curve, and the automations that switch to it.

@@ -80,9 +80,10 @@ function renderDeck() {
   setHTML($("#deck"), S.effects.map((e) => {
     const extra = e.id === "spectrum" ? Array.from({ length: 7 }, (_, i) => `<i style="--i:${i}"></i>`).join("") : "";
     const tint = ["solid", "breathing", "pulse"].includes(e.id) ? ` style="--c:${scene.effect === e.id ? c : { solid: "#009bde", breathing: "#ff5a1f", pulse: "#8a3dff" }[e.id]}"` : "";
-    return `<button class="fx" role="radio" aria-checked="${scene.effect === e.id}" data-effect="${e.id}" title="${esc(e.description)}">
-      <span class="thumb t-${e.id}"${tint}>${extra}</span><span class="name">${esc(e.name)}</span></button>`;
-  }).join(""));
+    const thumb = e.studio ? `t-studio${e.studio.permissions.includes("audio") ? " t-music" : ""}` : `t-${e.id}`;
+    return `<button class="fx" role="radio" aria-checked="${scene.effect === e.id}" data-effect="${esc(e.id)}" title="${esc(e.description || "Made in the Studio")}">
+      <span class="thumb ${thumb}"${tint}>${extra}</span><span class="name">${esc(e.name)}</span></button>`;
+  }).join("") + `<a class="fx fx-new" href="#studio/new" title="Make your own effect in the Studio"><span class="thumb t-new" aria-hidden="true">+</span><span class="name">Create your own</span></a>`);
 }
 
 $("#deck").addEventListener("click", async (e) => {
@@ -128,6 +129,15 @@ function presetsHTML() {
       <button class="preset" id="save-preset" title="Save the current lighting and fan curve as a profile"><svg width="14" height="14"><use href="#i-plus"/></svg>Save current</button></div></div>`;
 }
 
+const REMIXABLE = ["solid", "breathing", "cycle", "rainbow", "gradient", "spectrum", "pulse"];
+function studioButton(eff) {
+  if (eff.studio) {
+    const by = eff.studio.origin === "community" ? `By ${esc(eff.studio.author)}, from the community.` : "One of yours, made in the Studio.";
+    return `<p class="hint" style="margin:0">${by}</p><button class="btn" data-studio-open="${esc(eff.id)}">${eff.studio.origin === "mine" ? "Edit in the Studio" : "Remix in the Studio"}</button>`;
+  }
+  return REMIXABLE.includes(eff.id) ? `<button class="btn" data-studio-remix="${esc(eff.id)}">Remix in the Studio</button>` : "";
+}
+
 function renderSceneInspector() {
   const scene = S.state.scene;
   const eff = S.effects.find((e) => e.id === scene.effect) || S.effects[0];
@@ -135,6 +145,7 @@ function renderSceneInspector() {
   ins.innerHTML = `${overrideBanner()}${presetsHTML()}<div class="rule-line"></div>
     <div class="ins-block"><div class="ins-title"><h2>${esc(eff.name)}</h2><span class="meta">Whole rig</span></div>
       <p class="ins-desc">${esc(eff.description)}${eff.needs.includes("audio") ? " Plays from whatever your speakers or headphones are playing." : ""}${eff.needs.includes("screen") ? " Uses your main display. Nothing is recorded or saved." : ""}</p>
+      ${studioButton(eff)}
       <div class="ins-block" id="scene-fields">${eff.params.map((p) => fieldHTML(p, scene.params[p.id], "sp")).join("")}</div>
       <div class="field"><label class="lab" for="bri"><span>Brightness</span><output id="bri-out">${scene.brightness}%</output></label>
         <input type="range" id="bri" min="0" max="100" step="1" value="${scene.brightness}"></div>
@@ -169,6 +180,10 @@ $("#inspector").addEventListener("click", async (e) => {
   if (e.target.closest("#save-preset")) return saveProfileSheet(() => renderInspector(true));
   if (e.target.closest("#edit-presets")) return editProfilesSheet(() => renderInspector(true));
   if (e.target.closest("#browse-profiles")) return openGallery();
+  const so = e.target.closest("[data-studio-open]");
+  if (so) return emit("studio:open", { fx_id: so.dataset.studioOpen });
+  const sr = e.target.closest("[data-studio-remix]");
+  if (sr) return emit("studio:open", { builtin: sr.dataset.studioRemix, params: S.state.scene.params });
   const pause = e.target.closest("[data-pause]");
   if (pause) {
     try { await post("/api/automations/pause", { minutes: +pause.dataset.pause }); toast("Automations paused for an hour"); emit("refresh"); }

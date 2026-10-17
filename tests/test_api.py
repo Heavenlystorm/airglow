@@ -148,7 +148,7 @@ class ApiTests(unittest.TestCase):
                    "automations": [{"when": {"type": "idle", "minutes": 5}, "then": {"type": "preset", "preset": "self"}}]}
         before = dict(self.ctrl.base_scene)
         self.assertEqual(self.request("POST", "/api/profiles/try", {"profile": profile})[0], 200)
-        self.assertEqual(self.request("GET", "/api/state")[1]["trial"], {"name": "API Test", "fans": False})
+        self.assertEqual(self.request("GET", "/api/state")[1]["trial"], {"name": "API Test", "fans": False, "kind": "profile"})
         self.request("POST", "/api/profiles/discard", {})
         self.assertEqual(self.ctrl.base_scene, before)
         self.request("POST", "/api/profiles/try", {"profile": profile})
@@ -290,6 +290,19 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((status, s["settings"]["temp_unit"], s["settings"]["lights_off_on_lock"]), (200, "F", True))
         self.request("POST", "/api/settings", {"temp_unit": "C", "lights_off_on_lock": False})
         self.assertEqual(self.request("POST", "/api/settings", {"fan_failsafe_duty": 5})[0], 400)
+
+    def test_going_online_is_asked_once_and_off_by_default(self):
+        self.assertFalse(self.store.settings()["online_checks"])
+        self.assertFalse(self.request("GET", "/api/state")[1]["online_asked"])
+        status, s = self.request("POST", "/api/settings", {"online_checks": False, "update_channel": "beta"})
+        self.assertEqual((status, s["settings"]["update_channel"]), (200, "beta"))
+        self.assertTrue(self.request("GET", "/api/state")[1]["online_asked"])
+        self.assertEqual(self.request("POST", "/api/settings", {"update_channel": "nightly"})[0], 400)
+        self.request("POST", "/api/settings", {"update_channel": "stable"})
+
+    def test_update_routes_need_an_updater(self):
+        self.assertEqual(self.request("POST", "/api/updates/check", {})[0], 404)
+        self.assertEqual(self.request("POST", "/api/updates/restart", {})[0], 404)
 
     def test_onboarded_and_show_window(self):
         self.request("POST", "/api/onboarded", {})
