@@ -739,7 +739,7 @@ button.st-card:hover { transform: translateY(-1px); }
 
 /* the editor: layers | your case | settings */
 .st-edit { position: absolute; inset: 0; display: grid; grid-template-columns: 250px minmax(0, 1fr) 300px; grid-template-rows: auto minmax(0, 1fr); }
-.st-edit.is-code { grid-template-columns: minmax(380px, 1.15fr) minmax(0, 1fr) 280px; }
+.st-edit.is-code { grid-template-columns: minmax(340px, 1fr) minmax(0, 1fr) 280px; }
 .st-top { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid #0f1011; background: var(--panel); box-shadow: var(--bevel); }
 .st-top .spacer { flex: 1; }
 .st-name { width: min(320px, 30vw); padding: 5px 9px; border: 1px solid transparent; border-radius: var(--r-ctl); background: transparent; font: 600 18px var(--display); font-variation-settings: "wdth" 88; color: var(--ink); }
@@ -796,10 +796,10 @@ button.st-card:hover { transform: translateY(-1px); }
 .st-api code { color: var(--ink); }
 
 .st-mid { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px; }
-.st-stagebar { display: flex; align-items: center; gap: 18px; }
+.st-stagebar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; }      /* the meter drops below when it's narrow */
 .st-stagebar .spacer { flex: 1; }
-.st-sw { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
-.st-meter { font: 12px var(--mono); font-stretch: 87.5%; color: var(--ink-3); }
+.st-sw { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+.st-meter { font: 12px var(--mono); font-stretch: 87.5%; color: var(--ink-3); white-space: nowrap; }
 .st-meter b { font-weight: 400; color: var(--ink-2); }
 .st-meter b.warm { color: var(--warm); }
 .st-stage { position: relative; flex: 1; min-height: 200px; border-radius: var(--r-stage); background: var(--void); border: 1px solid #0a0a0b; box-shadow: inset 0 3px 18px rgba(0, 0, 0, .95), 0 1px 0 rgba(255, 255, 255, .045); overflow: hidden; }

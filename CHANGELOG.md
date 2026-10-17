@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.0
 - **The Studio**, a new tab for making your own effects. Pick a starting point (or remix any effect), stack layers
   such as gradients, plasma, waves, sparkles, a scanner, breathing and three that follow the music, choose how each
   mixes in and which area of the case it lights, and watch it on a picture of your own case, and on your real lights
@@ -20,9 +20,10 @@
 - A beta channel in Settings, About, for new features first.
 - A new installer (Velopack). Installing over 1.5 or older moves Airglow to it: the old copy and its shortcuts go,
   your settings, profiles and helper programs stay, and "Start with Windows" keeps pointing at Airglow.
-- Also on winget (`winget install Heavenlystorm.Airglow`) and Scoop.
 - Installing a new version while Airglow is open works without quitting first, and after a winget upgrade Airglow
   starts again in the tray.
+- Sharing a long profile works: GitHub only takes about 8 KB in its address, so a longer profile goes on the
+  clipboard, and Airglow tells you to paste it on the page that opens.
 - Releases are built and published by GitHub Actions from a version tag.
 
 ## 1.5.0
