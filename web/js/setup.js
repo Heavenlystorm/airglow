@@ -5,6 +5,7 @@
 import { $, $$, S, emit, esc, fail, get, post } from "./core.js";
 import { ghost } from "./motion.js";
 import { closeSheet, openSheet } from "./sheet.js";
+import { placing } from "./stage.js";
 
 const G = { data: null, tasks: [], queue: [], task: null, step: null, back: [], a: {}, probe: null, timer: null, done: 0 };
 const PROBE_RENEW = 5000;          // the server drops a probe after 15 s without news, so the lights never stay white
@@ -113,16 +114,20 @@ function taskStatus(t) {
 }
 
 // ------------------------------------------------------------ frame
-function frame({ title, lede = "", body = "", back = true, primary = "", secondary = "" }) {
+function topHTML() {
   const t = G.task;
   const steps = t.type === "header" ? ["blink", "what", "count", "leds", "spot"].filter((s) => s !== "count" || G.a.needsCount).filter((s) => s !== "leds" || G.a.needsLeds) : ["spot"];
   const at = steps.indexOf(G.step);
   const pos = G.queue.length + 1;
   const left = G.total > 1 ? `<span>Light ${G.total - pos + 1} of ${G.total}</span>` : "";
-  openSheet(`<div class="body wide setup">
-    <div class="su-top"><span class="su-where">${deviceIcon(t.dev, t.zones)}<span><b>${esc(t.dev.name)}</b>${t.type === "header" ? ` › ${esc(t.zones[0].zone.name)}` : ""}</span></span>
+  return `<div class="su-top"><span class="su-where">${deviceIcon(t.dev, t.zones)}<span><b>${esc(t.dev.name)}</b>${t.type === "header" ? ` › ${esc(t.zones[0].zone.name)}` : ""}</span></span>
       ${left}<ol class="su-steps" aria-label="Steps">${steps.map((s, i) => `<li class="${i < at ? "done" : i === at ? "now" : ""}"></li>`).join("")}</ol>
-      <button class="icon-btn" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div>
+      <button class="icon-btn" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div>`;
+}
+
+function frame({ title, lede = "", body = "", back = true, primary = "", secondary = "" }) {
+  openSheet(`<div class="body wide setup">
+    ${topHTML()}
     <div><h2>${title}</h2>${lede ? `<p class="lede" style="margin-top:6px">${lede}</p>` : ""}</div>
     ${body}
     <div class="actions">${back ? `<button class="btn quiet" id="su-back">Back</button>` : ""}<span class="spacer"></span>${secondary}${primary}</div>
@@ -144,6 +149,7 @@ function goBack() {
 
 // ------------------------------------------------------------ home: everything, set up or not
 function home() {
+  if (G.docked) undock();
   stopProbe();
   G.task = null; G.step = null; G.back = [];
   const tasks = (G.tasks = buildTasks());
@@ -163,12 +169,24 @@ function home() {
     <div class="su-top"><span class="su-where"><b>Set up your lights</b></span><button class="icon-btn" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div>
     <p class="lede" style="margin:0">Tell Airglow what's plugged in where, and effects sweep across your case the right way round. Each light blinks while you set it up, so you always know which one you're looking at.</p>
     <div class="su-list">${rows || `<p class="hint">No lighting is connected right now.</p>`}</div>
-    <div class="actions"><button class="btn quiet" data-close>${G.done ? "Done" : "Not now"}</button><span class="spacer"></span>
+    ${coolerNote()}
+    <div class="actions"><button class="btn quiet" data-close>${G.done || !pending.length ? "Done" : "Not now"}</button><span class="spacer"></span>
       <button class="btn primary" id="su-run"${pending.length ? "" : " disabled"}>${pending.length ? `Set up ${pending.length} new light${pending.length === 1 ? "" : "s"}` : "Everything is set up"}</button></div>
   </div>`);
   $$("#sheet [data-task]").forEach((b) => b.addEventListener("click", () => run([tasks[+b.dataset.task]])));
   $("#su-run")?.addEventListener("click", () => run(pending));
   ($("#su-run:not(:disabled)") || $("#sheet [data-task]"))?.focus();
+}
+
+// USB-connected AIO coolers are named; one whose pump ring hangs off an ARGB header can't be seen by software.
+function coolerNote() {
+  const found = G.data.coolers || [];
+  if (found.length) {
+    return `<div class="su-cooler">${icon("ring")}<p><b>${found.map((c) => esc(`${c.brand} ${c.name}`)).join(", ")}</b> found over USB.
+      Its lights run through its own USB connection, which Airglow doesn't drive yet; OpenRGB may.</p></div>`;
+  }
+  return `<div class="su-cooler">${icon("ring")}<p><b>No USB cooler found.</b> If your CPU cooler or AIO pump has lights, they're on one of the headers above:
+    pick <b>Cooler or pump ring</b> there and count its LEDs.</p></div>`;
 }
 
 function run(list) {
@@ -315,37 +333,74 @@ function stepLeds() {
   $("#su-next").addEventListener("click", () => go("spot"));
 }
 
-function stepSpot() {
+// The last step happens on the real Lighting stage: the light glows there (and blinks in the case), you drag it to
+// where it sits, and the guide waits in a panel beside it. Spot buttons snap it close first. Every other light on
+// the stage can be dragged too, as in Arrange.
+const DEFAULT_SPOT = { fan: "front", ring: "cooler", strip: "bottom", single: "board" };
+const DEVICE_SPOT = { "Graphics card": "gpu", Keyboard: "desk", Mouse: "desk", "Mouse mat": "desk", Headset: "desk", "Headset stand": "desk", DRAM: "ram" };
+
+async function snap(spot) {
   const t = G.task;
-  if (G.probe?.mode !== "blink") probe(t.keys, "blink");
-  const fixed = t.type === "fixed";
-  const spots = G.data.spots;
-  const suggestion = fixed && !G.a.spot ? { "Graphics card": "gpu", Keyboard: "desk", Mouse: "desk", "Mouse mat": "desk", Headset: "desk", DRAM: "ram" }[t.dev.type] || (/board/i.test(t.dev.type) ? "board" : null) : null;
-  if (suggestion) G.a.spot = suggestion;
-  frame({
-    title: !fixed ? "Where does it sit?" : G.tasks.some((x) => x.dev.id === t.dev.id && x.type === "header") ? `Where are the ${esc(t.dev.name)}'s own lights?` : `Where is the ${esc(t.dev.name)}?`,
-    lede: fixed ? "Its lights are built in, so Airglow only needs to know where it is. It's blinking now." : "Pick the spot in your case. You can fine-tune the position later with Arrange.",
-    body: `<div class="su-case" role="radiogroup" aria-label="Where it sits">
-        <svg viewBox="0 0 160 112" aria-hidden="true">
-          <rect x="2" y="2" width="156" height="96" rx="5" class="c-shell"/>
-          <rect x="88" y="10" width="58" height="62" rx="2" class="c-board"/>
-          <rect x="6" y="78" width="148" height="16" rx="2" class="c-shroud"/>
-          <line x1="2" y1="108" x2="158" y2="108" class="c-desk"/>
-        </svg>
-        ${spots.map((s) => `<button role="radio" class="su-spot" data-spot="${s.id}" aria-checked="${G.a.spot === s.id}" style="left:${(s.x / 1.6) * 100}%;top:${((s.id === "desk" ? 1.08 : s.y) / 1.12) * 100}%"><i></i>${esc(s.label)}</button>`).join("")}
-      </div>`,
-    back: !fixed,
-    primary: `<button class="btn primary" id="su-save"${G.a.spot ? "" : " disabled"}>Save</button>`,
-    secondary: fixed ? `<button class="btn quiet" id="su-skip">Skip</button>` : "",
-  });
-  $$("#sheet [data-spot]").forEach((b) => b.addEventListener("click", () => {
-    G.a.spot = b.dataset.spot;
-    $$("#sheet [data-spot]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
-    $("#su-save").disabled = false;
+  G.a.spot = spot;
+  if (t.type === "fixed") await post("/api/setup/place", { device: t.dev.id, spot });
+  else await post("/api/setup/apply", { zone: t.keys[0], component: G.a.component, count: G.a.count, leds: G.a.leds, spot });
+  S.zones = await get("/api/zones");
+  emit("zones");
+  probe(t.keys, "blink");                  // saving ends the probe; keep the real light blinking while you place it
+}
+
+async function stepSpot() {
+  const t = G.task, fixed = t.type === "fixed";
+  G.a.spot ||= fixed ? DEVICE_SPOT[t.dev.type] || (/board/i.test(t.dev.type) ? "board" : "side") : DEFAULT_SPOT[product(G.a.component).kind];
+  try {
+    await snap(G.a.spot);
+  } catch (e) { fail(e); if (!fixed) goBack(); return; }
+  G.docked = true;
+  closeSheet();
+  if (location.hash !== "#lighting") location.hash = "#lighting";
+  placing(t.keys);
+  renderDock();
+}
+
+function renderDock() {
+  const t = G.task, fixed = t.type === "fixed";
+  let d = $("#guide-dock");
+  if (!d) {
+    d = document.createElement("aside");
+    d.id = "guide-dock";
+    d.className = "guide-dock setup";
+    d.setAttribute("aria-label", "Setup guide");
+    document.body.append(d);
+  }
+  const own = fixed && G.tasks.some((x) => x.dev.id === t.dev.id && x.type === "header");
+  d.innerHTML = `${topHTML()}
+    <div><h2>${fixed ? (own ? "Where are its own lights?" : `Where is the ${esc(t.dev.name)}?`) : "Drag it to where it sits"}</h2>
+      <p class="lede">It's glowing on the stage and blinking in your case. Drag it into place, and turn it with the round handle. Or snap it to a spot first:</p></div>
+    <div class="su-snaps" role="radiogroup" aria-label="Snap to a spot">${G.data.spots.map((s) => `<button role="radio" data-spot="${s.id}" aria-checked="${G.a.spot === s.id}">${esc(s.label)}</button>`).join("")}</div>
+    <p class="hint">Everything else on the stage can be dragged too.</p>
+    <div class="actions">${fixed ? "" : `<button class="btn quiet" id="su-back">Back</button>`}<span class="spacer"></span>${fixed ? `<button class="btn quiet" id="su-skip">Skip</button>` : ""}<button class="btn primary" id="su-save">${G.queue.length ? "Save and next" : "Save"}</button></div>`;
+  d.hidden = false;
+  d.querySelector("[data-close]").addEventListener("click", () => { undock(); stopProbe(); G.task = null; });
+  d.querySelectorAll("[data-spot]").forEach((b) => b.addEventListener("click", async () => {
+    d.querySelectorAll("[data-spot]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
+    try { await snap(b.dataset.spot); placing(t.keys); } catch (e) { fail(e); }
   }));
-  $("#su-skip")?.addEventListener("click", next);
-  $("#su-save").addEventListener("click", () => save(fixed ? { device: t.dev.id, spot: G.a.spot }
-    : { component: G.a.component, count: G.a.count, leds: G.a.leds, spot: G.a.spot }));
+  d.querySelector("#su-back")?.addEventListener("click", () => { undock(); goBack(); });
+  d.querySelector("#su-skip")?.addEventListener("click", () => { undock(); next(); });
+  d.querySelector("#su-save").addEventListener("click", () => {
+    undock();
+    G.data.pending = G.data.pending.filter((k) => !t.keys.includes(k));
+    emit("refresh");
+    next();
+  });
+  d.querySelector("#su-save").focus();
+}
+
+function undock() {
+  G.docked = false;
+  placing(null);
+  const d = $("#guide-dock");
+  if (d) d.hidden = true;
 }
 
 async function save(body) {
@@ -374,7 +429,9 @@ export async function openSetup({ start = false, only = null } = {}) {
   G.done = 0;
   if (!listening) {
     listening = true;
-    $("#sheet").addEventListener("close", () => { stopProbe(); G.task = null; });
+    $("#sheet").addEventListener("close", () => { if (!G.docked) { stopProbe(); G.task = null; } });
+    // leaving the Lighting tab while placing: keep what's saved so far and end the guide
+    window.addEventListener("hashchange", () => { if (G.docked && location.hash !== "#lighting") { undock(); stopProbe(); G.task = null; } });
   }
   home();
   if (only) {

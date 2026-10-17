@@ -210,3 +210,16 @@ class ProbeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CoolerTests(unittest.TestCase):
+    def test_list_loads_with_unique_ids(self):
+        from airglow import coolers
+        self.assertGreater(len(coolers.known()), 30)
+
+    def test_detects_a_kraken_once(self):
+        from airglow import coolers
+        hid_list = [{"vendor_id": 0x1E71, "product_id": 0x300E, "interface_number": i} for i in range(3)]
+        hid_list.append({"vendor_id": 0x1E71, "product_id": 0x2022})                # a Control Hub isn't a cooler
+        self.assertEqual(coolers.detect(hid_list), [{"brand": "NZXT", "name": "Kraken 2023", "usb": "1E71:300E"}])
+        self.assertEqual(coolers.detect([]), [])

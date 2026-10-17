@@ -102,7 +102,8 @@ export function renderOverlay() {
       const hx = cx + Math.cos(a) * d, hy = cy + Math.sin(a) * d;
       handle = `<line class="rot-line" x1="${cx}" y1="${cy}" x2="${hx}" y2="${hy}"/><circle class="rot" data-rot="${esc(z.key)}" cx="${hx}" cy="${hy}" r="11"/>`;
     }
-    html += `<g class="zone${on ? "" : " off"}${sel ? " selected" : ""}" data-key="${esc(z.key)}">${deco}${hit}
+    const placingThis = !!st.placing?.includes(z.key);
+    html += `<g class="zone${on ? "" : " off"}${sel || placingThis ? " selected" : ""}${placingThis ? " placing" : ""}" data-key="${esc(z.key)}">${deco}${hit}
       <text class="label" x="${lx}" y="${ly}">${esc(z.config.name)}${on ? "" : " (off)"}</text></g>${handle}`;
   }
   s.innerHTML = html;
@@ -129,7 +130,7 @@ function draw() {
       const hex = st.frames[z.key];
       const r = ledRadius(z) * v.s;
       let dx = 0, dy = 0, rot = null;
-      if (drag && drag.key === z.key) {
+      if (drag && (drag.keys || [drag.key]).includes(z.key)) {
         if (drag.mode === "move") { dx = drag.dx; dy = drag.dy; }
         else rot = drag;
       }
@@ -252,7 +253,8 @@ function onPointerDown(e) {
   const key = g.dataset.key;
   if (st.arranging) {
     const p = svgPoint(e);
-    st.drag = { key, mode: "move", x0: p.x, y0: p.y, dx: 0, dy: 0, moved: false };
+    const keys = st.placing?.includes(key) ? st.placing : [key];      // a device being placed moves as one
+    st.drag = { key, keys, mode: "move", x0: p.x, y0: p.y, dx: 0, dy: 0, moved: false };
     svg().setPointerCapture(e.pointerId);
   }
   if (st.selected !== key) {
@@ -269,8 +271,7 @@ function onPointerMove(e) {
   if (d.mode === "move") {
     d.dx = p.x - d.x0; d.dy = p.y - d.y0;
     d.moved ||= Math.hypot(d.dx, d.dy) > 3;
-    const g = svg().querySelector(`.zone[data-key="${CSS.escape(d.key)}"]`);
-    if (g) g.setAttribute("transform", `translate(${d.dx} ${d.dy})`);
+    for (const k of d.keys) svg().querySelector(`.zone[data-key="${CSS.escape(k)}"]`)?.setAttribute("transform", `translate(${d.dx} ${d.dy})`);
   } else {
     const z = zoneByKey(d.key);
     const cx = z.config.layout.x * U, cy = z.config.layout.y * U;
@@ -285,15 +286,31 @@ function onPointerUp() {
   const d = st.drag;
   st.drag = null;
   if (!d || !d.moved) { draw(); return; }
+  if (d.mode === "move") {
+    for (const k of d.keys) {
+      const z = zoneByKey(k);
+      const L = { ...z.config.layout };
+      L.x = Math.round(clamp(L.x + d.dx / U, 0, VB_W / U) * 100) / 100;
+      L.y = Math.round(clamp(L.y + d.dy / U, 0, VB_H / U) * 100) / 100;
+      saveLayout(z, L);
+    }
+    return;
+  }
   const z = zoneByKey(d.key);
   const L = { ...z.config.layout };
-  if (d.mode === "move") {
-    L.x = Math.round(clamp(L.x + d.dx / U, 0, VB_W / U) * 100) / 100;
-    L.y = Math.round(clamp(L.y + d.dy / U, 0, VB_H / U) * 100) / 100;
-  } else {
-    L.angle = Math.round(((L.angle + d.delta) % 360 + 540) % 360 - 180);
-  }
+  L.angle = Math.round(((L.angle + d.delta) % 360 + 540) % 360 - 180);
   saveLayout(z, L);
+}
+
+// The setup guide's last step: Arrange mode with the new light picked out, so you drag it to where it sits.
+// keys: the zones being placed (a graphics card's zones move together), or null when done.
+export function placing(keys) {
+  st.arranging = !!keys;
+  st.placing = keys;
+  st.selected = keys?.[0] || null;
+  $("#arrange").setAttribute("aria-pressed", String(st.arranging));
+  renderOverlay();
+  draw();
 }
 
 export function select(key) {

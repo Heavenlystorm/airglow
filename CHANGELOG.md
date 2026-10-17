@@ -3,9 +3,14 @@
 ## Unreleased
 - A guided setup for your lights, on first run, whenever new lights show up, and from Devices. For each header the
   lights blink so you know which ones you're setting up; you pick the product (NZXT accessories are already
-  detected), or count the LEDs with a slider that lights them one by one with the last one in amber, and pick where
-  it sits in the case. Built-in lighting (graphics cards, boards, RAM, keyboards) only needs the last step. Effects
-  then sweep across the case as it really is. Products live in `airglow/data/components/`, one per line.
+  detected), or count the LEDs with a slider that lights them one by one with the last one in amber, then drag it to
+  where it sits on the Lighting stage (or snap it to Front, Top, Rear and so on first) while the guide waits beside
+  it. Built-in lighting (graphics cards, boards, RAM, keyboards) only needs the last step, and a device's zones
+  move together. Effects then sweep across the case as it really is. Products live in `airglow/data/components/`,
+  one per line.
+- Recognises USB-connected AIO coolers (NZXT Kraken, Corsair Hydro and iCUE, ASUS ROG Ryujin, MSI Coreliquid and
+  Asetek-based ones) by name, from liquidctl's public list. A pump ring wired to an ARGB header is set up like any
+  other light.
 - Zone names on the Lighting stage no longer print on top of each other when zones sit close together.
 - New social preview image.
 

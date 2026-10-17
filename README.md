@@ -16,7 +16,8 @@ anything anywhere.
 
 What it does:
 - Walks you through setting up your lights: each header blinks so you know which one you're looking at, you pick
-  the product (NZXT accessories are detected) or count its LEDs with a slider, and say where it sits in the case.
+  the product (NZXT accessories are detected) or count its LEDs with a slider, then drag it to where it sits on a
+  live picture of your case. USB-connected AIO coolers are recognised by name.
 - Draws your fans and strips on screen where they sit in the case, lit with the colours the hardware is actually
   showing.
 - Runs effects across every device at once: solid, breathing, colour cycle, rainbow, gradient, comet, temperature,

@@ -570,6 +570,9 @@ code { font: 12px var(--mono); font-stretch: 87.5%; background: var(--well); pad
 .su-row-text span { color: var(--ink-3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .su-row .btn { padding: 5px 12px; font-size: 13px; }
 .su-ok { width: 16px; height: 16px; color: var(--ink-3); }
+.su-cooler { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--r-ctl); border: 1px dashed var(--line); color: var(--ink-3); font-size: 13px; }
+.su-cooler b { color: var(--ink-2); font-weight: 600; }
+.su-cooler p { margin: 0; }
 .tag.new { border-color: rgba(201, 162, 95, .5); color: var(--brass-hi); }
 
 /* which lights are blinking: a little row of LEDs blinking in step with the real ones */
@@ -601,18 +604,20 @@ code { font: 12px var(--mono); font-stretch: 87.5%; background: var(--well); pad
 .su-ctl .icon-btn { width: 34px; height: 34px; font: 400 18px/1 var(--mono); color: var(--ink-2); border: 1px solid #0d0d0e; background: var(--raised); box-shadow: var(--bevel); }
 .su-counter .hint { margin: 0; }
 
-/* where it sits: a case seen from the side (front on the left), with a button for every spot */
-.su-case { position: relative; aspect-ratio: 160 / 112; margin: 4px 12px 12px; }
-.su-case svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.su-case .c-shell { fill: var(--void); stroke: var(--line); stroke-width: .8; }
-.su-case .c-board { fill: none; stroke: var(--line-soft); stroke-width: .8; stroke-dasharray: 2 2; }
-.su-case .c-shroud { fill: rgba(255, 255, 255, .02); stroke: var(--line-soft); stroke-width: .6; }
-.su-case .c-desk { stroke: var(--line); stroke-width: .8; }
-.su-spot { position: absolute; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border: 1px solid #0d0d0e; border-radius: 99px; background: linear-gradient(180deg, #2e2f33, var(--raised)); box-shadow: var(--bevel), 0 2px 6px rgba(0, 0, 0, .5); color: var(--ink-2); font-size: 12.5px; white-space: nowrap; cursor: pointer; }
-.su-spot i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); }
-.su-spot:hover { color: var(--ink); border-color: var(--ink-3); }
-.su-spot[aria-checked="true"] { color: #1c1508; background: linear-gradient(180deg, var(--brass-hi), var(--brass)); border-color: #6e5528; font-weight: 600; }
-.su-spot[aria-checked="true"] i { background: #fff; box-shadow: 0 0 8px #fff; }
+/* where it sits: the guide waits beside the real stage while you drag the light into place */
+.guide-dock { position: fixed; right: 16px; bottom: 16px; z-index: 20; width: min(380px, calc(100vw - 32px)); display: grid; gap: 14px; padding: 18px 18px 16px; border: 1px solid #0d0d0e; border-radius: 6px; background: var(--plate); box-shadow: 0 0 0 1px rgba(201, 162, 95, .14), 0 24px 60px rgba(0, 0, 0, .6); animation: rise .26s var(--spring); }
+.guide-dock[hidden] { display: none; }
+.guide-dock h2 { font: 600 19px var(--display); font-variation-settings: "wdth" 88; }
+.guide-dock .lede { margin-top: 6px; font-size: 13.5px; }
+.guide-dock .hint { margin: 0; }
+.guide-dock .actions { display: flex; align-items: center; gap: 8px; }
+.guide-dock .actions .spacer { flex: 1; }
+.guide-dock .su-top { margin: 0; }
+.su-snaps { display: flex; flex-wrap: wrap; gap: 6px; }
+.su-snaps button { padding: 5px 11px; border: 1px solid #0d0d0e; border-radius: var(--r-ctl); background: var(--well); color: var(--ink-2); font-size: 13px; cursor: pointer; box-shadow: inset 0 1px 2px rgba(0, 0, 0, .5); }
+.su-snaps button:hover { color: var(--ink); }
+.su-snaps button[aria-checked="true"] { color: var(--ink); background: linear-gradient(180deg, #333439, var(--raised)); box-shadow: var(--bevel), inset 0 -2px 0 var(--brass); }
+.stage .zone.placing .label { fill: var(--brass-hi); }
 
 .su-done { justify-items: center; text-align: center; }
 .su-done .actions { justify-self: stretch; }
