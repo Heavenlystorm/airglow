@@ -98,14 +98,31 @@ class ScreenSampler(_LazyWorker):
 
 
 class AudioFrame:
-    def __init__(self, bands, level, bass):
+    def __init__(self, bands, level, bass, bands64=None, beat=False):
         self.bands, self.level, self.bass = bands, level, bass
+        self.bands64, self.beat = bands64, beat          # what Studio effects get: 64 bands and a beat flag
+
+
+class BeatDetector:
+    """A beat is the bass jumping well above its recent average, at most every 0.25 s."""
+
+    def __init__(self, ratio=1.45, floor=0.25, gap=0.25):
+        self.ratio, self.floor, self.gap = ratio, floor, gap
+        self.avg, self.last = 0.0, -1.0
+
+    def update(self, bass, now):
+        beat = bass > self.floor and bass > self.avg * self.ratio and now - self.last >= self.gap
+        if beat:
+            self.last = now
+        self.avg = self.avg * 0.9 + bass * 0.1
+        return beat
 
 
 class AudioAnalyzer(_LazyWorker):
-    """Listens to what's playing (WASAPI loopback of the default output) and keeps 16 log-spaced bands, 0..1."""
+    """Listens to what's playing (WASAPI loopback of the default output) and keeps 16 log-spaced bands, 0..1, for the
+    built-in effects, and 64 bands plus a beat flag for Studio effects."""
 
-    RATE, BLOCK, BANDS = 48000, 1024, 16
+    RATE, BLOCK, BANDS, FINE = 48000, 1024, 16, 64
     DEVICE_CHECK = 3.0       # seconds between checks for a new default output (headphones plugged in)
 
     def __init__(self):
@@ -114,6 +131,12 @@ class AudioAnalyzer(_LazyWorker):
         edges = np.geomspace(40, 16000, self.BANDS + 1)
         freqs = np.fft.rfftfreq(self.BLOCK, 1 / self.RATE)
         self._bins = [(freqs >= lo) & (freqs < hi) for lo, hi in zip(edges, edges[1:])]
+        # 64 bands from 30 Hz: the low ones are narrower than one FFT bin, so each takes its nearest bin
+        fine = np.geomspace(30, 16000, self.FINE + 1)
+        centres = np.sqrt(fine[:-1] * fine[1:])
+        self._fine = [((freqs >= lo) & (freqs < hi)) if ((freqs >= lo) & (freqs < hi)).any()
+                      else (np.arange(len(freqs)) == int(np.argmin(np.abs(freqs - c))))
+                      for lo, hi, c in zip(fine, fine[1:], centres)]
         self._window = np.hanning(self.BLOCK)
 
     def run(self):
@@ -128,6 +151,9 @@ class AudioAnalyzer(_LazyWorker):
         mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
         peak = np.full(self.BANDS, 1e-3)
         smooth = np.zeros(self.BANDS)
+        fpeak = np.full(self.FINE, 1e-3)
+        fsmooth = np.zeros(self.FINE)
+        beats = BeatDetector()
         bass = 0.0
         checked = time.monotonic()
         with mic.recorder(samplerate=self.RATE, blocksize=self.BLOCK) as rec:
@@ -148,4 +174,9 @@ class AudioAnalyzer(_LazyWorker):
                 smooth = np.where(norm > smooth, norm, smooth * 0.82)     # fast attack, soft release
                 b = float(norm[:3].mean())
                 bass = b if b > bass else bass * 0.8
-                self.frame = AudioFrame(smooth.copy(), float(smooth.mean()), bass)
+                fine = np.array([spec[m].mean() for m in self._fine])
+                fpeak = np.maximum(fine, fpeak * 0.995)
+                fnorm = np.clip(fine / np.maximum(fpeak, 1e-4), 0, 1)
+                fsmooth = np.where(fnorm > fsmooth, fnorm, fsmooth * 0.82)
+                self.frame = AudioFrame(smooth.copy(), float(smooth.mean()), bass, fsmooth.copy(),
+                                        beats.update(b, time.monotonic()))

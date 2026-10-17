@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Aurora</title>
+<meta name="airglow-effect" content="1">
+<meta name="author" content="heavenlystorm">
+<meta name="description" content="Slow northern lights drifting across the case, with a few stars.">
+<meta name="license" content="MIT">
+<meta name="tags" content="ambient, calm">
+<meta property="l0_speed" label="Drift" type="number" min="0" max="100" step="1" default="14">
+<meta property="l2_color" label="Star colour" type="color" default="#e8fff6">
+
+<script type="application/json" id="layers">
+[
+{"type": "gradient", "enabled": true, "opacity": 100, "blend": "normal", "mask": "all", "params": {"colors": ["#00ffa3", "#2f5bff", "#8a3dff"], "style": "linear", "angle": 20, "speed": 14, "scale": 40}, "expose": {"speed": "Drift"}},
+{"type": "plasma", "enabled": true, "opacity": 45, "blend": "screen", "mask": "all", "params": {"colors": ["#000000", "#00e0c8", "#000000"], "speed": 20, "scale": 60}, "expose": {}},
+{"type": "sparkles", "enabled": true, "opacity": 70, "blend": "add", "mask": "all", "params": {"color": "#e8fff6", "density": 10, "speed": 30, "rainbow": false}, "expose": {"color": "Star colour"}}
+]
+</script>

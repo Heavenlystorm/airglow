@@ -1,5 +1,6 @@
 * text=auto
 *.ps1 text eol=crlf
-*.iss text eol=crlf
+# community effects are hashed byte for byte (effects/index.json): always LF, on every checkout
+effects/** text eol=lf
 *.png binary
 *.ico binary

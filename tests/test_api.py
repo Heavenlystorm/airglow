@@ -9,6 +9,7 @@ import urllib.parse
 from airglow import api, config
 from airglow.controller import Controller
 from tests.fakes import FakeLightDevice, FakeManager, FakeNzxt, signals
+from tests.test_profiles import big_profile
 
 
 class ApiTests(unittest.TestCase):
@@ -148,7 +149,7 @@ class ApiTests(unittest.TestCase):
                    "automations": [{"when": {"type": "idle", "minutes": 5}, "then": {"type": "preset", "preset": "self"}}]}
         before = dict(self.ctrl.base_scene)
         self.assertEqual(self.request("POST", "/api/profiles/try", {"profile": profile})[0], 200)
-        self.assertEqual(self.request("GET", "/api/state")[1]["trial"], {"name": "API Test", "fans": False})
+        self.assertEqual(self.request("GET", "/api/state")[1]["trial"], {"name": "API Test", "fans": False, "kind": "profile"})
         self.request("POST", "/api/profiles/discard", {})
         self.assertEqual(self.ctrl.base_scene, before)
         self.request("POST", "/api/profiles/try", {"profile": profile})
@@ -160,9 +161,34 @@ class ApiTests(unittest.TestCase):
         self.server.hooks["open_url"] = shown.append
         status, s = self.request("POST", "/api/profiles/share", {"id": r["id"], "author": "me", "include_automations": True})
         self.assertEqual(status, 200, s)
+        self.assertTrue(s["filled"])
         self.assertEqual(shown, [s["url"]])
         self.assertEqual(s["profile"]["automations"][0]["then"]["preset"], "self")
         self.assertEqual(self.request("POST", "/api/profiles/share", {"id": r["id"]})[0], 400)      # needs an author
+        self.store.set_rules([], lambda x: x)
+        self.store.set_presets([p for p in self.store.get_presets() if p["id"] != r["id"]])
+        self.ctrl.presets_changed()
+
+    def test_share_a_profile_too_long_for_the_address(self):
+        profile = big_profile()
+        status, r = self.request("POST", "/api/profiles/keep", {"profile": profile, "include_fans": True,
+                                                                 "include_automations": True})
+        self.assertEqual(status, 200, r)
+        shown = []
+        self.server.hooks["open_url"] = shown.append
+        status, s = self.request("POST", "/api/profiles/share", {"id": r["id"], "author": "me", "include_fans": True,
+                                                                  "include_automations": True, "open": False})
+        self.assertEqual(status, 200, s)
+        self.assertFalse(s["filled"])
+        self.assertEqual(shown, [])                                                  # the page opens it, once copied
+        self.assertNotIn("value=", s["url"])
+        self.assertEqual(json.loads(s["source"]), s["profile"])
+        self.assertEqual(len(s["profile"]["automations"]), 10)
+        self.assertEqual(s["path"], f"profiles/{s['profile']['id']}.json")
+        self.assertEqual(self.request("POST", "/api/profiles/open-share", {"url": s["url"]})[0], 200)
+        self.assertEqual(shown, [s["url"]])
+        self.assertEqual(self.request("POST", "/api/profiles/open-share", {"url": "https://evil.example/"})[0], 400)
+        self.assertEqual(shown, [s["url"]])
         self.store.set_rules([], lambda x: x)
         self.store.set_presets([p for p in self.store.get_presets() if p["id"] != r["id"]])
         self.ctrl.presets_changed()
@@ -290,6 +316,19 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((status, s["settings"]["temp_unit"], s["settings"]["lights_off_on_lock"]), (200, "F", True))
         self.request("POST", "/api/settings", {"temp_unit": "C", "lights_off_on_lock": False})
         self.assertEqual(self.request("POST", "/api/settings", {"fan_failsafe_duty": 5})[0], 400)
+
+    def test_going_online_is_asked_once_and_off_by_default(self):
+        self.assertFalse(self.store.settings()["online_checks"])
+        self.assertFalse(self.request("GET", "/api/state")[1]["online_asked"])
+        status, s = self.request("POST", "/api/settings", {"online_checks": False, "update_channel": "beta"})
+        self.assertEqual((status, s["settings"]["update_channel"]), (200, "beta"))
+        self.assertTrue(self.request("GET", "/api/state")[1]["online_asked"])
+        self.assertEqual(self.request("POST", "/api/settings", {"update_channel": "nightly"})[0], 400)
+        self.request("POST", "/api/settings", {"update_channel": "stable"})
+
+    def test_update_routes_need_an_updater(self):
+        self.assertEqual(self.request("POST", "/api/updates/check", {})[0], 404)
+        self.assertEqual(self.request("POST", "/api/updates/restart", {})[0], 404)
 
     def test_onboarded_and_show_window(self):
         self.request("POST", "/api/onboarded", {})

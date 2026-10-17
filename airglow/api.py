@@ -19,13 +19,18 @@ from . import (__version__, autostart, conflicts, coolers, diagnostics, fancontr
                system, tools, updates)
 from .automation import validate_rule
 from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP
-from .lighting import effects, geometry
+from .lighting import effects, geometry, studio
 
 log = logging.getLogger(__name__)
 CSRF_HEADER = "X-Airglow"
 MAX_BODY = 256 * 1024
 STREAM_STATE_EVERY = 2.0      # seconds between state events on /api/stream
 STREAM_FRAME_EVERY = 1 / 15   # LED frames for the live preview, when the page asks for them
+CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'"
+# The page effects run in (web/runtime/frame.html, in a sandboxed iframe): it may start a worker from its own blob and
+# load its own script, nothing else. No connections, so an effect can't reach Airglow's API or the internet.
+EFFECT_FRAME_CSP = ("default-src 'none'; script-src 'self' http://127.0.0.1:* http://localhost:* blob:; worker-src blob:; "
+                    "connect-src 'none'; img-src 'none'; style-src 'none'; form-action 'none'; frame-ancestors 'self'")
 # Windows' registry can map .js to text/plain, which browsers refuse to run as a module.
 TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
          ".svg": "image/svg+xml", ".ico": "image/x-icon", ".png": "image/png", ".json": "application/json"}
@@ -41,8 +46,8 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False   # on Windows SO_REUSEADDR would let a second process share the port
 
-    def __init__(self, port, ctrl, store, hooks=None):
-        self.ctrl, self.store, self.hooks = ctrl, store, hooks or {}
+    def __init__(self, port, ctrl, store, hooks=None, updater=None):
+        self.ctrl, self.store, self.hooks, self.updater = ctrl, store, hooks or {}, updater
         self.stopping = threading.Event()        # ends open event streams
         super().__init__(("127.0.0.1", port), Handler)
         bound = self.server_address[1]          # differs from `port` when port=0 (tests)
@@ -65,15 +70,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         log.debug("%s %s", self.address_string(), fmt % args)
 
-    def _send(self, status, payload, ctype="application/json; charset=utf-8"):
+    def _send(self, status, payload, ctype="application/json; charset=utf-8", csp=CSP):
         body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy",
-                         "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", csp)
         self.end_headers()
         self.wfile.write(body)
 
@@ -99,6 +103,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(403, "missing request header")
             if method == "GET" and path == "/api/stream":
                 return self._stream(urllib.parse.parse_qs(parsed.query))
+            if method == "GET" and path == "/api/fx/host/stream":
+                return self._host_stream(urllib.parse.parse_qs(parsed.query))
             if path.startswith("/api/"):
                 body = self._body() if method == "POST" else None
                 return self._send(200, route(self.server, method, path, body, urllib.parse.parse_qs(parsed.query)))
@@ -152,6 +158,30 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:                         # headers are out, so no error response is possible: just end
             log.exception("event stream failed")
 
+    def _host_stream(self, query):
+        """What the effect host page runs, and its frame clock (lighting/studio.py)."""
+        if not studio.HOST.check_token((query.get("token") or [""])[0]):
+            raise ApiError(403, "forbidden")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+        def send(event, data):
+            self.wfile.write(f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode())
+            self.wfile.flush()
+
+        try:
+            self.wfile.write(b"retry: 1000\n\n")
+            studio.HOST.stream(send, self.server.stopping)
+        except (OSError, ValueError):
+            pass                                  # the host page went away
+        except Exception:
+            log.exception("effect host stream failed")
+
     def _static(self, path):
         rel = "index.html" if path in ("", "/") else urllib.parse.unquote(path).lstrip("/")
         target = (paths.WEB_DIR / rel).resolve()
@@ -160,7 +190,8 @@ class Handler(BaseHTTPRequestHandler):
         ctype = TYPES.get(target.suffix.lower()) or mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype.endswith("javascript"):
             ctype += "; charset=utf-8"
-        self._send(200, target.read_bytes(), ctype)
+        csp = EFFECT_FRAME_CSP if rel == "runtime/frame.html" else CSP
+        self._send(200, target.read_bytes(), ctype, csp)
 
     def do_GET(self):
         self._dispatch("GET")
@@ -171,11 +202,12 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- views
 
-def _settings_view(store):
+def _settings_view(store, updater=None):
     s = store.settings()
     return {"settings": s, "start_with_windows": autostart.is_enabled(), "fan_profiles": fancontrol.profiles(s),
             "fancontrol_installed": fancontrol.exe_path(s) is not None, "version": __version__,
-            "updates_available": bool(updates.UPDATE_REPO),
+            "updates_available": bool(updates.UPDATE_REPO) and updater is not None,
+            "update": updater.status() if updater else None,
             "data_dir": str(paths.data_dir())}
 
 
@@ -194,7 +226,7 @@ def _zones_view(ctrl, store):
                                                "experimental": dev.experimental, "note": dev.note,
                                                "plugin": dev.plugin, "parameters": list(dev.parameters),
                                                "params": dict(dev.params)},
-                        "zone": z.info(), "config": cfg,
+                        "zone": z.info(), "config": cfg, "spot": lightsetup.zone_spot(cfg),
                         "positions": [[round(float(x), 4), round(float(y), 4)] for x, y in pos],
                         "fan_index": fan.tolist()})
     return {"canvas": {"w": geometry.CANVAS_W, "h": geometry.CANVAS_H}, "zones": out}
@@ -253,11 +285,20 @@ def _setup_pending(ctrl, store):
 
 def route(server, method, path, body, query=None):
     ctrl, store, hooks = server.ctrl, server.store, server.hooks
+    if path.startswith("/api/studio/"):
+        from . import studioapi
+        try:
+            return studioapi.route(server, method, path, body, query)
+        except studioapi.StudioError as e:
+            raise ApiError(e.status, str(e)) from None
 
     if method == "GET":
         if path == "/api/state":
             return {**ctrl.snapshot(), "temp_unit": store.settings()["temp_unit"], "zones_rev": store.zones_rev,
-                    "onboarded": store.state.get("onboarded", False), "conflicts": conflicts.detect(),
+                    "onboarded": store.state.get("onboarded", False),
+                    "online_asked": store.state.get("online_asked", False),
+                    "update": server.updater.status() if server.updater else None, "conflicts": conflicts.detect(),
+                    "studio": studio.HOST.status(),
                     "setup_pending": lightsetup.pending_count(store, [d.info() for d in ctrl.manager.all().values()]),
                     "readings": ctrl.readings_for(store.tracked_sensors())}
         if path == "/api/sensors":
@@ -280,7 +321,7 @@ def route(server, method, path, body, query=None):
         if path == "/api/curves":
             return {"curves": store.curves(), "defaults": DEFAULT_CURVES, "safety_temp": SAFETY_TEMP, "min_duty": MIN_FAN_DUTY}
         if path == "/api/settings":
-            return _settings_view(store)
+            return _settings_view(store, server.updater)
         if path == "/api/automations":
             return store.get_rules()
         if path == "/api/apps":
@@ -380,10 +421,18 @@ def route(server, method, path, body, query=None):
                                     curves=store.curves())
         if not shared["author"]:
             raise ApiError(400, "Add your GitHub name, so the gallery can credit you.")
-        url = gallery.share_url(shared)
+        url, filled = gallery.share_url(shared)
         if body.get("open", True) and hooks.get("open_url") and gallery.is_share_url(url):
             hooks["open_url"](url)
-        return {"url": url, "profile": shared}
+        return {"url": url, "filled": filled, "source": gallery.share_file(shared),
+                "path": f"{gallery.FOLDER}/{shared['id']}.json", "profile": shared}
+    if path == "/api/profiles/open-share":          # after the page put a long profile on the clipboard
+        url = str(body.get("url"))
+        if not gallery.is_share_url(url):
+            raise ApiError(400, "not a share address")
+        if hooks.get("open_url"):
+            hooks["open_url"](url)
+        return {"ok": True}
     m = re.fullmatch(r"/api/presets/([a-z0-9\-]{1,64})/apply", path)
     if m:
         preset = next((p for p in store.get_presets() if p["id"] == m.group(1)), None)
@@ -453,13 +502,17 @@ def route(server, method, path, body, query=None):
             autostart.enable() if body.pop("start_with_windows") else autostart.disable()
         if body:
             store.update_settings(body)
+            if "online_checks" in body:
+                store.save_state(online_asked=True)     # answered, whether from the question or from Settings
+            if {"online_checks", "update_channel"} & set(body) and server.updater:
+                server.updater.settings_changed()
             if {"openrgb_host", "openrgb_port", "openrgb_enabled"} & set(body):
                 ctrl.manager.bridge.client.host = store.settings()["openrgb_host"]
                 ctrl.manager.bridge.client.port = store.settings()["openrgb_port"]
                 ctrl.manager.bridge.client.close()
                 ctrl.manager.bridge._last_try = 0.0           # try the new address now, not after the retry wait
             ctrl.apply()
-        return _settings_view(store)
+        return _settings_view(store, server.updater)
     if path == "/api/automations":
         presets = {p["id"] for p in store.get_presets()}
         rules = store.set_rules(body.get("rules"), lambda r: validate_rule(r, presets, set(store.curves())))
@@ -482,10 +535,21 @@ def route(server, method, path, body, query=None):
         except tools.SetupError as e:
             raise ApiError(409, str(e)) from None
     if path == "/api/updates/check":
+        if not server.updater:
+            raise ApiError(404, "Update checks aren't set up for this build.")
+        return server.updater.check_in_background()
+    if path == "/api/updates/restart":
+        if not server.updater:
+            raise ApiError(404, "Update checks aren't set up for this build.")
         try:
-            return updates.check()
+            server.updater.restart_to_update()
         except RuntimeError as e:
-            raise ApiError(502, str(e)) from None
+            raise ApiError(409, str(e)) from None
+        return {"ok": True}
+    if path == "/api/fx/host/frames":
+        if not studio.HOST.check_token(body.get("token")):
+            raise ApiError(403, "forbidden")
+        return studio.HOST.frames(body)
     if path == "/api/onboarded":
         store.save_state(onboarded=True)
         return {"ok": True}

@@ -41,13 +41,18 @@ from them (we credit liquidctl and OpenRGB). Don't contribute anything taken fro
 If sensor picking is wrong on your PC (wrong CPU temperature, missing graphics card), that file lets us add your
 hardware to `tests/` and fix it.
 
+## Sharing an effect
+Make it in the Studio and press Share: GitHub opens with the file filled in, and Propose changes turns it into a pull
+request. [effects/README.md](effects/README.md) has the rules and what the checks look at. Profiles work the same way
+(Lighting, Profiles, Edit, Share).
+
 ## Working on the code
 ```
 pip install -r requirements-dev.txt
 python -m unittest discover -s tests -t .     # all tests, no hardware needed
 python tools/dev_server.py --demo             # the UI on http://127.0.0.1:8790 with a simulated rig and sensors
 python run.py                                 # the real app from source
-.\build.ps1                                   # tests, then dist\Airglow\ and the installer (needs Inno Setup 6)
+.\build.ps1                                   # tests, then dist\Airglow\ and the release (needs vpk)
 ```
 
 - Python backend in `airglow/`, plain JavaScript modules in `web/` (no framework, no build step).

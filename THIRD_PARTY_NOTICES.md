@@ -17,6 +17,8 @@ Airglow's installer bundles the following open-source components. Each keeps its
 | SoundCard | 0.4.6 | BSD 3-Clause | Music-reactive effects (WASAPI loopback) |
 | cffi / pycparser | 2.1.1 / 3.11 | MIT-0 / BSD 3-Clause | SoundCard dependencies |
 | psutil | 7.2.2 | BSD 3-Clause | Running-program detection for automations |
+| Velopack (Python library, Update.exe and setup) | 1.2.161 | MIT | Installing, self-updating and uninstalling |
+| CodeMirror | 5.65.18 | MIT | The Studio's code editor. Licence text in `web/vendor/codemirror/LICENSE` |
 | pywinrt (winrt-runtime and Windows.* projections) | 3.2.1 | MIT | Windows Dynamic Lighting devices |
 | typing_extensions | 4.16.0 | PSF 2.0 | Dependency |
 | Martian Mono (variable, Latin subset) | 1.1.0 via @fontsource-variable/martian-mono 5.2.5 | SIL Open Font License 1.1 | Numerals in the interface. Licence text in `web/fonts/OFL-martian-mono.txt` |

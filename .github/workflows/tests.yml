@@ -24,7 +24,9 @@ jobs:
           node-version: "22"
       - name: UI scripts parse
         shell: bash
-        run: for f in web/js/*.js; do node --check "$f"; done
+        run: for f in web/js/*.js web/runtime/*.js tools/*.mjs; do node --check "$f"; done
+      - name: Community effects are valid
+        run: python tools/effects.py --check
       - name: Gallery profiles are valid
         run: python tools/profiles.py --check
       - name: Device plugins load
@@ -40,13 +42,16 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install -r requirements-dev.txt
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
+      - name: Install vpk
+        shell: bash
+        run: |
+          dotnet tool install -g vpk --version 1.2.161
+          echo "$USERPROFILE/.dotnet/tools" >> "$GITHUB_PATH"
       - name: Build
         shell: pwsh
-        run: ./build.ps1
+        run: ./build.ps1 -SkipTests
       - uses: actions/upload-artifact@v7
         with:
           name: airglow-setup
-          path: dist/Airglow-Setup-*.exe
+          path: dist/releases/*-Setup.exe
           if-no-files-found: error

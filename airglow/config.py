@@ -38,6 +38,8 @@ DEFAULT_CONFIG = {
     "lights_off_on_sleep": True,
     "lights_off_on_lock": False,
     "dynamic_lighting_enabled": False,
+    "online_checks": False,   # opt-in: look for updates (and later community effects) on a schedule
+    "update_channel": "stable",
     "fan_curves": DEFAULT_CURVES,
     "zones": {},
     "device_params": {},      # device id -> plugin settings (validated against the plugin's PARAMETERS on save)
@@ -78,7 +80,8 @@ DEFAULT_OVERVIEW = {
 }
 
 DEFAULT_SCENE = {"effect": "solid", "params": {"color": "#009bde"}, "brightness": 100, "on": True}
-DEFAULT_STATE = {"scene": DEFAULT_SCENE, "fan_curve": "balanced", "active_preset": None, "onboarded": False}
+DEFAULT_STATE = {"scene": DEFAULT_SCENE, "fan_curve": "balanced", "active_preset": None, "onboarded": False,
+                 "online_asked": False}
 
 # Bump when the saved format changes, and add a step to Store._upgrade. 0 = files from before versioning
 # (single-colour presets and state), 1 = effects with typed parameters.
@@ -147,8 +150,13 @@ def validate_settings(patch):
             out[key] = str(value).rstrip("/")
         elif key in ("fancontrol_exe", "fancontrol_configs_dir"):
             out[key] = str(value or "")
-        elif key in ("openrgb_enabled", "lights_off_on_sleep", "lights_off_on_lock", "dynamic_lighting_enabled"):
+        elif key in ("openrgb_enabled", "lights_off_on_sleep", "lights_off_on_lock", "dynamic_lighting_enabled",
+                     "online_checks"):
             out[key] = bool(value)
+        elif key == "update_channel":
+            if value not in ("stable", "beta"):
+                raise ValueError("update channel must be stable or beta")
+            out[key] = value
         elif key == "openrgb_host":
             if not re.fullmatch(r"[\w.\-]{1,253}", str(value)):
                 raise ValueError("OpenRGB host must be a computer name or address")
@@ -507,6 +515,7 @@ class Store:
             state["fan_curve"] = raw["fan_curve"]             # a profile's own curve; the controller checks it exists
         state["active_preset"] = raw.get("active_preset")
         state["onboarded"] = bool(raw.get("onboarded", False))
+        state["online_asked"] = bool(raw.get("online_asked", False))
         return state
 
     # -- settings / curves

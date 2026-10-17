@@ -131,16 +131,17 @@ class Controller:
         return self.store.curves().get(name)
 
     # ------------------------------------------------------------ trying a profile before keeping it
-    def try_profile(self, scene, name, fan_points=None, clear_zones=()):
+    def try_profile(self, scene, name, fan_points=None, clear_zones=(), kind="profile"):
         """Play a profile on the real lights (and its fan curve, when given) until end_trial().
-        clear_zones: zones whose own effect would hide the profile's per-area effects; put back on discard."""
+        clear_zones: zones whose own effect would hide the profile's per-area effects; put back on discard.
+        kind "studio": the Studio playing the effect being edited ("Also on my lights")."""
         with self._lock:
             if self.trial is None:
                 zones = self.store.zones()
                 self.trial = {"before": {"scene": dict(self.base_scene), "curve": self.base_curve,
                                          "preset": self.active_preset,
                                          "overrides": {k: zones[k].get("override") for k in clear_zones if k in zones}}}
-            self.trial.update(name=name, fan_points=fan_points)
+            self.trial.update(name=name, fan_points=fan_points, kind=kind)
             for key in clear_zones:
                 self._set_override(key, None)
             self.base_scene = validate_scene({**scene, "on": True})
@@ -441,7 +442,8 @@ class Controller:
             "scene": self.base_scene,
             "effective": self.effective_scene,
             "active_preset": self.active_preset,
-            "trial": {"name": self.trial["name"], "fans": bool(self.trial.get("fan_points"))} if self.trial else None,
+            "trial": {"name": self.trial["name"], "fans": bool(self.trial.get("fan_points")),
+                      "kind": self.trial.get("kind", "profile")} if self.trial else None,
             "override": {
                 "lighting": a.light_rule["id"] if a.light_rule else None,
                 "fans": a.fan_rule["id"] if a.fan_rule else None,

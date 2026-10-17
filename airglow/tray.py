@@ -18,8 +18,8 @@ def tray_tint(rgb):
 
 
 class Tray:
-    def __init__(self, ctrl, store, show_window, quit_app):
-        self.ctrl, self.store = ctrl, store
+    def __init__(self, ctrl, store, show_window, quit_app, updater=None):
+        self.ctrl, self.store, self.updater = ctrl, store, updater
         self.show_window, self.quit_app = show_window, quit_app
         self._seen_rev = None
         self._icon_key = None
@@ -58,6 +58,8 @@ class Tray:
                 lines.append("   ".join(f"{m.get('short', m['name'])} {sensors.fmt(m, m['value'], f)}" for m in pins[2:4]))
         if c.fan_duty is not None and c.hub:
             lines.append(f"{c.effective_curve.capitalize()} fans at {c.fan_duty}%")
+        if self.updater and self.updater.state == "ready":
+            lines.insert(1, f"Update {self.updater.latest} ready, applied on restart")   # before the cut at 127
         return "\n".join(lines)[:127]   # Windows tooltip limit
 
     def _menu(self):

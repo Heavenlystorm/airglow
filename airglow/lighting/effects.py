@@ -236,13 +236,56 @@ class Off(Effect):
         return np.zeros((len(z.pos), 3))
 
 
-EFFECTS = {e.id: e for e in (Solid(), Breathing(), ColorCycle(), RainbowWave(), Gradient(), Comet(),
-                             Temperature(), ScreenAmbience(), AudioSpectrum(), AudioPulse(), Off())}
+class _Registry(dict):
+    """The built-in effects, plus Studio effects ("fx:..."), which come from a provider set at start-up
+    (lighting/studio.py), so everything that checks an effect id accepts them too."""
+
+    provider = None          # callable(effect_id) -> Effect or None
+    lister = None            # callable() -> [Effect], for the catalog
+
+    def _studio(self, key):
+        if not (isinstance(key, str) and key.startswith("fx:")):
+            return None
+        _load_studio()
+        return self.provider(key) if self.provider else None
+
+    def get(self, key, default=None):
+        if dict.__contains__(self, key):
+            return dict.__getitem__(self, key)
+        found = self._studio(key)
+        return default if found is None else found
+
+    def __contains__(self, key):
+        return dict.__contains__(self, key) or self._studio(key) is not None
+
+    def __getitem__(self, key):
+        found = self.get(key)
+        if found is None:
+            raise KeyError(key)
+        return found
+
+
+def _load_studio():
+    """lighting/studio.py registers the provider when it's imported. Import it on first use, so a Studio effect in
+    saved settings or a profile is known however early it's read (the settings load before the engine starts)."""
+    if EFFECTS.provider is None:
+        from . import studio  # noqa: F401
+
+
+EFFECTS = _Registry({e.id: e for e in (Solid(), Breathing(), ColorCycle(), RainbowWave(), Gradient(), Comet(),
+                                       Temperature(), ScreenAmbience(), AudioSpectrum(), AudioPulse(), Off())})
+
+
+def info(e):
+    out = {"id": e.id, "name": e.name, "description": e.description, "params": e.params,
+           "needs": list(e.needs), "animated": e.animated}
+    return {**out, **getattr(e, "studio_info", {})}
 
 
 def catalog():
-    return [{"id": e.id, "name": e.name, "description": e.description, "params": e.params,
-             "needs": list(e.needs), "animated": e.animated} for e in EFFECTS.values()]
+    _load_studio()
+    studio = EFFECTS.lister() if EFFECTS.lister else []
+    return [info(e) for e in list(EFFECTS.values()) + studio]
 
 
 _HEX = re.compile(r"#[0-9a-fA-F]{6}")

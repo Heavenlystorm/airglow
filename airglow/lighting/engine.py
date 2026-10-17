@@ -11,7 +11,7 @@ import numpy as np
 from .. import lightsetup
 from ..devices import DeviceError, ORDERS
 from ..openrgb import OpenRGBError
-from . import effects, geometry
+from . import effects, geometry, studio
 from .inputs import AudioAnalyzer, ScreenSampler
 
 log = logging.getLogger(__name__)
@@ -171,12 +171,14 @@ class Engine:
                 self._last.clear()
 
     # ------------------------------------------------------------ rendering
-    def _geometry(self, key, layout):
+    def _geometry(self, key, layout, zcfg=None):
         cached = self._geom.get(key)
         if cached and cached[0] == layout:
             return cached[1]
         pos, local, fan = geometry.positions(layout)
-        z = SimpleNamespace(pos=geometry.normalised(pos), canvas=pos, local=local, fan=fan, n=len(pos))
+        # key and spot: Studio effects draw for these LEDs, and their layers can be limited to an area
+        z = SimpleNamespace(pos=geometry.normalised(pos), canvas=pos, local=local, fan=fan, n=len(pos), key=key,
+                            spot=lightsetup.zone_spot(zcfg) if zcfg else None)
         self._geom[key] = (dict(layout), z)
         return z
 
@@ -207,7 +209,7 @@ class Engine:
         """One zone's colours. scene/own=False: how a profile would look, without this rig's identify flashes or
         the effects you gave single zones (the gallery's preview)."""
         layout = zcfg["layout"]
-        z = self._geometry(key, layout)
+        z = self._geometry(key, layout, zcfg)
         deadline = self._identify.get(key) if own else None
         if deadline and deadline > now:
             return self._identify_colors(z, deadline, now), 100
@@ -307,6 +309,7 @@ class Engine:
                 except (DeviceError, OpenRGBError, OSError) as e:
                     dev.error = str(e)
         self.frames = frames
+        studio.HOST.tick(t, self.audio.frame if self.audio.active else None)
         if self._preview:
             with self._lock:
                 self._render_preview(zones, now, t)

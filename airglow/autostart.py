@@ -9,9 +9,21 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 VALUE = "Airglow"
 
 
+def stable_exe(exe):
+    """Scoop keeps each version in its own folder (scoop\\apps\\airglow\\1.6.0) and points apps\\airglow\\current at
+    the newest, so start-up has to go through that link or it would stay on the version that turned it on."""
+    parts = list(Path(exe).parts)
+    lower = [p.lower() for p in parts]
+    for i in range(len(parts) - 3):
+        if lower[i:i + 3] == ["scoop", "apps", "airglow"]:
+            parts[i + 3] = "current"
+            return str(Path(*parts))
+    return str(exe)
+
+
 def command():
     if getattr(sys, "frozen", False):
-        return f'"{sys.executable}" --background'
+        return f'"{stable_exe(sys.executable)}" --background'
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     run_py = Path(__file__).resolve().parent.parent / "run.py"
     return f'"{pythonw}" "{run_py}" --background'
@@ -42,7 +54,8 @@ def disable(name=VALUE):
         pass
 
 
-INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Airglow"
+# Velopack installs the app into %LOCALAPPDATA%\Airglow\current, and updates replace what's in there in place
+INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "Airglow" / "current"
 
 
 def is_installed_copy():
