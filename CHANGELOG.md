@@ -21,6 +21,8 @@
 - A new installer (Velopack). Installing over 1.5 or older moves Airglow to it: the old copy and its shortcuts go,
   your settings, profiles and helper programs stay, and "Start with Windows" keeps pointing at Airglow.
 - Also on winget (`winget install Heavenlystorm.Airglow`) and Scoop.
+- Installing a new version while Airglow is open works without quitting first, and after a winget upgrade Airglow
+  starts again in the tray.
 - Releases are built and published by GitHub Actions from a version tag.
 
 ## 1.5.0
