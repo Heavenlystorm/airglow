@@ -20,7 +20,9 @@ function flush() {
   if (!Object.keys(out.frames).length && !Object.keys(out.problems).length && !out.logs.length) return;
   const body = JSON.stringify({ token, ...out });
   out = fresh();
+  // read every reply: 30 unread responses a second pile up in WebView2 until the host is killed for memory
   fetch("/api/fx/host/frames", { method: "POST", headers: { "Content-Type": "application/json", "X-Airglow": "1" }, body })
+    .then((r) => r.arrayBuffer())
     .catch(() => { /* Airglow is restarting; it starts this host again if needed */ });
 }
 
