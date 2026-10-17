@@ -26,19 +26,23 @@ user's settings stay in `%APPDATA%\Airglow`, which updates never touch.
   start-up and every 6 hours, downloads in the background, and installs on the next start or with "Restart to
   update". With it off, nothing happens until "Check for updates" is pressed.
 - The stable channel reads `releases.stable.json`, the beta channel reads both feeds and takes the newer.
+- Velopack keys releases by version, so never re-use a version number. A broken release is replaced by a newer
+  one; to pull it, delete the GitHub release and its tag.
 - A new Setup.exe (downloaded, or `winget upgrade`) can be run while Airglow is open. Velopack's Setup ends every
   process running from `%LOCALAPPDATA%\Airglow` (Airglow and its effect host) before replacing the folder. It ends
   them abruptly: there's no hook before that, so Airglow can't quit cleanly and the fans stay at their last speed
   for a moment. A normal Setup starts the new version straight after. A silent one (winget) doesn't, so the install
-  hook does: Airglow leaves a `running` file in `%APPDATA%\Airglow` while it runs, and when Setup finds it, the hook
-  starts `Airglow.exe --after-setup <pid>`, which waits for Setup to exit and then starts in the tray, unless Setup
-  already started it. Only the in-app "Restart to update" quits cleanly first.
-- Don't test installers from a shell inside a packaged (MSIX) app such as the Claude desktop app. Windows redirects
-  its AppData and HKCU writes into the package (`%LOCALAPPDATA%\Packages\<app>\LocalCache`), so Airglow is installed
-  only inside that app's view. Setup also can't find the running copy there ("0 matched directory" in the
-  Velopack log) and fails with "Failed to remove existing application directory". Run Setup.exe from Explorer.
-- Velopack keys releases by version, so never re-use a version number. A broken release is replaced by a newer
-  one; to pull it, delete the GitHub release and its tag.
+  hook does, when it replaced an existing install that was running (Airglow leaves a `running` file in
+  `%APPDATA%\Airglow` until it quits cleanly) or set to start with Windows. It starts
+  `Airglow.exe --after-setup <pid>`, which waits for Setup to exit and then starts in the tray, unless Setup already
+  started it. A fresh silent install never starts Airglow. Only the in-app "Restart to update" quits cleanly first.
+
+> **Note for developers:** never run Setup.exe from the shell of a packaged (MSIX) app, such as the Claude desktop
+> app's terminal. Windows redirects that app's AppData and HKCU writes into the package
+> (`%LOCALAPPDATA%\Packages\<app>\LocalCache`), so Airglow ends up installed only inside that app's view: Explorer,
+> sign-in and the real "start with Windows" entry don't see it. Setup also can't find the running copy there ("0
+> matched directory" in the Velopack log) and fails with "Failed to remove existing application directory". Run
+> Setup.exe from Explorer or a normal terminal.
 
 ## app-meta.json
 [`meta/app-meta.json`](../meta/README.md) is read along with every update check. Raise `minSupported` to tell older

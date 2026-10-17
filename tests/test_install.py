@@ -63,7 +63,8 @@ class AfterInstallTests(unittest.TestCase):
              mock.patch.object(install, "_hook_logging"), \
              mock.patch.object(install, "remove_legacy_install", return_value=existing_user), \
              mock.patch.object(autostart, "is_enabled", return_value=had_startup), \
-             mock.patch.object(autostart, "enable", enable):
+             mock.patch.object(autostart, "enable", enable), \
+             mock.patch.object(install, "start_after_setup"):
             install.after_install("1.6.0")
         return enable.called
 
@@ -81,6 +82,7 @@ class AfterInstallTests(unittest.TestCase):
              mock.patch.object(install, "remove_legacy_install", side_effect=PermissionError("in use")), \
              mock.patch.object(autostart, "is_enabled", return_value=True), \
              mock.patch.object(autostart, "enable") as enable, \
+             mock.patch.object(install, "start_after_setup"), \
              self.assertLogs("airglow.install", "ERROR"):
             install.after_install("1.6.0")
         enable.assert_called_once()
@@ -98,8 +100,14 @@ class StartAfterSetupTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def after_install(self, popen=None):
-        with mock.patch.object(install, "_hook_logging"),              mock.patch.object(install, "remove_legacy_install", return_value=False),              mock.patch.object(autostart, "is_enabled", return_value=True),              mock.patch.object(autostart, "enable"),              mock.patch.object(install.subprocess, "Popen", popen or mock.Mock()) as started:
+    def after_install(self, existing_user=True, had_startup=False, popen=None):
+        if existing_user:
+            (self.data / "config.json").write_text("{}")
+        with mock.patch.object(install, "_hook_logging"), \
+             mock.patch.object(install, "remove_legacy_install", return_value=False), \
+             mock.patch.object(autostart, "is_enabled", return_value=had_startup), \
+             mock.patch.object(autostart, "enable"), \
+             mock.patch.object(install.subprocess, "Popen", popen or mock.Mock()) as started:
             install.after_install("1.6.0")
         return started
 
@@ -114,14 +122,25 @@ class StartAfterSetupTests(unittest.TestCase):
         install.mark_running()
         started = self.after_install()
         started.assert_called_once()
-        cmd = started.call_args.args[0]
-        self.assertEqual(cmd, [sys.executable, "--after-setup", str(os.getppid())])
+        self.assertEqual(started.call_args.args[0], [sys.executable, "--after-setup", str(os.getppid())])
         self.assertEqual(started.call_args.kwargs["cwd"], Path(sys.executable).parent)
 
-    def test_doesnt_start_when_airglow_had_quit(self):
+    def test_starts_when_it_starts_with_windows(self):
+        self.after_install(had_startup=True).assert_called_once()
+
+    def test_doesnt_start_when_it_had_quit_and_doesnt_start_with_windows(self):
         install.mark_running()
         install.clear_running()
         self.after_install().assert_not_called()
+
+    def test_never_starts_after_a_fresh_install(self):
+        install.mark_running()                                    # even with a stray marker
+        self.after_install(existing_user=False, had_startup=True).assert_not_called()
+
+    def test_the_decision(self):
+        for existing, running, startup, expected in ((True, True, False, True), (True, False, True, True),
+                                                     (True, False, False, False), (False, True, True, False)):
+            self.assertEqual(install.should_start_after_setup(existing, running, startup), expected)
 
     def test_a_failed_start_doesnt_fail_the_install(self):
         install.mark_running()
@@ -137,7 +156,8 @@ class StartAfterSetupTests(unittest.TestCase):
 
     def test_uninstall_clears_the_marker(self):
         install.mark_running()
-        with mock.patch.object(install, "_hook_logging"), mock.patch.object(autostart, "disable"),              mock.patch("airglow.tools.tools_dir", return_value=Path("Z:/does/not/exist")):
+        with mock.patch.object(install, "_hook_logging"), mock.patch.object(autostart, "disable"), \
+             mock.patch("airglow.tools.tools_dir", return_value=Path("Z:/does/not/exist")):
             install.before_uninstall("1.6.0")
         self.assertFalse((self.data / "running").exists())
 
@@ -166,7 +186,11 @@ class StartAfterSetupTests(unittest.TestCase):
 class AfterSetupStartTests(unittest.TestCase):
     def main(self, setup_done_it):
         from airglow import app
-        with mock.patch.object(install, "run_hooks"),              mock.patch.object(install, "wait_for_setup", return_value=not setup_done_it) as wait,              mock.patch.object(app, "setup_logging") as started, mock.patch.object(app, "Store"),              mock.patch.object(app, "single_instance", return_value=False),              mock.patch.object(app, "ask_running_instance_to_show") as show:
+        with mock.patch.object(install, "run_hooks"), \
+             mock.patch.object(install, "wait_for_setup", return_value=not setup_done_it) as wait, \
+             mock.patch.object(app, "setup_logging") as started, mock.patch.object(app, "Store"), \
+             mock.patch.object(app, "single_instance", return_value=False), \
+             mock.patch.object(app, "ask_running_instance_to_show") as show:
             self.assertEqual(app.main(["--after-setup", "1234"]), 0)
         wait.assert_called_once_with("1234")
         return started, show
