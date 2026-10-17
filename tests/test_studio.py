@@ -133,6 +133,18 @@ class LibraryTests(unittest.TestCase):
         self.assertIsNone(self.lib.get("fx:../../etc"))
         self.assertIsNone(self.lib.get("solid"))
 
+    def test_saved_studio_scene_survives_a_fresh_start(self):
+        # in a new process the settings load before anything imports lighting/studio.py; the scene must survive
+        import subprocess
+        import sys
+        self.lib.save_mine(builder())
+        (Path(self.tmp.name) / "state.json").write_text(json.dumps(
+            {"scene": {"effect": "fx:me.aurora-wave", "params": {}, "brightness": 80, "on": True}}), encoding="utf-8")
+        code = ("import sys; from airglow import fxlibrary; fxlibrary.LIBRARY = fxlibrary.Library(sys.argv[1]); "
+                "from airglow.config import Store; print(Store(sys.argv[1]).state['scene']['effect'])")
+        r = subprocess.run([sys.executable, "-c", code, self.tmp.name], capture_output=True, text=True, cwd=ROOT, check=True)
+        self.assertEqual(r.stdout.strip(), "fx:me.aurora-wave", r.stderr)
+
     def test_registry_knows_studio_effects(self):
         self.lib.save_mine(builder())
         with mock.patch.object(studio.HOST, "_library", self.lib):

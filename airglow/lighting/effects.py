@@ -244,9 +244,10 @@ class _Registry(dict):
     lister = None            # callable() -> [Effect], for the catalog
 
     def _studio(self, key):
-        if self.provider and isinstance(key, str) and key.startswith("fx:"):
-            return self.provider(key)
-        return None
+        if not (isinstance(key, str) and key.startswith("fx:")):
+            return None
+        _load_studio()
+        return self.provider(key) if self.provider else None
 
     def get(self, key, default=None):
         if dict.__contains__(self, key):
@@ -264,6 +265,13 @@ class _Registry(dict):
         return found
 
 
+def _load_studio():
+    """lighting/studio.py registers the provider when it's imported. Import it on first use, so a Studio effect in
+    saved settings or a profile is known however early it's read (the settings load before the engine starts)."""
+    if EFFECTS.provider is None:
+        from . import studio  # noqa: F401
+
+
 EFFECTS = _Registry({e.id: e for e in (Solid(), Breathing(), ColorCycle(), RainbowWave(), Gradient(), Comet(),
                                        Temperature(), ScreenAmbience(), AudioSpectrum(), AudioPulse(), Off())})
 
@@ -275,6 +283,7 @@ def info(e):
 
 
 def catalog():
+    _load_studio()
     studio = EFFECTS.lister() if EFFECTS.lister else []
     return [info(e) for e in list(EFFECTS.values()) + studio]
 
