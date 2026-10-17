@@ -15,10 +15,11 @@ function daysText(days) {
 
 const tempTxt = (c) => `${unitF() ? Math.round(c * 9 / 5 + 32) : c}°${unitF() ? "F" : "C"}`;
 
-export function sentence(r, html = true) {
+// names: extra profile names by id (a shared profile's automations call it "self")
+export function sentence(r, html = true, names = {}) {
   const b = (t) => (html ? `<b>${esc(t)}</b>` : t);
   const w = r.when, t = r.then;
-  const presetName = S.presets.find((p) => p.id === t.preset)?.name || "a deleted preset";
+  const presetName = names[t.preset] || S.presets.find((p) => p.id === t.preset)?.name || "a deleted profile";
   const when = {
     app_running: () => `When ${b(w.exe)} is running`,
     app_focused: () => `When ${b(w.exe)} is the app in front`,
@@ -39,7 +40,7 @@ export function sentence(r, html = true) {
 const STARTERS = [
   { title: "Lights off at night", text: "Between 23:00 and 07:00, the lights go dark.", rule: { when: { type: "time", start: "23:00", end: "07:00" }, then: { type: "lights_off" } } },
   { title: "Dim when you step away", text: "After 10 idle minutes, lights drop to 15%.", rule: { when: { type: "idle", minutes: 10 }, then: { type: "dim", brightness: 15 } } },
-  { title: "Game mode", text: "While your game runs, use the Gaming preset.", rule: { when: { type: "app_running", exe: "" }, then: { type: "preset", preset: "gaming" } }, needsInput: true },
+  { title: "Game mode", text: "While your game runs, use the Gaming profile.", rule: { when: { type: "app_running", exe: "" }, then: { type: "preset", preset: "gaming" } }, needsInput: true },
   { title: "Quiet when idle", text: "After 15 idle minutes, the fans go Silent.", rule: { when: { type: "idle", minutes: 15 }, then: { type: "fan_curve", curve: "silent" } } },
   { title: "Dark while locked", text: "Lights off whenever you lock the PC.", rule: { when: { type: "locked" }, then: { type: "lights_off" } } },
   { title: "Cool down under load", text: "Above 80 °C, the fans switch to Performance.", rule: { when: { type: "temp_above", temp: 80, source: "max" }, then: { type: "fan_curve", curve: "performance" } } },
@@ -134,7 +135,7 @@ async function openBuilder(rule, isNew) {
       <div class="builder">
         <div class="row"><span>When</span><select class="select" id="rb-when">${[["app_running", "A program is running"], ["app_focused", "A program is in front"], ["idle", "The PC is idle"], ["time", "It's between two times"], ["locked", "The PC is locked"], ["temp_above", "It's running hot"]].map(([v, l]) => `<option value="${v}"${v === w.type ? " selected" : ""}>${l}</option>`).join("")}</select></div>
         ${whenFields ? `<div class="row"><span></span><div class="sub">${whenFields}</div></div>` : ""}
-        <div class="row"><span>Then</span><select class="select" id="rb-then">${[["preset", "Use a preset"], ["lights_off", "Turn the lights off"], ["dim", "Dim the lights"], ["fan_curve", "Switch the fan curve"]].map(([v, l]) => `<option value="${v}"${v === t.type ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+        <div class="row"><span>Then</span><select class="select" id="rb-then">${[["preset", "Use a profile"], ["lights_off", "Turn the lights off"], ["dim", "Dim the lights"], ["fan_curve", "Switch the fan curve"]].map(([v, l]) => `<option value="${v}"${v === t.type ? " selected" : ""}>${l}</option>`).join("")}</select></div>
         ${thenFields ? `<div class="row"><span></span><div class="sub">${thenFields}</div></div>` : ""}
         <div class="preview-sentence">${preview || "Fill in the details to see the rule."}</div>
         <p class="hint">When the condition stops being true, your own lighting and fan settings come back by themselves.</p>

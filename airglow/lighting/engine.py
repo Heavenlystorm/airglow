@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from .. import lightsetup
 from ..devices import DeviceError, ORDERS
 from ..openrgb import OpenRGBError
 from . import effects, geometry
@@ -69,6 +70,7 @@ class Engine:
     RESUME_GAP = 10.0        # a frame gap this long means the PC slept
     IDENTIFY_SECONDS = 6.0
     PROBE_SECONDS = 15.0     # the setup guide keeps renewing its probe; if it goes away, the zone goes back on its own
+    PREVIEW_SECONDS = 10.0   # the gallery keeps asking while a profile's preview is on screen
     PROBE_LEVEL = 0.25       # white at a quarter: a long strip at full white can draw more than a header supplies
 
     def __init__(self, manager, store, sensors=lambda: {}, async_writes=True):
@@ -84,6 +86,8 @@ class Engine:
         self._identify = {}              # zone key -> deadline
         self._probe = {}                 # zone key -> (mode, LEDs to light, deadline), from the setup guide
         self._probe_done = set()         # zones whose probe just ended: sent dark once, past the configured LEDs
+        self._preview = None             # (scene, deadline): a profile drawn for the gallery, never sent to devices
+        self.preview_frames = {}
         self._last = {}                  # zone key -> (bytes, time sent)
         self._geom = {}                  # zone key -> (layout snapshot, namespace)
         self._lock = threading.RLock()
@@ -119,6 +123,31 @@ class Engine:
             else:
                 self._probe[zone_key] = (mode, int(n), time.monotonic() + self.PROBE_SECONDS)
             self._last.pop(zone_key, None)
+
+    def preview(self, scene):
+        """Render a profile for the gallery's mini stage alongside the real frames, for a few seconds. None stops."""
+        with self._lock:
+            self._preview = (scene, time.monotonic() + self.PREVIEW_SECONDS) if scene else None
+            if not scene:
+                self.preview_frames = {}
+
+    def _render_preview(self, zones, now, t):
+        scene, deadline = self._preview
+        if deadline <= now:
+            self._preview, self.preview_frames = None, {}
+            return
+        out = {}
+        for dev in list(self.manager.all().values()):
+            if not dev.online:
+                continue
+            for zone in dev.zones:
+                key = f"{dev.id}/{zone.id}"
+                zcfg = zones.get(key)
+                if not zcfg or not zcfg.get("enabled") or geometry.total_leds(zcfg["layout"]) == 0:
+                    continue
+                rgb, bri = self.render_zone(f"preview:{key}", zcfg, now, t, scene=scene, own=False)
+                out[key] = self._to_bytes(rgb, bri).tobytes().hex()
+        self.preview_frames = out
 
     def _probe_colors(self, mode, n, count, now):
         out = np.zeros((count, 3))
@@ -174,18 +203,24 @@ class Engine:
             out[i] = 1.0
         return out
 
-    def render_zone(self, key, zcfg, now, t):
+    def render_zone(self, key, zcfg, now, t, scene=None, own=True):
+        """One zone's colours. scene/own=False: how a profile would look, without this rig's identify flashes or
+        the effects you gave single zones (the gallery's preview)."""
         layout = zcfg["layout"]
         z = self._geometry(key, layout)
-        deadline = self._identify.get(key)
+        deadline = self._identify.get(key) if own else None
         if deadline and deadline > now:
             return self._identify_colors(z, deadline, now), 100
-        scene = self.scene
+        scene = scene or self.scene
         if not scene.get("on", True):
             return np.zeros((z.n, 3)), 0
         eff_id, params = scene["effect"], scene["params"]
-        if zcfg.get("override"):
+        if own and zcfg.get("override"):               # an effect you gave this zone yourself wins
             eff_id, params = zcfg["override"]["effect"], zcfg["override"]["params"]
+        elif scene.get("areas"):                       # a profile's effect for the area this zone sits in
+            area = scene["areas"].get(lightsetup.zone_spot(zcfg))
+            if area:
+                eff_id, params = area["effect"], area["params"]
         eff = effects.EFFECTS.get(eff_id) or effects.EFFECTS["solid"]
         ctx = self._context(eff.needs, params)
         try:
@@ -272,6 +307,9 @@ class Engine:
                 except (DeviceError, OpenRGBError, OSError) as e:
                     dev.error = str(e)
         self.frames = frames
+        if self._preview:
+            with self._lock:
+                self._render_preview(zones, now, t)
         self.frame_id += 1
         self.last_frame = time.monotonic()
         self._identify = {k: d for k, d in self._identify.items() if d > now}

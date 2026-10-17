@@ -1,0 +1,42 @@
+{
+  "airglow_profile": 1,
+  "id": "heat-map",
+  "name": "Heat Map",
+  "author": "Airglow",
+  "description": "Blue when cool, red when the CPU or GPU works hard. Fans follow a quiet curve.",
+  "lighting": {
+    "effect": "temperature",
+    "params": {
+      "source": "max",
+      "cool": "#00b4ff",
+      "hot": "#ff2200",
+      "low": 40,
+      "high": 80
+    },
+    "brightness": 85
+  },
+  "fans": {
+    "curve": [
+      [
+        40,
+        25
+      ],
+      [
+        55,
+        32
+      ],
+      [
+        68,
+        48
+      ],
+      [
+        78,
+        70
+      ],
+      [
+        88,
+        100
+      ]
+    ]
+  }
+}

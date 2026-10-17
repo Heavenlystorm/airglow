@@ -110,7 +110,7 @@ def is_active(rule, sig, sensors, was_active=False):
 
 def resolve(rules, active_ids, presets):
     """Pick the winning rule for lighting and for fans (first active rule in list order wins each).
-    presets: {id: preset}. A preset only claims the fans if it sets a fan curve."""
+    presets: {id: preset}. A profile only claims the fans if it sets a fan curve (a named one or its own)."""
     light = fans = None
     for r in rules:
         if not r["enabled"] or r["id"] not in active_ids:
@@ -119,7 +119,7 @@ def resolve(rules, active_ids, presets):
         preset = presets.get(r["then"].get("preset")) if tt == "preset" else None
         if light is None and (tt in ("lights_off", "dim") or preset):
             light = r
-        if fans is None and (tt == "fan_curve" or (preset and preset.get("fan_curve"))):
+        if fans is None and (tt == "fan_curve" or (preset and (preset.get("fan_curve") or preset.get("fan_points")))):
             fans = r
     return light, fans
 

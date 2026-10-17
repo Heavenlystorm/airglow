@@ -123,6 +123,68 @@ class ApiTests(unittest.TestCase):
                                                         "leds": 99, "spot": "top"})
         self.assertEqual(bad[0], 400)
 
+    def test_gallery_lists_and_fetches_from_the_configured_folder(self):
+        import os
+        from pathlib import Path
+        old = os.environ.get("AIRGLOW_GALLERY_URL")
+        os.environ["AIRGLOW_GALLERY_URL"] = (Path(__file__).resolve().parent.parent / "profiles").as_uri()
+        try:
+            status, data = self.request("GET", "/api/gallery")
+            self.assertEqual(status, 200, data)
+            self.assertEqual(data["profiles"][0]["id"], data["featured"][0])
+            status, p = self.request("GET", f"/api/gallery/profile?id={data['profiles'][0]['id']}")
+            self.assertEqual(status, 200, p)
+            self.assertIn("badges", p)
+            self.assertEqual(self.request("GET", "/api/gallery/profile?id=../secrets")[0], 400)
+        finally:
+            if old is None:
+                os.environ.pop("AIRGLOW_GALLERY_URL", None)
+            else:
+                os.environ["AIRGLOW_GALLERY_URL"] = old
+
+    def test_try_keep_and_share_a_profile(self):
+        profile = {"airglow_profile": 1, "id": "api-test", "name": "API Test", "author": "me",
+                   "lighting": {"effect": "solid", "params": {"color": "#00ff00"}, "brightness": 50},
+                   "automations": [{"when": {"type": "idle", "minutes": 5}, "then": {"type": "preset", "preset": "self"}}]}
+        before = dict(self.ctrl.base_scene)
+        self.assertEqual(self.request("POST", "/api/profiles/try", {"profile": profile})[0], 200)
+        self.assertEqual(self.request("GET", "/api/state")[1]["trial"], {"name": "API Test", "fans": False})
+        self.request("POST", "/api/profiles/discard", {})
+        self.assertEqual(self.ctrl.base_scene, before)
+        self.request("POST", "/api/profiles/try", {"profile": profile})
+        status, r = self.request("POST", "/api/profiles/keep", {"profile": profile, "include_automations": True})
+        self.assertEqual(status, 200, r)
+        self.assertEqual(self.ctrl.active_preset, r["id"])
+        self.assertTrue(any(x["then"].get("preset") == r["id"] for x in self.store.get_rules()))
+        shown = []
+        self.server.hooks["open_url"] = shown.append
+        status, s = self.request("POST", "/api/profiles/share", {"id": r["id"], "author": "me", "include_automations": True})
+        self.assertEqual(status, 200, s)
+        self.assertEqual(shown, [s["url"]])
+        self.assertEqual(s["profile"]["automations"][0]["then"]["preset"], "self")
+        self.assertEqual(self.request("POST", "/api/profiles/share", {"id": r["id"]})[0], 400)      # needs an author
+        self.store.set_rules([], lambda x: x)
+        self.store.set_presets([p for p in self.store.get_presets() if p["id"] != r["id"]])
+        self.ctrl.presets_changed()
+
+    def test_preview_and_save_current_with_areas(self):
+        profile = {"airglow_profile": 1, "id": "p", "name": "P", "lighting": {"effect": "solid", "params": {}}}
+        self.assertEqual(self.request("POST", "/api/preview", {"profile": profile})[0], 200)
+        self.ctrl.engine.tick()
+        self.assertTrue(self.request("GET", "/api/preview/frames")[1]["zones"])
+        self.request("POST", "/api/preview", {})
+        self.assertEqual(self.request("GET", "/api/preview/frames")[1]["zones"], {})
+        cfg = self.store.zones()["strip/z1"]
+        self.store.set_zone("strip/z1", {**cfg, "override": {"effect": "solid", "params": {"color": "#0000ff"}},
+                                         "component": {"id": None, "count": 1, "spot": "top"}}, 16)
+        status, r = self.request("POST", "/api/presets/from-current", {"name": "With areas"})
+        self.assertEqual(status, 200, r)
+        saved = next(p for p in r["presets"] if p["id"] == r["id"])
+        self.assertEqual(saved["areas"]["top"]["params"]["color"], "#0000ff")
+        self.store.config["zones"] = {**self.store.config["zones"], "strip/z1": cfg}    # as it was, still "auto"
+        self.store.set_presets([p for p in self.store.get_presets() if p["id"] != r["id"]])
+        self.ctrl.presets_changed()
+
     def test_event_stream_checks_the_host_too(self):
         self.assertEqual(self.request("GET", "/api/stream", host="evil.example")[0], 403)
 

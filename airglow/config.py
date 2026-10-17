@@ -160,14 +160,37 @@ def validate_settings(patch):
     return out
 
 
+def validate_areas(areas):
+    """Per-area effects: {spot: {"effect", "params"}}, keyed by where lights sit (lightsetup.SPOTS), so a profile
+    lands on the right lights on any rig."""
+    from . import lightsetup
+    from .lighting import effects
+    if not areas:
+        return {}
+    if not isinstance(areas, dict):
+        raise ValueError("areas must be an object")
+    out = {}
+    for spot, a in areas.items():
+        if spot not in lightsetup.SPOTS:
+            raise ValueError(f"unknown area '{spot}'")
+        if not isinstance(a, dict) or a.get("effect") not in effects.EFFECTS:
+            raise ValueError(f"the {lightsetup.SPOTS[spot]['label'].lower()} area needs an effect")
+        out[spot] = {"effect": a["effect"], "params": effects.clean_params(a["effect"], a.get("params"))}
+    return out
+
+
 def validate_scene(scene):
     from .lighting import effects
     if not isinstance(scene, dict):
         raise ValueError("a scene must be an object")
     effect = scene.get("effect") or "solid"
-    return {"effect": effect, "params": effects.clean_params(effect, scene.get("params")),
-            "brightness": _int_in(scene.get("brightness", 100), 0, 100, "Brightness"),
-            "on": bool(scene.get("on", True))}
+    out = {"effect": effect, "params": effects.clean_params(effect, scene.get("params")),
+           "brightness": _int_in(scene.get("brightness", 100), 0, 100, "Brightness"),
+           "on": bool(scene.get("on", True))}
+    areas = validate_areas(scene.get("areas"))
+    if areas:
+        out["areas"] = areas
+    return out
 
 
 def _migrate_preset(p):
@@ -192,7 +215,10 @@ def validate_preset(p, curve_names):
     if curve is not None and curve not in curve_names:
         raise ValueError(f"unknown fan curve '{curve}'")
     effect = p.get("effect") or "solid"
-    return {
+    description = str(p.get("description") or "").strip()
+    if len(description) > 200:
+        raise ValueError("descriptions can be up to 200 characters")
+    out = {
         "id": pid,
         "name": name,
         "effect": effect,
@@ -201,6 +227,15 @@ def validate_preset(p, curve_names):
         "fan_curve": curve,
         "fan_profile": _fan_profile(p.get("fan_profile")),
     }
+    # profile extras, only stored when used so older presets look the same
+    if description:
+        out["description"] = description
+    areas = validate_areas(p.get("areas"))
+    if areas:
+        out["areas"] = areas
+    if p.get("fan_points"):
+        out["fan_points"] = validate_curve(p["fan_points"])        # the profile's own curve, used while it's active
+    return out
 
 
 def _fan_profile(name):
@@ -468,8 +503,8 @@ class Store:
             state["scene"] = validate_scene(raw.get("scene", DEFAULT_SCENE))
         except ValueError as e:
             log.warning("ignoring saved scene: %s", e)
-        if raw.get("fan_curve") in self.config["fan_curves"]:
-            state["fan_curve"] = raw["fan_curve"]
+        if raw.get("fan_curve") in self.config["fan_curves"] or str(raw.get("fan_curve")).startswith("profile:"):
+            state["fan_curve"] = raw["fan_curve"]             # a profile's own curve; the controller checks it exists
         state["active_preset"] = raw.get("active_preset")
         state["onboarded"] = bool(raw.get("onboarded", False))
         return state

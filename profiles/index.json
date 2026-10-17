@@ -1,0 +1,43 @@
+{
+  "generated_by": "tools/profiles.py",
+  "profiles": [
+    {
+      "id": "ember",
+      "name": "Ember",
+      "author": "Airglow",
+      "description": "A slow orange glow, like coals. Calm enough to leave on all evening.",
+      "badges": [],
+      "added": "2026-10-17"
+    },
+    {
+      "id": "heat-map",
+      "name": "Heat Map",
+      "author": "Airglow",
+      "description": "Blue when cool, red when the CPU or GPU works hard. Fans follow a quiet curve.",
+      "badges": [
+        "fans"
+      ],
+      "added": "2026-10-17"
+    },
+    {
+      "id": "neon-dusk",
+      "name": "Neon Dusk",
+      "author": "Airglow",
+      "description": "Magenta to blue across the case, with a white comet circling the front fans.",
+      "badges": [
+        "areas"
+      ],
+      "added": "2026-10-17"
+    },
+    {
+      "id": "night-owl",
+      "name": "Night Owl",
+      "author": "Airglow",
+      "description": "Dim deep blue, and lights off from 23:00 to 07:00.",
+      "badges": [
+        "automations"
+      ],
+      "added": "2026-10-17"
+    }
+  ]
+}

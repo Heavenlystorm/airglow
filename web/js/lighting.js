@@ -1,8 +1,9 @@
-// Lighting screen: effect deck, inspector (scene or a selected zone), presets.
+// Lighting screen: effect deck, inspector (scene or a selected zone), profiles.
 
 import { $, $$, QUICK, S, coalesce, curveLabel, effectName, emit, esc, fail, get, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
 import { select } from "./stage.js";
 import { openSheet, closeSheet } from "./sheet.js";
+import { editProfilesSheet, openGallery, saveProfileSheet } from "./profiles.js";
 
 let selectedZone = null;
 let editingParams = 0;          // timestamp of the last local edit; pauses re-rendering from polled state
@@ -120,11 +121,11 @@ export function describeShort(rule) {
 
 function presetsHTML() {
   const active = S.state.active_preset;
-  return `<div class="ins-block"><div class="ins-title"><h2 style="font-size:15px">Presets</h2>
-      <button class="text-link" id="edit-presets">Edit</button></div>
+  return `<div class="ins-block"><div class="ins-title"><h2 style="font-size:15px">Profiles</h2>
+      <span class="btn-row" style="gap:14px"><button class="text-link" id="browse-profiles">Browse</button><button class="text-link" id="edit-presets">Edit</button></span></div>
     <div class="presets">${S.presets.map((p) => `<button class="preset" data-preset="${esc(p.id)}" aria-pressed="${p.id === active}" style="--pc:${sceneColor(p)};--ps:${sceneSwatch(p)}">
       <span class="pdot"></span>${esc(p.name)}</button>`).join("")}
-      <button class="preset" id="save-preset" title="Save the current lighting and fan curve as a preset"><svg width="14" height="14"><use href="#i-plus"/></svg>Save current</button></div></div>`;
+      <button class="preset" id="save-preset" title="Save the current lighting and fan curve as a profile"><svg width="14" height="14"><use href="#i-plus"/></svg>Save current</button></div></div>`;
 }
 
 function renderSceneInspector() {
@@ -165,8 +166,9 @@ $("#inspector").addEventListener("click", async (e) => {
     } catch (err) { fail(err); }
     return;
   }
-  if (e.target.closest("#save-preset")) return savePresetSheet();
-  if (e.target.closest("#edit-presets")) return editPresetsSheet();
+  if (e.target.closest("#save-preset")) return saveProfileSheet(() => renderInspector(true));
+  if (e.target.closest("#edit-presets")) return editProfilesSheet(() => renderInspector(true));
+  if (e.target.closest("#browse-profiles")) return openGallery();
   const pause = e.target.closest("[data-pause]");
   if (pause) {
     try { await post("/api/automations/pause", { minutes: +pause.dataset.pause }); toast("Automations paused for an hour"); emit("refresh"); }
@@ -174,60 +176,6 @@ $("#inspector").addEventListener("click", async (e) => {
   }
 });
 
-function savePresetSheet() {
-  openSheet(`<form id="sp-form"><h2>Save as preset</h2>
-    <p class="hint">Saves the current effect, its settings, brightness and the ${esc(curveLabel(S.state.fans.base_curve))} fan curve.</p>
-    <label class="field"><span class="lab">Name</span><input class="text" id="sp-name" required maxlength="40" autocomplete="off" placeholder="Movie night"></label>
-    <p class="err" id="sp-err" hidden></p>
-    <div class="actions"><span class="spacer"></span><button type="button" class="btn quiet" data-close>Cancel</button><button class="btn primary">Save preset</button></div></form>`);
-  $("#sp-name").focus();
-  $("#sp-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try {
-      const r = await post("/api/presets/from-current", { name: $("#sp-name").value.trim() });
-      S.presets = r.presets;
-      S.state.active_preset = r.id;
-      closeSheet(); renderInspector(true); toast(`${$("#sp-name").value.trim()} saved`);
-    } catch (err) { $("#sp-err").textContent = err.message; $("#sp-err").hidden = false; }
-  });
-}
-
-function editPresetsSheet() {
-  const draft = structuredClone(S.presets);
-  const curves = Object.keys(S.curves.curves);
-  const profiles = S.settings?.fan_profiles || [];
-  const row = (p, i) => `<div class="field" data-row="${i}" style="grid-template-columns:auto 1fr auto auto;align-items:center;gap:10px;display:grid">
-      <span class="pdot" style="width:14px;height:14px;border-radius:50%;background:${sceneSwatch(p)}"></span>
-      <input class="text" data-name value="${esc(p.name)}" maxlength="40" aria-label="Preset name">
-      <select class="select" data-curve style="width:auto" aria-label="Fan curve"><option value="">Fans unchanged</option>${curves.map((c) => `<option value="${c}"${c === p.fan_curve ? " selected" : ""}>${curveLabel(c)} fans</option>`).join("")}</select>
-      <button type="button" class="icon-btn" data-del="${i}" title="Delete ${esc(p.name)}"><svg><use href="#i-trash"/></svg></button>
-      ${profiles.length ? `<select class="select" data-fc style="grid-column:2/4" aria-label="FanControl profile"><option value="">Motherboard fans unchanged</option>${profiles.map((f) => `<option value="${esc(f)}"${f === p.fan_profile ? " selected" : ""}>FanControl: ${esc(f.replace(/\.json$/i, ""))}</option>`).join("")}</select>` : ""}
-    </div>`;
-  const render = () => {
-    openSheet(`<form id="ep-form"><h2>Presets</h2><p class="hint">Rename presets, choose their fan curve, or delete them. To change a preset's lighting, apply it, adjust, and save it again under the same name.</p>
-      <div class="ins-block" id="ep-rows">${draft.map(row).join("") || `<p class="hint">No presets.</p>`}</div>
-      <p class="err" id="ep-err" hidden></p>
-      <div class="actions"><span class="spacer"></span><button type="button" class="btn quiet" data-close>Cancel</button><button class="btn primary">Save presets</button></div></form>`);
-    $("#ep-rows").addEventListener("click", (e) => {
-      const d = e.target.closest("[data-del]");
-      if (d) { collect(); draft.splice(+d.dataset.del, 1); render(); }
-    });
-    $("#ep-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      collect();
-      try { S.presets = await post("/api/presets", { presets: draft }); closeSheet(); renderInspector(true); toast("Presets saved"); }
-      catch (err) { $("#ep-err").textContent = err.message; $("#ep-err").hidden = false; }
-    });
-  };
-  const collect = () => $$("#ep-rows [data-row]").forEach((r) => {
-    const p = draft[+r.dataset.row];
-    p.name = r.querySelector("[data-name]").value.trim();
-    p.fan_curve = r.querySelector("[data-curve]").value || null;
-    const fc = r.querySelector("[data-fc]");
-    if (fc) p.fan_profile = fc.value || null;
-  });
-  render();
-}
 
 // ------------------------------------------------------------ inspector: zone
 function renderZoneInspector(key) {

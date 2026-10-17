@@ -1,0 +1,32 @@
+{
+  "airglow_profile": 1,
+  "id": "neon-dusk",
+  "name": "Neon Dusk",
+  "author": "Airglow",
+  "description": "Magenta to blue across the case, with a white comet circling the front fans.",
+  "lighting": {
+    "effect": "gradient",
+    "params": {
+      "colors": [
+        "#ff2fb4",
+        "#7a2fff",
+        "#2f5bff"
+      ],
+      "speed": 18,
+      "angle": 20
+    },
+    "brightness": 90
+  },
+  "areas": {
+    "front": {
+      "effect": "comet",
+      "params": {
+        "color": "#ffffff",
+        "background": "#2a0a3a",
+        "speed": 45,
+        "tail": 50,
+        "reverse": false
+      }
+    }
+  }
+}
