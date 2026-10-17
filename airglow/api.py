@@ -421,10 +421,18 @@ def route(server, method, path, body, query=None):
                                     curves=store.curves())
         if not shared["author"]:
             raise ApiError(400, "Add your GitHub name, so the gallery can credit you.")
-        url = gallery.share_url(shared)
+        url, filled = gallery.share_url(shared)
         if body.get("open", True) and hooks.get("open_url") and gallery.is_share_url(url):
             hooks["open_url"](url)
-        return {"url": url, "profile": shared}
+        return {"url": url, "filled": filled, "source": gallery.share_file(shared),
+                "path": f"{gallery.FOLDER}/{shared['id']}.json", "profile": shared}
+    if path == "/api/profiles/open-share":          # after the page put a long profile on the clipboard
+        url = str(body.get("url"))
+        if not gallery.is_share_url(url):
+            raise ApiError(400, "not a share address")
+        if hooks.get("open_url"):
+            hooks["open_url"](url)
+        return {"ok": True}
     m = re.fullmatch(r"/api/presets/([a-z0-9\-]{1,64})/apply", path)
     if m:
         preset = next((p for p in store.get_presets() if p["id"] == m.group(1)), None)
