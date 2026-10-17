@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.0
 - Presets are now profiles, and you can share them. A profile is the lighting look plus, optionally, effects for
   particular areas (front fans, top, graphics card...), its own fan curve, and the automations that switch to it.
   Areas are keyed by where lights sit, so a shared profile lands on the right lights on any rig.
