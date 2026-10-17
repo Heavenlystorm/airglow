@@ -132,6 +132,8 @@ class NzxtDevice(Device):
             leds, shape, fans = channel_layout(acc)
             z = Zone(f"ch{ch + 1}", f"Channel {ch + 1}", 40, leds, shape)
             z.fans = fans
+            z.connector = "nzxt"
+            z.detected = [{"name": ACCESSORIES[a]["name"], "nzxt_id": a} for a in acc or [] if a in ACCESSORIES]
             self._zones.append(z)
 
     @property

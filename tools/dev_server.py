@@ -37,6 +37,13 @@ class DevNzxt(FakeLightDevice):
             z.name, z.max_leds = name, 40
         for z in (self.zones[0], self.zones[1], self.zones[4]):
             z.shape = "fans"
+        for z in self.zones:
+            z.connector = "nzxt"
+        # what the hub reports on a common build: two F360 RGB Core (case version) and an F120 RGB Core
+        f360, f120 = nzxt_hue2.ACCESSORIES[0x1D], nzxt_hue2.ACCESSORIES[0x17]
+        self.zones[0].detected = self.zones[1].detected = [{"name": f360["name"], "nzxt_id": 0x1D}]
+        self.zones[4].detected = [{"name": f120["name"], "nzxt_id": 0x17}]
+        self.zones[0].fans = self.zones[1].fans = 3
         self.hub = FakeHub()
 
 
@@ -47,14 +54,16 @@ def sample_rig():
     aura.params = {p["id"]: p["default"] for p in aura.parameters}
     for z, name in zip(aura.zones, ["Motherboard", "ARGB header 1", "ARGB header 2", "ARGB header 3"]):
         z.name, z.max_leds = name, (1 if name == "Motherboard" else 120)
+    aura.zones[0].resizable, aura.zones[0].connector = False, None          # the board's own LEDs are built in
     gpu = FakeLightDevice("openrgb:sample-graphics-card:1", "Sample Graphics Card",
                           zones=(("z0", 1), ("z1", 1), ("z2", 1), ("z3", 1)), kind="openrgb", type_name="Graphics card")
     gpu.vendor = "Sample"
     for z, name in zip(gpu.zones, ["Right fan", "Left fan", "Center fan", "Side"]):
-        z.name = name
+        z.name, z.max_leds, z.resizable, z.connector = name, 1, False, None
     kb = FakeLightDevice("openrgb:sample-keyboard:1", "Sample Keyboard", zones=(("z0", 85),), kind="openrgb",
                          type_name="Keyboard")
     kb.vendor = "Sample"
+    kb.zones[0].max_leds, kb.zones[0].resizable, kb.zones[0].connector = 85, False, None
     return DevNzxt(), aura, gpu, kb
 
 

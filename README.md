@@ -15,6 +15,8 @@ anything anywhere.
 ![The Overview: a live preview of the lighting, temperatures, load, power and fans](docs/screenshots/overview.png)
 
 What it does:
+- Walks you through setting up your lights: each header blinks so you know which one you're looking at, you pick
+  the product (NZXT accessories are detected) or count its LEDs with a slider, and say where it sits in the case.
 - Draws your fans and strips on screen where they sit in the case, lit with the colours the hardware is actually
   showing.
 - Runs effects across every device at once: solid, breathing, colour cycle, rainbow, gradient, comet, temperature,

@@ -3,6 +3,7 @@
 import { $, S, emit, esc, fail, post, toast } from "./core.js";
 import { refreshTools } from "./helpers.js";
 import { closeSheet, openSheet } from "./sheet.js";
+import { openSetup } from "./setup.js";
 
 function item(ok, title, text, action = "") {
   return `<div class="onb-item"><i class="dot ${ok === null ? "" : ok ? "on" : "off"}"></i><div style="flex:1"><strong>${title}</strong><span>${text}</span></div>${action}</div>`;
@@ -31,12 +32,13 @@ export function openWelcome() {
     <p class="lede" style="margin:0">Here's what it found on this PC. Everything stays on this computer: no account, no cloud.</p>
     <div class="onb-list">${list}</div>
     <div class="tools-box" data-tools></div>
-    <p class="hint">The Overview is yours to arrange: Customize moves and resizes tiles, and any tile can show a different reading, from memory use to drive temperature. Fans with RGB rings work best when their LED counts are right; NZXT accessories are detected automatically, check the rest in Devices.</p>
-    <div class="actions"><a class="btn quiet" href="#devices" id="onb-devices">Check devices</a><span class="spacer"></span><button class="btn primary" id="onb-start">Start</button></div></div>`);
+    <p class="hint">${st.setup_pending ? "Next, tell Airglow what's plugged in where. Each light blinks while you set it up, and it takes about a minute." : "The Overview is yours to arrange: Customize moves and resizes tiles, and any tile can show a different reading."}</p>
+    <div class="actions"><button class="btn quiet" id="onb-skip">${st.setup_pending ? "Later" : "Check devices"}</button><span class="spacer"></span>
+      <button class="btn primary" id="onb-start">${st.setup_pending ? "Set up lights" : "Start"}</button></div></div>`);
   refreshTools();
-  const done = () => post("/api/onboarded").catch(() => {});
-  $("#onb-start").addEventListener("click", () => { done(); closeSheet(); });
-  $("#onb-devices").addEventListener("click", () => { done(); closeSheet(); });
+  const done = () => post("/api/onboarded").then(() => emit("refresh")).catch(() => {});
+  $("#onb-start").addEventListener("click", () => { done(); if (st.setup_pending) openSetup({ start: true }); else closeSheet(); });
+  $("#onb-skip").addEventListener("click", () => { done(); closeSheet(); if (!st.setup_pending) location.hash = "#devices"; });
 }
 
 export async function closeConflict(button) {

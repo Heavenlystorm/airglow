@@ -50,6 +50,20 @@ function svgPoint(e) {
 }
 
 // ------------------------------------------------------------ SVG overlay (zones, labels, handles)
+// Zones packed close together (a graphics card's four LEDs) would print their names on top of each other: a label
+// that would overlap an earlier one waits until you point at or select its zone. Needs the stage on screen and the
+// font loaded to measure, so it runs again when either happens.
+function declutter() {
+  const placed = [];
+  for (const t of svg().querySelectorAll("text.label")) {
+    t.classList.remove("clash");
+    const b = t.getBBox();
+    if (!b.width) continue;
+    if (placed.some((o) => b.x < o.x + o.width && o.x < b.x + b.width && b.y < o.y + o.height && o.y < b.y + b.height)) t.classList.add("clash");
+    else placed.push(b);
+  }
+}
+
 export function renderOverlay() {
   const s = svg();
   s.setAttribute("viewBox", `0 0 ${VB_W} ${VB_H}`);
@@ -92,6 +106,7 @@ export function renderOverlay() {
       <text class="label" x="${lx}" y="${ly}">${esc(z.config.name)}${on ? "" : " (off)"}</text></g>${handle}`;
   }
   s.innerHTML = html;
+  declutter();
   $("#stage").classList.toggle("arranging", st.arranging);
   $("#stage-hint").textContent = st.arranging
     ? "Drag zones to where they sit in your case. Use the handle to rotate."
@@ -288,7 +303,8 @@ export function select(key) {
 
 export function initStage() {
   computeView();
-  new ResizeObserver(() => { computeView(); draw(); }).observe($("#stage"));
+  new ResizeObserver(() => { computeView(); draw(); declutter(); }).observe($("#stage"));
+  document.fonts?.ready.then(declutter);              // labels measured before the font arrives come out too narrow
   svg().addEventListener("pointerdown", onPointerDown);
   svg().addEventListener("pointermove", onPointerMove);
   svg().addEventListener("pointerup", onPointerUp);

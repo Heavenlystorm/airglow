@@ -68,6 +68,8 @@ class Engine:
     KEEPALIVE = 5.0          # re-send unchanged frames this often (some controllers forget)
     RESUME_GAP = 10.0        # a frame gap this long means the PC slept
     IDENTIFY_SECONDS = 6.0
+    PROBE_SECONDS = 15.0     # the setup guide keeps renewing its probe; if it goes away, the zone goes back on its own
+    PROBE_LEVEL = 0.25       # white at a quarter: a long strip at full white can draw more than a header supplies
 
     def __init__(self, manager, store, sensors=lambda: {}, async_writes=True):
         self.manager, self.store, self._sensors = manager, store, sensors
@@ -80,6 +82,8 @@ class Engine:
         self.frame_id = 0
         self.fps = 0.0
         self._identify = {}              # zone key -> deadline
+        self._probe = {}                 # zone key -> (mode, LEDs to light, deadline), from the setup guide
+        self._probe_done = set()         # zones whose probe just ended: sent dark once, past the configured LEDs
         self._last = {}                  # zone key -> (bytes, time sent)
         self._geom = {}                  # zone key -> (layout snapshot, namespace)
         self._lock = threading.RLock()
@@ -103,6 +107,30 @@ class Engine:
 
     def identify(self, zone_key):
         self._identify[zone_key] = time.monotonic() + self.IDENTIFY_SECONDS
+
+    def probe(self, zone_key, mode, n=0):
+        """Light a zone for the setup guide, over every LED the header can drive, whatever is configured:
+        "blink" flashes them all, "count" lights the first n (the last one amber) so you can see where the
+        strip ends, "off" goes back to normal."""
+        with self._lock:
+            if mode == "off":
+                if self._probe.pop(zone_key, None):
+                    self._probe_done.add(zone_key)
+            else:
+                self._probe[zone_key] = (mode, int(n), time.monotonic() + self.PROBE_SECONDS)
+            self._last.pop(zone_key, None)
+
+    def _probe_colors(self, mode, n, count, now):
+        out = np.zeros((count, 3))
+        if mode == "blink":
+            if int(now * 3) % 2 == 0:
+                out[:] = self.PROBE_LEVEL
+        else:
+            n = min(max(n, 0), count)
+            out[:n] = self.PROBE_LEVEL
+            if n:
+                out[n - 1] = (1.0, 0.55, 0.1)          # the last lit LED: where you stop
+        return out
 
     def invalidate(self, zone_key=None):
         with self._lock:
@@ -198,13 +226,25 @@ class Engine:
             for zone in dev.zones:
                 key = f"{dev.id}/{zone.id}"
                 zcfg = zones.get(key)
-                if not zcfg or not zcfg.get("enabled") or geometry.total_leds(zcfg["layout"]) == 0:
-                    continue
                 with self._lock:
-                    rgb, bri = self.render_zone(key, zcfg, now, t)
+                    probe = self._probe.get(key)
+                    if probe and probe[2] <= now:
+                        del self._probe[key]
+                        self._probe_done.add(key)
+                        probe = None
+                    ended = not probe and key in self._probe_done
+                    self._probe_done.discard(key)
+                    if probe:
+                        rgb, bri = self._probe_colors(probe[0], probe[1], zone.max_leds, now), 100
+                    elif ended:                           # dark past the configured LEDs, then back to normal
+                        rgb, bri = np.zeros((zone.max_leds, 3)), 100
+                    elif not zcfg or not zcfg.get("enabled") or geometry.total_leds(zcfg["layout"]) == 0:
+                        continue
+                    else:
+                        rgb, bri = self.render_zone(key, zcfg, now, t)
                 rgb_ints = self._to_bytes(rgb, bri)
                 frames[key] = rgb_ints.tobytes().hex()                      # preview shows true colours
-                order = zcfg.get("order", "RGB")
+                order = zcfg.get("order", "RGB") if zcfg else "RGB"
                 ints = rgb_ints[:, list(ORDERS[order])] if order != "RGB" else rgb_ints
                 raw = ints.tobytes()
                 prev = self._last.get(key)

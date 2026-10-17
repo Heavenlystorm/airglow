@@ -1,0 +1,28 @@
+{
+  "about": "NZXT HUE 2 accessories. LED counts match the accessory table the NZXT plugin uses for auto-detection (airglow/plugins/nzxt_hue2.py); a test keeps the two in step.",
+  "items": [
+    {"id": "nzxt-hue-led-strip", "brand": "NZXT", "name": "HUE+ LED strip", "kind": "strip", "connect": ["nzxt"], "nzxt_id": 1, "leds": 10},
+    {"id": "nzxt-aer-rgb-fan", "brand": "NZXT", "name": "Aer RGB fan", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 2, "fans": 1, "leds": 8, "size_mm": 120},
+    {"id": "nzxt-hue-2-led-strip-10-leds", "brand": "NZXT", "name": "HUE 2 LED strip (10 LEDs)", "kind": "strip", "connect": ["nzxt"], "nzxt_id": 4, "leds": 10},
+    {"id": "nzxt-hue-2-led-strip-8-leds", "brand": "NZXT", "name": "HUE 2 LED strip (8 LEDs)", "kind": "strip", "connect": ["nzxt"], "nzxt_id": 5, "leds": 8},
+    {"id": "nzxt-hue-2-led-strip-6-leds", "brand": "NZXT", "name": "HUE 2 LED strip (6 LEDs)", "kind": "strip", "connect": ["nzxt"], "nzxt_id": 6, "leds": 6},
+    {"id": "nzxt-hue-2-cable-comb", "brand": "NZXT", "name": "HUE 2 Cable Comb", "kind": "strip", "connect": ["nzxt"], "nzxt_id": 8, "leds": 14},
+    {"id": "nzxt-hue-2-underglow-300-mm", "brand": "NZXT", "name": "HUE 2 Underglow 300 mm", "kind": "strip", "connect": ["nzxt"], "nzxt_id": 9, "leds": 15},
+    {"id": "nzxt-hue-2-underglow-200-mm", "brand": "NZXT", "name": "HUE 2 Underglow 200 mm", "kind": "strip", "connect": ["nzxt"], "nzxt_id": 10, "leds": 10},
+    {"id": "nzxt-aer-rgb-2-fan-120-mm", "brand": "NZXT", "name": "Aer RGB 2 fan 120 mm", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 11, "fans": 1, "leds": 8, "size_mm": 120},
+    {"id": "nzxt-aer-rgb-2-fan-140-mm", "brand": "NZXT", "name": "Aer RGB 2 fan 140 mm", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 12, "fans": 1, "leds": 8, "size_mm": 140},
+    {"id": "nzxt-kraken-x3-ring", "brand": "NZXT", "name": "Kraken X3 ring", "kind": "ring", "connect": ["nzxt"], "nzxt_id": 16, "leds": 8},
+    {"id": "nzxt-kraken-x3-logo", "brand": "NZXT", "name": "Kraken X3 logo", "kind": "single", "connect": ["nzxt"], "nzxt_id": 17, "leds": 1},
+    {"id": "nzxt-f120-rgb", "brand": "NZXT", "name": "F120 RGB", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 19, "fans": 1, "leds": 18, "size_mm": 120},
+    {"id": "nzxt-f140-rgb", "brand": "NZXT", "name": "F140 RGB", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 20, "fans": 1, "leds": 18, "size_mm": 140},
+    {"id": "nzxt-f120-rgb-duo", "brand": "NZXT", "name": "F120 RGB Duo", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 21, "fans": 1, "leds": 20, "size_mm": 120},
+    {"id": "nzxt-f140-rgb-duo", "brand": "NZXT", "name": "F140 RGB Duo", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 22, "fans": 1, "leds": 20, "size_mm": 140},
+    {"id": "nzxt-f120-rgb-core", "brand": "NZXT", "name": "F120 RGB Core", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 23, "fans": 1, "leds": 8, "size_mm": 120},
+    {"id": "nzxt-f140-rgb-core", "brand": "NZXT", "name": "F140 RGB Core", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 24, "fans": 1, "leds": 8, "size_mm": 140},
+    {"id": "nzxt-f120-rgb-core-case-version", "brand": "NZXT", "name": "F120 RGB Core (case version)", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 25, "fans": 1, "leds": 8, "size_mm": 120},
+    {"id": "nzxt-f280-rgb-core-case-version", "brand": "NZXT", "name": "F280 RGB Core (case version)", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 28, "fans": 2, "leds": 8, "size_mm": 140},
+    {"id": "nzxt-f360-rgb-core-case-version", "brand": "NZXT", "name": "F360 RGB Core (case version)", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 29, "fans": 3, "leds": 8, "size_mm": 120},
+    {"id": "nzxt-kraken-elite-ring", "brand": "NZXT", "name": "Kraken Elite ring", "kind": "ring", "connect": ["nzxt"], "nzxt_id": 30, "leds": 24},
+    {"id": "nzxt-f420-rgb", "brand": "NZXT", "name": "F420 RGB", "kind": "fan", "connect": ["nzxt"], "nzxt_id": 31, "fans": 3, "leds": 8, "size_mm": 140}
+  ]
+}

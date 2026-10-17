@@ -25,11 +25,15 @@ class Zone:
         self.fans = 1
         self.matrix = None                # {"rows", "cols", "map"} for keyboards and other LED grids
         self.provisional = False          # True while the device hasn't told us its real layout yet
+        # what can be plugged in here, for the setup guide's product list: "argb" (standard 5 V addressable
+        # header), "nzxt" (NZXT HUE 2 accessories), or None when the LEDs are part of the device itself
+        self.connector = "argb" if resizable else None
+        self.detected = []                # accessories the controller reported: [{"name", "nzxt_id"}]
 
     def info(self):
         return {"id": self.id, "name": self.name, "max_leds": self.max_leds, "default_leds": self.default_leds,
                 "shape": self.shape, "fans": self.fans, "matrix": self.matrix, "resizable": self.resizable,
-                "provisional": self.provisional}
+                "provisional": self.provisional, "connector": self.connector, "detected": list(self.detected)}
 
 
 class Device:

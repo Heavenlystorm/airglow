@@ -29,6 +29,7 @@ function renderList() {
   };
   const o = S.state?.openrgb || {};
   setHTML($("#dev-list"), `
+    <button class="btn primary dev-setup" data-open-setup${S.state?.setup_pending ? `="start">Set up ${S.state.setup_pending} new light${S.state.setup_pending === 1 ? "" : "s"}` : ">Set up lights"}</button>
     ${native.length ? `<h2>Connected directly</h2>${native.map(item).join("")}` : ""}
     <h2>Through OpenRGB</h2>${orgb.map(item).join("")}
     <button class="dev-item" role="option" data-dev="openrgb" aria-selected="${current === "openrgb"}">
@@ -42,7 +43,7 @@ function zoneCard(z) {
   return `<div class="zone-card${c.enabled ? "" : " off"}" id="zc-${esc(z.key)}" data-key="${esc(z.key)}">
     <div class="zname"><span class="switch" title="${c.enabled ? "Switch this zone off" : "Switch this zone on"}"><input type="checkbox" data-f="enabled"${c.enabled ? " checked" : ""} aria-label="Zone on"><span></span></span>
       <input data-f="name" value="${esc(c.name)}" maxlength="40" aria-label="Zone name" spellcheck="false"></div>
-    <div class="btn-row"><button class="btn" data-identify>Identify</button></div>
+    <div class="btn-row">${z.zone.resizable ? `<button class="btn" data-open-setup data-zone="${esc(z.key)}">What's plugged in?</button>` : ""}<button class="btn" data-identify>Identify</button></div>
     <div class="zfields">
       <label>Shape<select class="select" data-f="shape"><option value="fans"${L.shape === "fans" ? " selected" : ""}>Fans</option><option value="strip"${L.shape === "strip" ? " selected" : ""}>Strip</option>${grid ? `<option value="matrix"${L.shape === "matrix" ? " selected" : ""}>Grid</option>` : ""}</select></label>
       ${L.shape === "fans"
