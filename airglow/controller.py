@@ -21,6 +21,10 @@ log = logging.getLogger(__name__)
 class Controller:
     TICK = 1.0                 # automations; sensors and fans run every other tick
     HISTORY = 300              # samples kept (10 minutes at 2 s)
+    # At sign-in Airglow often starts before LibreHardwareMonitor answers. Until the first temperature arrives (for at
+    # most this long) the fans run at the bottom of the curve, which is where a freshly started PC sits, instead of
+    # jumping to the failsafe speed and ramping back down over the next half minute.
+    STARTUP_GRACE = 45.0
 
     def __init__(self, store, manager=None, read_sensors=None, signals=None, start_power_events=False,
                  async_writes=True):
@@ -43,6 +47,8 @@ class Controller:
         self.effective_scene = dict(self.base_scene)
         self.effective_curve = self.base_curve
         self.fan_temp = self.fan_target = self.fan_duty = None
+        self._started = time.monotonic()
+        self._temp_seen = False
         self.history = collections.deque(maxlen=self.HISTORY)
         self.rev = 0
         self._ticks = 0
@@ -204,7 +210,18 @@ class Controller:
     def _run_fans(self):
         cfg = self.store.settings()
         temp = fans.source_temp(self.sensors, cfg["temp_source"])
-        target = fans.target_duty(self.store.curves()[self.effective_curve], temp, cfg["fan_failsafe_duty"])
+        curve = self.store.curves()[self.effective_curve]
+        waited = time.monotonic() - self._started
+        if temp is not None and not self._temp_seen:
+            self._temp_seen = True
+            log.info("first temperature %.0f °C, %.0f s after start; fans follow the curve", temp, waited)
+        if temp is None and not self._temp_seen and waited < self.STARTUP_GRACE:
+            if self.fan_duty is None:
+                log.info("no temperatures yet (LibreHardwareMonitor starting?); fans at the curve's lowest speed "
+                         "for up to %.0f s", self.STARTUP_GRACE)
+            target = fans.lowest_duty(curve)
+        else:
+            target = fans.target_duty(curve, temp, cfg["fan_failsafe_duty"])
         duty = fans.step_toward(self.fan_duty, target, cfg["fan_max_step"])
         self.fan_temp, self.fan_target, self.fan_duty = temp, round(target), duty
         for dev, hub in self._fan_devices():

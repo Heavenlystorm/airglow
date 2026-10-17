@@ -30,6 +30,9 @@ class TargetTests(unittest.TestCase):
     def test_no_temperature_uses_failsafe(self):
         self.assertEqual(fans.target_duty(CURVE, None, 60), 60)
 
+    def test_lowest_duty_is_the_coolest_point(self):
+        self.assertEqual(fans.lowest_duty([[70, 80], [40, 30], [55, 45]]), 30)
+
     def test_safety_override(self):
         flat_quiet = [[20, 20], [100, 20]]
         self.assertEqual(fans.target_duty(flat_quiet, SAFETY_TEMP, 60), 100)

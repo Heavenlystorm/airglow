@@ -57,10 +57,38 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.ctrl.fan_duty, first + self.store.settings()["fan_max_step"])
 
     def test_sensor_loss_goes_to_failsafe_speed(self):
+        self.ctrl.tick()
         self.temps = {"online": False, "cpu_temp": None, "gpu_temp": None}
         for _ in range(40):
             self.ctrl.tick()
         self.assertEqual(self.ctrl.fan_duty, self.store.settings()["fan_failsafe_duty"])
+
+    def test_start_without_temperatures_runs_fans_quietly(self):
+        # LibreHardwareMonitor not answering yet at sign-in: bottom of the curve, not the failsafe speed
+        self.ctrl.set_fan_curve("balanced")
+        self.temps = {"online": False, "cpu_temp": None, "gpu_temp": None}
+        self.ctrl.tick()
+        lowest = self.store.curves()["balanced"][0][1]
+        self.assertEqual(self.ctrl.fan_duty, lowest)
+        self.assertLess(lowest, self.store.settings()["fan_failsafe_duty"])
+        self.assertEqual(set(self.nzxt.hub.duties[-1].values()), {lowest})
+
+    def test_start_goes_to_failsafe_if_temperatures_never_come(self):
+        self.temps = {"online": False, "cpu_temp": None, "gpu_temp": None}
+        self.ctrl.tick()
+        self.ctrl._started -= Controller.STARTUP_GRACE
+        for _ in range(40):
+            self.ctrl.tick()
+        self.assertEqual(self.ctrl.fan_duty, self.store.settings()["fan_failsafe_duty"])
+
+    def test_first_temperature_takes_over_from_the_start_speed(self):
+        self.ctrl.set_fan_curve("balanced")
+        self.temps = {"online": False, "cpu_temp": None, "gpu_temp": None}
+        self.ctrl.tick()
+        self.temps = {"online": True, "cpu_temp": 40.0, "gpu_temp": 35.0}
+        self.ctrl.tick(); self.ctrl.tick()
+        self.assertEqual(self.ctrl.fan_temp, 40.0)
+        self.assertEqual(self.ctrl.fan_target, self.store.curves()["balanced"][0][1])
 
     def test_automation_overrides_then_releases(self):
         self.store.set_rules([{"id": "night", "when": {"type": "locked"}, "then": {"type": "lights_off"}},

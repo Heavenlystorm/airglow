@@ -24,6 +24,11 @@ def source_temp(sensors, source):
     return max(temps) if temps else None
 
 
+def lowest_duty(points):
+    """The curve's speed at its coolest point."""
+    return float(min(points)[1])
+
+
 def target_duty(points, temp, failsafe):
     """What the fans should aim for. No temperature -> failsafe; very hot -> 100%."""
     if temp is None:
