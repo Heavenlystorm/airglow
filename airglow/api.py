@@ -15,7 +15,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, autostart, conflicts, diagnostics, fancontrol, lightsetup, paths, system, tools, updates
+from . import __version__, autostart, conflicts, coolers, diagnostics, fancontrol, lightsetup, paths, system, tools, updates
 from .automation import validate_rule
 from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP
 from .lighting import effects, geometry
@@ -218,6 +218,16 @@ def _catalog():
     return _CATALOG
 
 
+_COOLERS = {"at": -1e9, "found": []}
+
+
+def _coolers():
+    """USB-connected AIO coolers, rescanned at most every 30 s (the setup guide asks on every open)."""
+    if time.monotonic() - _COOLERS["at"] > 30:
+        _COOLERS.update(at=time.monotonic(), found=coolers.scan())
+    return _COOLERS["found"]
+
+
 def _setup_pending(ctrl, store):
     return lightsetup.pending(store, [d.info() for d in ctrl.manager.all().values()])
 
@@ -259,7 +269,8 @@ def route(server, method, path, body, query=None):
         if path == "/api/tools":
             return tools.status(ctrl)
         if path == "/api/setup":
-            return {"pending": _setup_pending(ctrl, store), "catalog": _catalog(), "spots": lightsetup.spots()}
+            return {"pending": _setup_pending(ctrl, store), "catalog": _catalog(), "spots": lightsetup.spots(),
+                    "coolers": _coolers()}
         raise ApiError(404, "not found")
 
     # ---------------------------------------------------------------- POST
