@@ -172,15 +172,45 @@ class HostTests(unittest.TestCase):
         self.assertEqual(self.host.render(self.eff, z, 0.0, {}).shape, (3, 3))
         self.assertEqual(len(self.spawned), 1)
         self.assertIn("/runtime/host.html#token=", self.spawned[0])
-        ev = self.events()
-        self.assertEqual([e["type"] for e in ev], ["load", "points"])
-        self.assertEqual(ev[1]["points"][2], [64.0, 100.0, "front"])          # 0.2 across, halfway down, its area
+        self.host.tick(0.0)
+        ev = [e for e in self.events() if e["type"] != "tick"]
+        self.assertEqual([e["type"] for e in ev], ["load"])                  # one load, LED positions included
+        self.assertEqual(ev[0]["points"][2], [64.0, 100.0, "front"])          # 0.2 across, halfway down, its area
         iid = ev[0]["id"]
         colours = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255])
         self.host.frames({"frames": {iid: base64.b64encode(colours).decode()}})
         out = self.host.render(self.eff, z, 0.1, {})
         self.assertEqual(out.tolist(), [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         self.assertEqual(self.events(), [])                                  # nothing new to send
+
+    def test_an_effect_started_while_the_host_runs_gets_every_led(self):
+        # the bug from 1.6.0-beta.1: switching to another Studio effect while the host page was connected sent
+        # "load" with no LEDs and the positions separately, and a page still starting the effect dropped them
+        first = self.zone("a", 2)
+        self.host.render(self.eff, first, 0, {})
+        self.host.tick(0.0)
+        self.events()
+        other = studio.JsEffect(self.lib.save_mine(builder().replace("Aurora Wave", "Ember")))
+        for key, n in (("a", 2), ("b", 4), ("c", 1)):
+            self.host.render(other, self.zone(key, n), 0.1, {})
+        self.assertEqual([e for e in self.events() if e["type"] in ("load", "points")], [])   # nothing half-done
+        self.host.tick(0.1)
+        loads = [e for e in self.events() if e["type"] == "load"]
+        self.assertEqual(len(loads), 1)
+        self.assertEqual(len(loads[0]["points"]), 7)
+        self.host.render(other, self.zone("d", 3), 0.2, {})                  # a zone added later still follows
+        self.assertEqual([len(e["points"]) for e in self.events() if e["type"] == "points"], [10])
+
+    def test_an_edit_reloads_with_every_led(self):
+        z = self.zone("a", 5)
+        self.host.render(self.eff, z, 0, {})
+        self.host.tick(0.0)
+        self.events()
+        edited = studio.JsEffect(self.lib.save_mine(builder().replace('"density": 30', '"density": 90'), self.eff.fx_id))
+        self.host.render(edited, z, 0.1, {})
+        self.host.tick(0.1)
+        loads = [e for e in self.events() if e["type"] == "load"]
+        self.assertEqual((len(loads), len(loads[0]["points"])), (1, 5))
 
     def test_zones_share_one_instance(self):
         self.host.render(self.eff, self.zone("a", 2), 0, {})
@@ -192,8 +222,8 @@ class HostTests(unittest.TestCase):
     def test_slider_moves_update_the_same_instance(self):
         z = self.zone("a")
         self.host.render(self.eff, z, 0, {"l0_speed": 10})
-        self.events()
         self.host.tick(0.0)
+        self.events()
         self.host.render(self.eff, z, 0, {"l0_speed": 20})
         self.assertEqual(len(self.host.instances), 1)
         self.assertEqual([e["type"] for e in self.events()], ["params"])
@@ -249,6 +279,24 @@ class HostTests(unittest.TestCase):
         self.host.stream(send, stop)
         self.assertEqual(sent[0], "load")
         self.assertIn("tick", sent)
+
+    def test_memory_slow_growth_restarts_fast_growth_turns_off(self):
+        z = self.zone("a")
+        self.host.render(self.eff, z, 0, {})
+        self.host.tick(0.0)
+        stop = mock.Mock(side_effect=lambda: setattr(self.host, "proc", None))
+        with mock.patch.object(studio, "_tree_memory", return_value=studio.MEMORY_LIMIT + 1),              mock.patch.object(self.host, "stop", stop):
+            self.now += studio.RUNAWAY_SECONDS + 600                       # ten minutes later: a fresh host, same effect
+            self.host._last_frame = self.now
+            self.host.render(self.eff, z, 1, {})
+            self.host.tick(1.0)
+            self.assertEqual((len(self.spawned), self.host.problems), (2, {}))
+            self.assertEqual(len(self.host.instances), 1)
+            self.now += 5                                                  # and full again straight away: off
+            self.host._last_mem_check = 0
+            self.host.render(self.eff, z, 2, {})
+            self.host.tick(2.0)
+        self.assertEqual(self.host.problems[self.eff.fx_id]["reason"], "memory")
 
     def test_token_is_checked(self):
         self.assertTrue(self.host.check_token(self.host.token))

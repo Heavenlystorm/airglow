@@ -32,6 +32,7 @@ IDLE_STOP_SECONDS = 30.0      # the host process quits this long after the last 
 FRAME_TIMEOUT = 4.0           # no frames for this long while effects run: the host is stuck
 START_GRACE = 15.0            # WebView2 can take a while to start
 MEMORY_LIMIT = 512 * 1024 * 1024          # for any one WebView2 process (each effect's page runs in one)
+RUNAWAY_SECONDS = 120.0                    # over the limit this soon after a fresh start: an effect is eating memory
 UNIT = 200                    # stage canvas units -> effect canvas pixels (1.6 x 1.0 -> 320 x 200)
 
 REASONS = {
@@ -55,6 +56,9 @@ class Instance:
         self.used_tick = 0
         self.last_used = now
         self.failed = None             # {"reason", "message", "line"}
+        # sent to the host page yet? A new or edited effect is (re)loaded once per frame, after every zone has added
+        # its LEDs: a host page that's still starting it would drop LED positions sent separately before it's ready.
+        self.loaded = False
 
     def use(self, key, z, tick, now):
         """Make sure this zone's LEDs are in the point list. True when the list changed."""
@@ -127,8 +131,8 @@ class EffectHost:
             if inst is None:
                 return np.zeros((z.n, 3))
             self._last_active = self._clock()
-            if inst.use(key, z, self._tick, self._last_active):
-                self._emit({"type": "points", "id": inst.id, "points": inst.points})
+            if inst.use(key, z, self._tick, self._last_active) and inst.loaded:
+                self._emit({"type": "points", "id": inst.id, "points": list(inst.points)})
             return inst.colours(key)
 
     def _instance(self, eff, params):
@@ -136,17 +140,15 @@ class EffectHost:
         for inst in self.instances.values():
             if inst.eff.fx_id == eff.fx_id and json.dumps(inst.params, sort_keys=True) == sig:
                 if inst.eff.sha256 != eff.sha256:                  # edited (the Studio's draft): reload it
-                    inst.eff = eff
-                    self._emit(self._load_event(inst))
+                    inst.eff, inst.loaded = eff, False
                 return inst
         # same effect, new parameters, and the old ones weren't drawn this tick: a slider moved, keep the instance
         for inst in self.instances.values():
             if inst.eff.fx_id == eff.fx_id and inst.used_tick < self._tick:
                 inst.params = dict(params)
                 if inst.eff.sha256 != eff.sha256:
-                    inst.eff = eff
-                    self._emit(self._load_event(inst))
-                else:
+                    inst.eff, inst.loaded = eff, False
+                elif inst.loaded:
                     self._emit({"type": "params", "id": inst.id, "params": inst.params})
                 return inst
         if len(self.instances) >= MAX_INSTANCES:
@@ -155,14 +157,13 @@ class EffectHost:
         self._seq += 1
         inst = Instance(f"i{self._seq}", eff, params, self._clock())
         self.instances[inst.id] = inst
-        self._emit(self._load_event(inst))
         self._ensure_running()
         return inst
 
     def _load_event(self, inst):
         e = inst.eff
         return {"type": "load", "id": inst.id, "kind": e.kind, "code": e.code, "layers": e.layers,
-                "params": inst.params, "points": inst.points}
+                "params": dict(inst.params), "points": list(inst.points)}
 
     def tick(self, t, audio=None):
         """Once per engine frame: send the frame clock, unload unused effects, watch the host."""
@@ -172,6 +173,10 @@ class EffectHost:
             for iid in [i for i, inst in self.instances.items() if now - inst.last_used > UNUSED_SECONDS]:
                 del self.instances[iid]
                 self._emit({"type": "unload", "id": iid})
+            for inst in self.instances.values():                     # new or edited this frame: send it whole
+                if not inst.loaded:
+                    inst.loaded = True
+                    self._emit(self._load_event(inst))
             if self.instances:
                 self._last_active = now
                 dt = 1 / 30 if self._t_last is None else max(0.0, min(0.25, t - self._t_last))
@@ -196,6 +201,8 @@ class EffectHost:
             self.connected = True
             self._last_frame = self._clock()
             self._events = [self._load_event(i) for i in self.instances.values()]   # a fresh page: load everything
+            for inst in self.instances.values():
+                inst.loaded = True
         try:
             while not stopping.is_set():
                 with self._lock:
@@ -300,11 +307,19 @@ class EffectHost:
             return
         if now - self._last_mem_check > 2.0:
             self._last_mem_check = now
-            if _tree_memory(p.pid) > MEMORY_LIMIT:
-                for inst in list(self.instances.values()):
-                    self._fail(inst.eff, "memory")
-                self.instances.clear()
+            used = _tree_memory(p.pid)
+            if used > MEMORY_LIMIT:
+                if now - self._started < RUNAWAY_SECONDS:            # filled up fast: turn the effects off
+                    for inst in list(self.instances.values()):
+                        self._fail(inst.eff, "memory")
+                    self.instances.clear()
+                    self.stop()
+                    return
+                # grew slowly over a long time (WebView2 creeps up): start it fresh, the effects carry on
+                log.info("effect host reached %d MB after %d minutes; starting it fresh", used // 2**20,
+                         (now - self._started) // 60)
                 self.stop()
+                self._ensure_running()
 
     def stop(self):
         p, self.proc = self.proc, None

@@ -72,12 +72,17 @@ export class EffectRunner {
 
   // effect: {kind: "layers"|"code", layers?, code?, params: {id: value}}; points from ledPoints()
   async load(effect, points) {
+    // Changes that arrive while the frame is still starting can't be sent yet (it would drop them): they're kept
+    // here and go out with the load itself.
+    this._early = { points, params: effect.params || {}, layers: effect.layers || [] };
     const a = await runtimeAssets();
     this.frame.src = "/runtime/frame.html";
     document.body.appendChild(this.frame);
     await this._hello;
+    const early = this._early;
+    this._early = null;
     this._post({ type: "load", runtime: a.runtime, layersLib: a.layersLib, defaults: a.defaults, kind: effect.kind,
-                 code: effect.code || "", layers: effect.layers || [], params: effect.params || {}, points });
+                 code: effect.code || "", layers: early.layers, params: early.params, points: early.points });
   }
 
   tick(time, dt, audio = null, backdrop = false) {
@@ -89,9 +94,18 @@ export class EffectRunner {
     return true;
   }
 
-  setParams(params) { this._post({ type: "params", params }); }
-  async setLayers(layers) { this._post({ type: "layers", layers, defaults: (await runtimeAssets()).defaults }); }
-  setPoints(points) { this._post({ type: "points", points }); }
+  setParams(params) {
+    if (this._early) this._early.params = { ...this._early.params, ...params };
+    else this._post({ type: "params", params });
+  }
+  async setLayers(layers) {
+    if (this._early) { this._early.layers = layers; return; }
+    this._post({ type: "layers", layers, defaults: (await runtimeAssets()).defaults });
+  }
+  setPoints(points) {
+    if (this._early) this._early.points = points;
+    else this._post({ type: "points", points });
+  }
 
   destroy() {
     window.removeEventListener("message", this._onMessage);

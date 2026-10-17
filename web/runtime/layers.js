@@ -1,8 +1,11 @@
-// The Studio's layer renderer. Runs inside the effect worker (and is copied into effects made with "View code").
+// The Studio's layer renderer. Comes with every effect in its worker: builder effects are drawn by it, and code
+// effects (including those made with "View code") can use it as AirglowLayers.
 // A builder effect is a stack of layers; each layer gives every LED a colour and a strength, and the stack is
 // blended bottom to top. Positions are 0..1 across the case on both axes, like the built-in effects see them, so a
 // remixed built-in looks the same.
-const AirglowLayers = (() => {
+// A property of the global object rather than a declaration: an effect that declares its own AirglowLayers (as files
+// from early "View code" did) shadows it instead of failing with "already declared".
+self.AirglowLayers = (() => {
   const TAU = Math.PI * 2;
   const clamp = (v, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
   const hz = (speed, lo, hi) => lo * Math.pow(hi / lo, speed / 100);          // same curve as the built-in effects
