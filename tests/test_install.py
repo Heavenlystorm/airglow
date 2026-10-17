@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -81,6 +84,102 @@ class AfterInstallTests(unittest.TestCase):
              self.assertLogs("airglow.install", "ERROR"):
             install.after_install("1.6.0")
         enable.assert_called_once()
+
+
+class StartAfterSetupTests(unittest.TestCase):
+    """Setup ends a running Airglow to replace it; after a silent install (winget) the hook starts it again."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.data = Path(tmp.name)
+        for name in ("data_dir", "log_dir"):
+            patcher = mock.patch.object(install.paths, name, return_value=self.data)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def after_install(self, popen=None):
+        with mock.patch.object(install, "_hook_logging"),              mock.patch.object(install, "remove_legacy_install", return_value=False),              mock.patch.object(autostart, "is_enabled", return_value=True),              mock.patch.object(autostart, "enable"),              mock.patch.object(install.subprocess, "Popen", popen or mock.Mock()) as started:
+            install.after_install("1.6.0")
+        return started
+
+    def test_marker_is_written_and_cleared(self):
+        install.mark_running()
+        self.assertEqual((self.data / "running").read_text(), str(os.getpid()))
+        install.clear_running()
+        self.assertFalse((self.data / "running").exists())
+        install.clear_running()                                   # twice is fine
+
+    def test_starts_again_when_setup_ended_a_running_copy(self):
+        install.mark_running()
+        started = self.after_install()
+        started.assert_called_once()
+        cmd = started.call_args.args[0]
+        self.assertEqual(cmd, [sys.executable, "--after-setup", str(os.getppid())])
+        self.assertEqual(started.call_args.kwargs["cwd"], Path(sys.executable).parent)
+
+    def test_doesnt_start_when_airglow_had_quit(self):
+        install.mark_running()
+        install.clear_running()
+        self.after_install().assert_not_called()
+
+    def test_a_failed_start_doesnt_fail_the_install(self):
+        install.mark_running()
+        with self.assertLogs("airglow.install", "ERROR"):
+            self.after_install(popen=mock.Mock(side_effect=OSError("no")))
+
+    def test_breakaway_refused_falls_back(self):
+        popen = mock.Mock(side_effect=[OSError("access denied"), None])
+        with mock.patch.object(install.subprocess, "Popen", popen):
+            install.start_after_setup(1234)
+        self.assertEqual(popen.call_count, 2)
+        self.assertNotIn("creationflags", popen.call_args.kwargs)
+
+    def test_uninstall_clears_the_marker(self):
+        install.mark_running()
+        with mock.patch.object(install, "_hook_logging"), mock.patch.object(autostart, "disable"),              mock.patch("airglow.tools.tools_dir", return_value=Path("Z:/does/not/exist")):
+            install.before_uninstall("1.6.0")
+        self.assertFalse((self.data / "running").exists())
+
+    def test_waits_for_setup_then_starts_unless_setup_did(self):
+        setup = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.5)"])
+        self.addCleanup(setup.wait)
+        with mock.patch.object(install, "other_copies_running", return_value=False):
+            self.assertTrue(install.wait_for_setup(setup.pid, timeout=10))
+        self.assertIsNotNone(setup.poll())                        # it really waited
+        with mock.patch.object(install, "other_copies_running", return_value=True):
+            self.assertFalse(install.wait_for_setup(setup.pid))
+
+    def test_a_missing_or_bad_setup_pid_doesnt_wait(self):
+        with mock.patch.object(install, "other_copies_running", return_value=False):
+            self.assertTrue(install.wait_for_setup("not a pid"))
+            self.assertTrue(install.wait_for_setup(2 ** 31 - 1))
+
+    def test_other_copies_are_found_by_exe_but_not_this_process(self):
+        self.assertFalse(install.other_copies_running(sys.executable + ".nope"))
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+        self.addCleanup(other.wait)
+        self.addCleanup(other.kill)
+        self.assertTrue(install.other_copies_running(sys.executable))
+
+
+class AfterSetupStartTests(unittest.TestCase):
+    def main(self, setup_done_it):
+        from airglow import app
+        with mock.patch.object(install, "run_hooks"),              mock.patch.object(install, "wait_for_setup", return_value=not setup_done_it) as wait,              mock.patch.object(app, "setup_logging") as started, mock.patch.object(app, "Store"),              mock.patch.object(app, "single_instance", return_value=False),              mock.patch.object(app, "ask_running_instance_to_show") as show:
+            self.assertEqual(app.main(["--after-setup", "1234"]), 0)
+        wait.assert_called_once_with("1234")
+        return started, show
+
+    def test_starts_in_the_tray(self):
+        # stops at the single-instance check here; a start in the tray doesn't ask a running copy to show its window
+        started, show = self.main(setup_done_it=False)
+        started.assert_called_once()
+        show.assert_not_called()
+
+    def test_nothing_to_do_when_setup_started_it(self):
+        started, _ = self.main(setup_done_it=True)
+        started.assert_not_called()
 
 
 class UninstallTests(unittest.TestCase):

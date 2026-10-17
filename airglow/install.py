@@ -28,6 +28,7 @@ CSIDL_PROGRAMS = 0x02
 CSIDL_DESKTOPDIRECTORY = 0x10
 CREATE_NO_WINDOW = 0x08000000
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+SETUP_WAIT = 120              # seconds; Setup is normally done a moment after the install hook
 
 
 def run_hooks():
@@ -67,18 +68,81 @@ def after_install(version):
     if had_startup or not existing_user:
         autostart.enable()
     log.info("start with Windows: %s%s", autostart.is_enabled(), " (moved from the old install)" if moved else "")
+    if running_marker().exists():
+        # Setup ended the running copy to replace it, and after a silent install (winget) it doesn't start the new one
+        log.info("%s was running before the install; starting it again once Setup has finished", APP_NAME)
+        try:
+            start_after_setup(os.getppid())
+        except OSError:
+            log.exception("couldn't start %s again", APP_NAME)
 
 
 def before_uninstall(version):
     _hook_logging()
     log.info("uninstalling %s %s", APP_NAME, version)
     autostart.disable()
+    clear_running()
     from . import tools
     if tools.tools_dir().exists():
         try:
             offer_tool_removal()
         except OSError:
             log.exception("couldn't offer to remove the helper programs")
+
+
+# ---------------------------------------------------------------- starting again after Setup
+
+def running_marker():
+    return paths.data_dir() / "running"
+
+
+def mark_running():
+    """Called once Airglow is up; clear_running() when it quits cleanly. A marker still there at install time means
+    Setup ended a running copy (it stops everything running from the install folder, without a clean shutdown)."""
+    try:
+        running_marker().write_text(str(os.getpid()), encoding="ascii")
+    except OSError as e:
+        log.warning("could not record that Airglow is running: %s", e)
+
+
+def clear_running():
+    try:
+        running_marker().unlink(missing_ok=True)
+    except OSError as e:
+        log.warning("could not clear the running marker: %s", e)
+
+
+def start_after_setup(setup_pid):
+    """Start "Airglow.exe --after-setup <pid>" from the new install, outliving the hook and Setup."""
+    cmd = [sys.executable, "--after-setup", str(setup_pid)]
+    cwd = Path(sys.executable).parent
+    try:        # Setup may run the hook in a job that ends with it
+        subprocess.Popen(cmd, cwd=cwd, creationflags=CREATE_BREAKAWAY_FROM_JOB, close_fds=True)
+    except OSError:
+        subprocess.Popen(cmd, cwd=cwd, close_fds=True)
+
+
+def wait_for_setup(setup_pid, timeout=SETUP_WAIT):
+    """For "--after-setup": wait until Setup has exited, then say whether Airglow still needs starting. It doesn't when
+    Setup started it itself (every install that isn't silent)."""
+    import psutil
+    try:
+        psutil.Process(int(setup_pid)).wait(timeout)
+    except (ValueError, psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
+        pass
+    return not other_copies_running()
+
+
+def other_copies_running(exe=None):
+    import psutil
+    exe = Path(exe or sys.executable).resolve()
+    for p in psutil.process_iter(["exe"]):
+        try:
+            if p.pid != os.getpid() and p.info.get("exe") and Path(p.info["exe"]).resolve() == exe:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 # ---------------------------------------------------------------- the old Inno Setup install
