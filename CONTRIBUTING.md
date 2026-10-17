@@ -28,6 +28,12 @@ declares. The contract is at the top of [`airglow/plugins/__init__.py`](airglow/
 - A setting that belongs to one kind of device (a brightness cap, onboard LEDs on or off) goes in the plugin's
   `PARAMETERS`. The Devices tab draws it, and the device reads it from `self.params`.
 
+**Products in the setup guide.** The fans, strips and coolers the setup guide offers are in
+[`airglow/data/components/`](airglow/data/components/), one product per line: an `id`, `brand`, `name`, `kind`
+(`fan`, `strip`, `ring` or `single`), where it plugs in (`argb` for a standard 5 V header, `nzxt` for HUE 2
+accessories), and `leds` (per fan for fans; `null` if it has to be counted). Only add LED counts you've counted on
+the real product or found in the maker's documentation; anything else is better counted with the guide's LED counter.
+
 Sources for device facts must be public documentation or open-source projects with a compatible way of learning
 from them (we credit liquidctl and OpenRGB). Don't contribute anything taken from closed vendor software.
 

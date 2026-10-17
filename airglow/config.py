@@ -214,6 +214,7 @@ def _fan_profile(name):
 
 
 def validate_zone(cfg, max_leds):
+    from . import lightsetup
     from .lighting import effects, geometry
     if not isinstance(cfg, dict):
         raise ValueError("zone settings must be an object")
@@ -226,8 +227,12 @@ def validate_zone(cfg, max_leds):
     override = cfg.get("override")
     if override:
         override = {"effect": override.get("effect"), "params": effects.clean_params(override.get("effect"), override.get("params"))}
-    return {"name": name, "enabled": bool(cfg.get("enabled", True)), "order": order, "override": override or None,
-            "layout": geometry.validate_layout(cfg.get("layout"), max_leds)}
+    out = {"name": name, "enabled": bool(cfg.get("enabled", True)), "order": order, "override": override or None,
+           "layout": geometry.validate_layout(cfg.get("layout"), max_leds)}
+    component = lightsetup.validate_component(cfg.get("component"))
+    if component:
+        out["component"] = component            # what the setup guide was told is plugged in, and where it sits
+    return out
 
 
 def _sensor_id(v):

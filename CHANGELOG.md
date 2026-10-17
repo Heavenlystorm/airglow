@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+- A guided setup for your lights, on first run, whenever new lights show up, and from Devices. For each header the
+  lights blink so you know which ones you're setting up; you pick the product (NZXT accessories are already
+  detected), or count the LEDs with a slider that lights them one by one with the last one in amber, and pick where
+  it sits in the case. Built-in lighting (graphics cards, boards, RAM, keyboards) only needs the last step. Effects
+  then sweep across the case as it really is. Products live in `airglow/data/components/`, one per line.
+- Zone names on the Lighting stage no longer print on top of each other when zones sit close together.
+- New social preview image.
+
 ## 1.3.1
 - Fans no longer spin up for half a minute after you sign in. Airglow usually starts before LibreHardwareMonitor
   has temperatures ready; it used to treat that as a lost sensor and run the fans at the failsafe speed. Until the

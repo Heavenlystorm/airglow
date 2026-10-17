@@ -94,6 +94,35 @@ class ApiTests(unittest.TestCase):
             conn.close()
             engine.frames = saved
 
+    def test_setup_lists_pending_zones_catalog_and_spots(self):
+        status, data = self.request("GET", "/api/setup")
+        self.assertEqual(status, 200)
+        self.assertIn("strip/z1", data["pending"])
+        self.assertTrue(any(p["id"] == "generic-argb-strip" for p in data["catalog"]))
+        self.assertIn("front", [s["id"] for s in data["spots"]])
+        self.assertGreaterEqual(self.request("GET", "/api/state")[1]["setup_pending"], 1)
+
+    def test_setup_probe_checks_its_input(self):
+        ok = self.request("POST", "/api/setup/probe", {"zone": "strip/z1", "mode": "count", "n": 3})
+        self.assertEqual(ok, (200, {"ok": True, "max_leds": 16}))
+        self.assertEqual(self.ctrl.engine._probe["strip/z1"][:2], ("count", 3))
+        self.request("POST", "/api/setup/probe", {"zone": "strip/z1", "mode": "off"})
+        self.assertNotIn("strip/z1", self.ctrl.engine._probe)
+        for body in ({"zone": "strip/z1", "mode": "rave"}, {"zone": "strip/z1", "mode": "count", "n": 17},
+                     {"zone": "strip/z1", "mode": "count", "n": "3"}):
+            self.assertEqual(self.request("POST", "/api/setup/probe", body)[0], 400, body)
+        self.assertEqual(self.request("POST", "/api/setup/probe", {"zone": "nope/z1", "mode": "off"})[0], 404)
+
+    def test_setup_apply_saves_the_zone_and_clears_it_from_pending(self):
+        status, data = self.request("POST", "/api/setup/apply",
+                                    {"zone": "strip/z2", "component": "generic-argb-strip", "leds": 7, "spot": "top"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual((data["config"]["name"], data["config"]["layout"]["leds"]), ("Top strip", 7))
+        self.assertNotIn("strip/z2", self.request("GET", "/api/setup")[1]["pending"])
+        bad = self.request("POST", "/api/setup/apply", {"zone": "strip/z2", "component": "generic-argb-strip",
+                                                        "leds": 99, "spot": "top"})
+        self.assertEqual(bad[0], 400)
+
     def test_event_stream_checks_the_host_too(self):
         self.assertEqual(self.request("GET", "/api/stream", host="evil.example")[0], 403)
 

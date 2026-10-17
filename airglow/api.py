@@ -15,7 +15,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, autostart, conflicts, diagnostics, fancontrol, paths, system, tools, updates
+from . import __version__, autostart, conflicts, diagnostics, fancontrol, lightsetup, paths, system, tools, updates
 from .automation import validate_rule
 from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP
 from .lighting import effects, geometry
@@ -208,6 +208,20 @@ def _find_zone(ctrl, key):
     return dev, zone
 
 
+_CATALOG = []
+
+
+def _catalog():
+    """The product catalog, read once (it ships with the app)."""
+    if not _CATALOG:
+        _CATALOG.extend(lightsetup.load_catalog())
+    return _CATALOG
+
+
+def _setup_pending(ctrl, store):
+    return lightsetup.pending(store, [d.info() for d in ctrl.manager.all().values()])
+
+
 def route(server, method, path, body, query=None):
     ctrl, store, hooks = server.ctrl, server.store, server.hooks
 
@@ -215,6 +229,7 @@ def route(server, method, path, body, query=None):
         if path == "/api/state":
             return {**ctrl.snapshot(), "temp_unit": store.settings()["temp_unit"], "zones_rev": store.zones_rev,
                     "onboarded": store.state.get("onboarded", False), "conflicts": conflicts.detect(),
+                    "setup_pending": lightsetup.pending_count(store, [d.info() for d in ctrl.manager.all().values()]),
                     "readings": ctrl.readings_for(store.tracked_sensors())}
         if path == "/api/sensors":
             return {"sensors": list(ctrl.readings.values()), "lhm_online": bool(ctrl.sensors.get("online"))}
@@ -243,6 +258,8 @@ def route(server, method, path, body, query=None):
             return system.windowed_exes()
         if path == "/api/tools":
             return tools.status(ctrl)
+        if path == "/api/setup":
+            return {"pending": _setup_pending(ctrl, store), "catalog": _catalog(), "spots": lightsetup.spots()}
         raise ApiError(404, "not found")
 
     # ---------------------------------------------------------------- POST
@@ -291,6 +308,38 @@ def route(server, method, path, body, query=None):
         cfg = store.set_zone(key, body, zone.max_leds)
         ctrl.engine.invalidate(key)
         return {"config": cfg}
+    if path == "/api/setup/probe":
+        key = str(body.get("zone") or "")
+        dev, zone = _find_zone(ctrl, key)
+        mode = body.get("mode")
+        if mode not in ("blink", "count", "off"):
+            raise ApiError(400, "mode must be blink, count or off")
+        n = body.get("n", 0)
+        if not isinstance(n, int) or isinstance(n, bool) or not 0 <= n <= zone.max_leds:
+            raise ApiError(400, f"n must be 0 to {zone.max_leds}")
+        ctrl.engine.probe(key, mode, n)
+        return {"ok": True, "max_leds": zone.max_leds}
+    if path == "/api/setup/apply":
+        key = str(body.get("zone") or "")
+        dev, zone = _find_zone(ctrl, key)
+        if not zone.resizable:
+            raise ApiError(400, "This zone's LEDs are built in; only where it sits can change.")
+        cfg = store.set_zone(key, lightsetup.plan_header(store, key, zone, body, _catalog()), zone.max_leds)
+        ctrl.engine.probe(key, "off")
+        ctrl.engine.invalidate(key)
+        return {"config": cfg}
+    if path == "/api/setup/place":
+        dev = ctrl.manager.get(str(body.get("device") or ""))
+        if not dev:
+            raise ApiError(404, "That device isn't connected right now.")
+        if body.get("spot") not in lightsetup.SPOTS:
+            raise ApiError(400, "pick where it sits")
+        out = {}
+        for key, cfg in lightsetup.plan_fixed(store, dev, body["spot"]).items():
+            zone = next(z for z in dev.zones if f"{dev.id}/{z.id}" == key)
+            out[key] = store.set_zone(key, cfg, zone.max_leds)
+            ctrl.engine.invalidate(key)
+        return {"configs": out}
     m = re.fullmatch(r"/api/devices/([^/]+)/params", path)
     if m:
         dev = ctrl.manager.get(urllib.parse.unquote(m.group(1)))

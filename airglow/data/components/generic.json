@@ -1,0 +1,9 @@
+{
+  "about": "Anything on a standard 5 V ARGB (3-pin) header. The LED count isn't known, so the setup guide lights LEDs one by one until you see the end of the strip or the last fan.",
+  "items": [
+    {"id": "generic-argb-fans", "brand": "", "name": "ARGB fans", "kind": "fan", "connect": ["argb"], "leds": null, "size_mm": 120, "hint": "One fan or several chained together"},
+    {"id": "generic-argb-strip", "brand": "", "name": "LED strip", "kind": "strip", "connect": ["argb"], "leds": null, "hint": "Strips, light bars and cable combs"},
+    {"id": "generic-argb-ring", "brand": "", "name": "Cooler or pump ring", "kind": "ring", "connect": ["argb"], "leds": null, "hint": "An RGB ring on a CPU cooler or AIO pump"},
+    {"id": "generic-argb-other", "brand": "", "name": "Something else", "kind": "strip", "connect": ["argb"], "leds": null, "hint": "Lit case parts, GPU brackets, anything with ARGB"}
+  ]
+}

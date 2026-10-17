@@ -8,6 +8,7 @@ import { initAutomations, renderAutomations } from "./automations.js";
 import { initDevices, renderDevices, showZone } from "./devices.js";
 import { initSettings, loadSettings } from "./settings.js";
 import { openWelcome } from "./onboarding.js";
+import { openSetup } from "./setup.js";
 import { initOverview, onFrames, renderOverview } from "./overview.js";
 import { R, fmt, level, loadCatalog, pushReadings } from "./readings.js";
 import { countTo, enter, moveMarker } from "./motion.js";
@@ -19,6 +20,7 @@ let currentView = null;
 const HISTORY_SECONDS = 600;
 let connected = true;
 let deviceKey = "";
+let setupDismissed = 0;          // "Not now" on the new-lights notice: quiet until even more new lights appear
 
 // ------------------------------------------------------------ routing
 function route() {
@@ -96,10 +98,21 @@ function renderBar() {
     n.hidden = false;
     setHTML(n, c.map((x) => `<span><b>${esc(x.name)}</b> is running and also controls ${esc(x.conflicts_with)}, so lights may flicker.</span>
       <button class="btn" data-close-app="${esc(x.name)}">Close ${esc(x.name)}</button>`).join("") + `<span class="spacer"></span>`);
+  } else if (S.state.onboarded && S.state.setup_pending > setupDismissed) {
+    const k = S.state.setup_pending;
+    n.hidden = false;
+    setHTML(n, `<span><b>${k} new light${k === 1 ? "" : "s"}</b> to set up. Tell Airglow what ${k === 1 ? "it is" : "they are"} so effects line up with your case.</span>
+      <button class="btn" data-open-setup="start">Set up</button><button class="btn quiet" id="setup-later">Not now</button><span class="spacer"></span>`);
   } else {
     n.hidden = true;
   }
 }
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-open-setup]");
+  if (b) openSetup({ start: b.dataset.openSetup === "start", only: b.dataset.zone || null });
+  if (e.target.closest("#setup-later")) { setupDismissed = S.state.setup_pending; renderBar(); }
+});
 
 $("#power").addEventListener("click", async () => {
   const held = heldOff();
