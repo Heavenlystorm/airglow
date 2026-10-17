@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0
 - A guided setup for your lights, on first run, whenever new lights show up, and from Devices. For each header the
   lights blink so you know which ones you're setting up; you pick the product (NZXT accessories are already
   detected), or count the LEDs with a slider that lights them one by one with the last one in amber, then drag it to
