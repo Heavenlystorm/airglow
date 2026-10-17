@@ -79,11 +79,21 @@ def fetch(pid):
     return {**data, "badges": profiles.badges(data)}
 
 
+MAX_URL = 8000          # GitHub answers 414 above about 8,190 characters (measured 2026-10-17)
+
+
+def share_file(shared):
+    return json.dumps(shared, indent=2, ensure_ascii=False) + "\n"
+
+
 def share_url(shared, repo=None):
-    """GitHub's new-file page with the profile filled in. Saving it there proposes a pull request."""
-    body = json.dumps(shared, indent=2, ensure_ascii=False) + "\n"
-    q = urllib.parse.urlencode({"filename": f"{shared['id']}.json", "value": body})
-    return f"https://github.com/{repo or UPDATE_REPO}/new/{BRANCH}/{FOLDER}?{q}"
+    """GitHub's new-file page with the profile filled in; saving it there proposes a pull request. Returns
+    (url, filled): a profile too long for the address gets the page with only the file name, to paste into."""
+    base = f"https://github.com/{repo or UPDATE_REPO}/new/{BRANCH}/{FOLDER}?"
+    url = base + urllib.parse.urlencode({"filename": f"{shared['id']}.json", "value": share_file(shared)})
+    if len(url) <= MAX_URL:
+        return url, True
+    return base + urllib.parse.urlencode({"filename": f"{shared['id']}.json"}), False
 
 
 def is_share_url(url, repo=None):
