@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1
+- Fans no longer spin up for half a minute after you sign in. Airglow usually starts before LibreHardwareMonitor
+  has temperatures ready; it used to treat that as a lost sensor and run the fans at the failsafe speed. Until the
+  first temperature arrives (at most 45 seconds) the fans now stay at the lowest speed of your curve.
+
 ## 1.3.0
 - Device plugins: each directly driven controller family is one module in `airglow/plugins/` that declares its USB
   ids, how to pick the right interface, what it leaves out of OpenRGB and its own settings. The NZXT HUE 2 and
