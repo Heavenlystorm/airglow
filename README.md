@@ -24,6 +24,8 @@ What it does:
   screen ambience and two music effects. A single zone can also have an effect of its own.
 - Lets you drag fan curves into shape. Fans never go below 20 %, and at 90 °C they run at full speed no matter what
   the curve says.
+- Saves profiles (the lighting look, effects for particular areas of the case, a fan curve) and shares them through
+  a community gallery, where every profile plays live on your own layout before you try it on your lights.
 - Has automations that read like sentences, such as "Between 23:00 and 07:00, turn the lights off" or "When
   Cyberpunk2077.exe is running, use Gaming". When a rule stops applying, your normal settings come back.
 - Shows any reading your PC has on an Overview of tiles you arrange yourself, with ten minutes of history.

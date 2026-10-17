@@ -34,7 +34,8 @@ class Controller:
             self.manager.dynamic_enabled = lambda: store.settings()["dynamic_lighting_enabled"]
         s = store.state
         self.base_scene = dict(s["scene"])
-        self.base_curve = s["fan_curve"] if s["fan_curve"] in store.curves() else "balanced"
+        self.trial = None                          # a profile being tried: {"name", "before": what to go back to}
+        self.base_curve = s["fan_curve"] if self.curve_points(s["fan_curve"]) else "balanced"
         self.active_preset = s["active_preset"]
         self._read_sensors = read_sensors        # tests pass a summary; normally the full LHM tree is read
         self._system = sensors.SystemSensors()
@@ -96,17 +97,80 @@ class Controller:
 
         def lighting():
             self.base_scene = validate_scene({"effect": preset["effect"], "params": preset["params"],
-                                              "brightness": preset["brightness"], "on": True})
+                                              "brightness": preset["brightness"], "areas": preset.get("areas"),
+                                              "on": True})
 
         with self._lock:
             step("lighting", lighting)
-            if preset.get("fan_curve"):
-                step("fans", lambda: setattr(self, "base_curve", preset["fan_curve"]))
+            curve = self.preset_curve(preset)
+            if curve:
+                step("fans", lambda: setattr(self, "base_curve", curve))
             if preset.get("fan_profile"):
                 step("FanControl", lambda: fancontrol.apply_profile(self.store.settings(), preset["fan_profile"]))
             self.active_preset = preset["id"] if all(s["ok"] for s in steps) else None
             self._changed()
         return steps
+
+    # ------------------------------------------------------------ fan curves, including a profile's own
+    @staticmethod
+    def preset_curve(preset):
+        """The curve a profile switches to: its own ("profile:<id>"), a named one, or None to leave fans alone."""
+        if preset.get("fan_points"):
+            return f"profile:{preset['id']}"
+        return preset.get("fan_curve")
+
+    def curve_points(self, name):
+        """Points of a curve by name: a named curve, a profile's own, or the one being tried. None if unknown."""
+        if not name:
+            return None
+        if name == "trial":
+            return (self.trial or {}).get("fan_points")
+        if name.startswith("profile:"):
+            p = next((p for p in self.store.get_presets() if p["id"] == name[8:]), None)
+            return p.get("fan_points") if p else None
+        return self.store.curves().get(name)
+
+    # ------------------------------------------------------------ trying a profile before keeping it
+    def try_profile(self, scene, name, fan_points=None, clear_zones=()):
+        """Play a profile on the real lights (and its fan curve, when given) until end_trial().
+        clear_zones: zones whose own effect would hide the profile's per-area effects; put back on discard."""
+        with self._lock:
+            if self.trial is None:
+                zones = self.store.zones()
+                self.trial = {"before": {"scene": dict(self.base_scene), "curve": self.base_curve,
+                                         "preset": self.active_preset,
+                                         "overrides": {k: zones[k].get("override") for k in clear_zones if k in zones}}}
+            self.trial.update(name=name, fan_points=fan_points)
+            for key in clear_zones:
+                self._set_override(key, None)
+            self.base_scene = validate_scene({**scene, "on": True})
+            self.base_curve = "trial" if fan_points else self.trial["before"]["curve"]
+            self.active_preset = None
+            self.apply()                           # not saved: a restart goes back to what you had
+
+    def end_trial(self, keep_preset=None):
+        """Discard the profile being tried, or keep it: keep_preset is the profile it was installed as."""
+        with self._lock:
+            if self.trial is None:
+                return
+            before, self.trial = self.trial["before"], None
+            if keep_preset:
+                self.apply_preset(keep_preset)
+                return
+            for key, override in before["overrides"].items():
+                self._set_override(key, override)
+            self.base_scene, self.active_preset = before["scene"], before["preset"]
+            self.base_curve = before["curve"] if self.curve_points(before["curve"]) else "balanced"
+            self._changed()
+
+    def _set_override(self, key, override):
+        cfg = self.store.zones().get(key)
+        dev = self.manager.get(key.rpartition("/")[0])
+        zone = next((z for z in (dev.zones if dev else []) if f"{dev.id}/{z.id}" == key), None)
+        if cfg is None or zone is None or cfg.get("override") == override:
+            return
+        self.store.set_zone(key, {**cfg, "override": override}, zone.max_leds)
+        self.engine.invalidate(key)
 
     def mark_preset(self, preset_id):
         """The current settings were just saved as this preset."""
@@ -142,6 +206,8 @@ class Controller:
                 if t["type"] == "preset" and t["preset"] in presets:
                     p = presets[t["preset"]]
                     scene = {"effect": p["effect"], "params": p["params"], "brightness": p["brightness"], "on": True}
+                    if p.get("areas"):
+                        scene["areas"] = p["areas"]
                 elif t["type"] == "lights_off":
                     scene["on"] = False
                 elif t["type"] == "dim":
@@ -150,12 +216,12 @@ class Controller:
                 t = fr["then"]
                 if t["type"] == "fan_curve":
                     curve = t["curve"]
-                elif t["type"] == "preset" and presets.get(t["preset"], {}).get("fan_curve"):
-                    curve = presets[t["preset"]]["fan_curve"]
+                elif t["type"] == "preset" and t["preset"] in presets and self.preset_curve(presets[t["preset"]]):
+                    curve = self.preset_curve(presets[t["preset"]])
             settings = self.store.settings()
             if self.sleeping or (self.locked and settings["lights_off_on_lock"]):
                 scene["on"] = False
-            if curve not in self.store.curves():
+            if not self.curve_points(curve):
                 curve = "balanced"
             if scene != self.effective_scene:
                 self.effective_scene = scene
@@ -210,7 +276,7 @@ class Controller:
     def _run_fans(self):
         cfg = self.store.settings()
         temp = fans.source_temp(self.sensors, cfg["temp_source"])
-        curve = self.store.curves()[self.effective_curve]
+        curve = self.curve_points(self.effective_curve)
         waited = time.monotonic() - self._started
         if temp is not None and not self._temp_seen:
             self._temp_seen = True
@@ -375,6 +441,7 @@ class Controller:
             "scene": self.base_scene,
             "effective": self.effective_scene,
             "active_preset": self.active_preset,
+            "trial": {"name": self.trial["name"], "fans": bool(self.trial.get("fan_points"))} if self.trial else None,
             "override": {
                 "lighting": a.light_rule["id"] if a.light_rule else None,
                 "fans": a.fan_rule["id"] if a.fan_rule else None,

@@ -225,6 +225,16 @@ def plan_fixed(store, device, spot):
     return out
 
 
+def zone_spot(cfg):
+    """Where a zone sits: the spot the setup guide recorded, else the nearest spot to its position."""
+    spot = (cfg.get("component") or {}).get("spot")
+    if spot in SPOTS:
+        return spot
+    L = cfg.get("layout") or {}
+    x, y = L.get("x", 0.8), L.get("y", 0.5)
+    return min(SPOTS, key=lambda k: (SPOTS[k]["x"] - x) ** 2 + (SPOTS[k]["y"] - y) ** 2)
+
+
 def validate_component(c):
     """The setup guide's answers kept with a zone, so it can show them again later."""
     if c is None:

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+- Presets are now profiles, and you can share them. A profile is the lighting look plus, optionally, effects for
+  particular areas (front fans, top, graphics card...), its own fan curve, and the automations that switch to it.
+  Areas are keyed by where lights sit, so a shared profile lands on the right lights on any rig.
+- A community gallery (Lighting, Profiles, Browse): profiles from `profiles/` in this repository, featured first.
+  Each one plays live on your own layout before you touch anything; "Try it" puts it on your real lights with Keep
+  and Discard, and Discard puts everything back. Fan curves and automations only come along if you tick them.
+- Share sends a profile to the gallery: GitHub opens with the file filled in, and saving it proposes a pull
+  request. Profiles are checked automatically and the gallery's index is rebuilt when one is merged.
+
 ## 1.4.0
 - A guided setup for your lights, on first run, whenever new lights show up, and from Devices. For each header the
   lights blink so you know which ones you're setting up; you pick the product (NZXT accessories are already

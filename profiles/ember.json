@@ -1,0 +1,15 @@
+{
+  "airglow_profile": 1,
+  "id": "ember",
+  "name": "Ember",
+  "author": "Airglow",
+  "description": "A slow orange glow, like coals. Calm enough to leave on all evening.",
+  "lighting": {
+    "effect": "breathing",
+    "params": {
+      "color": "#ff5a1f",
+      "speed": 18
+    },
+    "brightness": 70
+  }
+}

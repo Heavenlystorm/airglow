@@ -48,7 +48,8 @@ export const unitF = () => S.state?.temp_unit === "F";
 export const toUnit = (c) => (unitF() ? c * 9 / 5 + 32 : c);
 export const fmtTemp = (c) => (c == null ? "–" : `${Math.round(toUnit(c))}°${unitF() ? "F" : "C"}`);
 export const tempLevel = (c, warm, hot) => (c == null ? "" : c >= hot ? "hot" : c >= warm ? "warm" : "");
-export const curveLabel = (c) => ({ silent: "Silent", balanced: "Balanced", performance: "Performance" }[c] || cap(c));
+export const curveLabel = (c) => ({ silent: "Silent", balanced: "Balanced", performance: "Performance", trial: "Trial" }[c]
+  || (c?.startsWith("profile:") ? S.presets.find((p) => p.id === c.slice(8))?.name || "Profile" : cap(c)));
 export const effectName = (id) => S.effects.find((e) => e.id === id)?.name || cap(id);
 
 // ------------------------------------------------------------ colour

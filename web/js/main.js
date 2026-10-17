@@ -9,6 +9,7 @@ import { initDevices, renderDevices, showZone } from "./devices.js";
 import { initSettings, loadSettings } from "./settings.js";
 import { openWelcome } from "./onboarding.js";
 import { openSetup } from "./setup.js";
+import { renderTrial } from "./profiles.js";
 import { initOverview, onFrames, renderOverview } from "./overview.js";
 import { R, fmt, level, loadCatalog, pushReadings } from "./readings.js";
 import { countTo, enter, moveMarker } from "./motion.js";
@@ -81,6 +82,7 @@ function heldOff() {
 
 function renderBar() {
   renderPins();
+  renderTrial();
   const held = heldOff();
   $("#power").setAttribute("aria-pressed", String(S.state.scene.on));
   $("#power").toggleAttribute("data-held", !!held);

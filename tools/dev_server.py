@@ -5,6 +5,7 @@
 """
 
 import json
+import os
 import logging
 import math
 import random
@@ -23,6 +24,8 @@ from airglow.plugins import asus_aura_usb, nzxt_hue2  # noqa: E402
 from tests.fakes import FakeHub, FakeLightDevice, FakeManager  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
+# the gallery reads this checkout's profiles/ folder, so new profiles can be tried before they're on GitHub
+os.environ.setdefault("AIRGLOW_GALLERY_URL", (Path(__file__).resolve().parent.parent / "profiles").as_uri())
 DEMO = "--demo" in sys.argv
 DEMO_LHM_PORT = 8791
 

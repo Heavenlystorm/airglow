@@ -57,10 +57,12 @@ function interp(points, t) {
 function renderEditor() {
   if (!S.curves || !S.state) return;
   const F = S.state.fans;
-  if (!E.curve || (E.curve !== F.base_curve && !dirty())) { E.curve = F.base_curve; E.draft = null; }   // follow tray/preset changes
+  // a profile can bring its own curve: then none of the named ones is on, and the editor keeps the last one shown
+  const named = F.base_curve in S.curves.curves ? F.base_curve : null;
+  if (!E.curve || (named && E.curve !== named && !dirty())) { E.curve = named || E.curve || "balanced"; E.draft = null; }   // follow tray/profile changes
   if (!E.draft) E.draft = saved().map((p) => p.slice());
   setHTML($("#curve-seg"), Object.keys(S.curves.curves).map((c) =>
-    `<button role="radio" data-c="${c}" aria-checked="${c === E.curve}">${curveLabel(c)}</button>`).join(""));
+    `<button role="radio" data-c="${c}" aria-checked="${!!named && c === E.curve}">${curveLabel(c)}</button>`).join(""));
   const { min_duty: minDuty, safety_temp: safety } = S.curves;
   const pts = E.draft;
   const line = (arr) => [[ED.tMin, arr[0][1]], ...arr, [ED.tMax, arr.at(-1)[1]]].map(([t, d]) => `${ex(t).toFixed(1)},${ey(d).toFixed(1)}`).join(" ");
@@ -91,7 +93,9 @@ function renderEditor() {
   $("#curve-discard").disabled = !dirty();
   const src = S.settings?.settings?.temp_source;
   const tracking = src === "cpu" ? "the processor" : src === "gpu" ? "the graphics card" : "whichever part is hotter";
-  $("#curve-lede").textContent = F.curve !== F.base_curve
+  $("#curve-lede").textContent = !(F.curve in S.curves.curves)
+    ? `The fans follow ${F.curve === "trial" ? "the curve of the profile you're trying" : `${curveLabel(F.curve)}'s own curve`}. Pick a curve here to switch back to one of yours.`
+    : F.curve !== F.base_curve
     ? `An automation has switched the fans to ${curveLabel(F.curve)} for now. ${curveLabel(F.base_curve)} comes back when it stops.`
     : `The NZXT fans follow this curve, tracking ${tracking}.`;
   $("#editor-hint").textContent = dirty() ? "Unsaved changes. The dashed line is the saved curve." : "Drag points, double-click to add one, Delete removes the selected point, arrow keys fine-tune it.";
@@ -142,7 +146,7 @@ function wireEditor() {
   });
   $("#curve-seg").addEventListener("click", async (e) => {
     const c = e.target.closest("[data-c]")?.dataset.c;
-    if (!c || c === E.curve) return;
+    if (!c || (c === E.curve && c === S.state.fans.base_curve)) return;
     if (dirty() && !confirm(`Discard unsaved changes to the ${curveLabel(E.curve)} curve?`)) return;
     E.curve = c; E.draft = null; E.sel = null;
     try { await post("/api/fan_curve", { name: c }); S.state.fans.base_curve = c; toast(`Fans now follow the ${curveLabel(c)} curve`); emit("refresh"); }

@@ -1,0 +1,35 @@
+{
+  "airglow_profile": 1,
+  "id": "night-owl",
+  "name": "Night Owl",
+  "author": "Airglow",
+  "description": "Dim deep blue, and lights off from 23:00 to 07:00.",
+  "lighting": {
+    "effect": "solid",
+    "params": {
+      "color": "#1a2cff"
+    },
+    "brightness": 25
+  },
+  "automations": [
+    {
+      "when": {
+        "type": "time",
+        "start": "23:00",
+        "end": "07:00",
+        "days": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "then": {
+        "type": "lights_off"
+      }
+    }
+  ]
+}

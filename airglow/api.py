@@ -15,7 +15,8 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, autostart, conflicts, coolers, diagnostics, fancontrol, lightsetup, paths, system, tools, updates
+from . import (__version__, autostart, conflicts, coolers, diagnostics, fancontrol, gallery, lightsetup, paths, profiles,
+               system, tools, updates)
 from .automation import validate_rule
 from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP
 from .lighting import effects, geometry
@@ -218,6 +219,24 @@ def _catalog():
     return _CATALOG
 
 
+def _preset(store, pid):
+    p = next((p for p in store.get_presets() if p["id"] == pid), None)
+    if not p:
+        raise ApiError(404, "That profile no longer exists.")
+    return p
+
+
+def _current_areas(ctrl, store):
+    """Per-area effects for "save current": the scene's own, then each area's first zone you gave its own effect."""
+    areas = dict(ctrl.base_scene.get("areas") or {})
+    mine = {}
+    for cfg in store.zones().values():
+        if cfg.get("enabled") and cfg.get("override"):
+            mine.setdefault(lightsetup.zone_spot(cfg), {"effect": cfg["override"]["effect"],
+                                                        "params": cfg["override"]["params"]})
+    return {**areas, **mine}
+
+
 _COOLERS = {"at": -1e9, "found": []}
 
 
@@ -268,6 +287,18 @@ def route(server, method, path, body, query=None):
             return system.windowed_exes()
         if path == "/api/tools":
             return tools.status(ctrl)
+        if path == "/api/gallery":
+            try:
+                return gallery.listing()
+            except RuntimeError as e:
+                raise ApiError(502, str(e)) from None
+        if path == "/api/gallery/profile":
+            try:
+                return gallery.fetch((query or {}).get("id", [""])[0])
+            except RuntimeError as e:
+                raise ApiError(502, str(e)) from None
+        if path == "/api/preview/frames":
+            return {"zones": ctrl.engine.preview_frames}
         if path == "/api/setup":
             return {"pending": _setup_pending(ctrl, store), "catalog": _catalog(), "spots": lightsetup.spots(),
                     "coolers": _coolers()}
@@ -294,10 +325,65 @@ def route(server, method, path, body, query=None):
         pid = f"{pid}-{int(time.time()) % 100000:05d}"
         scene = ctrl.base_scene
         new = {"id": pid, "name": name, "effect": scene["effect"], "params": scene["params"],
-               "brightness": scene["brightness"], "fan_curve": ctrl.base_curve, "fan_profile": None}
+               "brightness": scene["brightness"], "areas": _current_areas(ctrl, store), "fan_curve": None,
+               "fan_profile": None, "description": body.get("description") or ""}
+        if body.get("include_fans", True):
+            if ctrl.base_curve in store.curves():
+                new["fan_curve"] = ctrl.base_curve
+            else:                                   # a profile's own curve, or one being tried: keep its points
+                new["fan_points"] = ctrl.curve_points(ctrl.base_curve)
         presets = store.set_presets(store.get_presets() + [new])
         ctrl.mark_preset(pid)
         return {"presets": presets, "id": pid}
+    if path == "/api/preview":
+        if body.get("profile"):
+            ctrl.engine.preview(profiles.scene_of(profiles.validate_shared(body["profile"])))
+        elif body.get("preset"):
+            p = _preset(store, body["preset"])
+            ctrl.engine.preview(profiles.scene_of(profiles.to_shared(p, store.get_rules(), curves=store.curves())))
+        else:
+            ctrl.engine.preview(None)
+        return {"ok": True}
+    if path == "/api/profiles/try":
+        shared = profiles.validate_shared(body.get("profile"))
+        covered = set((shared.get("areas") or {}))
+        clear = [k for k, c in store.zones().items() if c.get("override") and lightsetup.zone_spot(c) in covered]
+        ctrl.try_profile(profiles.scene_of(shared), shared["name"],
+                         fan_points=(shared.get("fans") or {}).get("curve") if body.get("include_fans") else None,
+                         clear_zones=clear)
+        return {"ok": True}
+    if path == "/api/profiles/discard":
+        ctrl.end_trial()
+        return {"ok": True}
+    if path == "/api/profiles/keep":
+        shared = profiles.validate_shared(body.get("profile"))
+        presets = store.get_presets()
+        if len(presets) >= 24:
+            raise ApiError(400, "You have 24 profiles already. Remove one first (Profiles, Edit).")
+        pid = profiles.new_id(shared["name"], {p["id"] for p in presets})
+        preset = profiles.to_preset(shared, pid, include_fans=bool(body.get("include_fans")))
+        presets = store.set_presets(presets + [preset])
+        if body.get("include_automations") and shared.get("automations"):
+            rules = store.get_rules()
+            new = profiles.rules_to_install(shared, pid, {r["id"] for r in rules})
+            ids = {p["id"] for p in presets}
+            store.set_rules(rules + new, lambda r: validate_rule(r, ids, set(store.curves())))
+            ctrl.automations.evaluate()
+        ctrl.end_trial(keep_preset=next(p for p in presets if p["id"] == pid))
+        return {"presets": presets, "id": pid}
+    if path == "/api/profiles/share":
+        p = _preset(store, body.get("id"))
+        shared = profiles.to_shared(p, store.get_rules(), author=str(body.get("author") or "").strip(),
+                                    description=str(body.get("description") or p.get("description") or "").strip(),
+                                    include_fans=bool(body.get("include_fans")),
+                                    include_automations=bool(body.get("include_automations")),
+                                    curves=store.curves())
+        if not shared["author"]:
+            raise ApiError(400, "Add your GitHub name, so the gallery can credit you.")
+        url = gallery.share_url(shared)
+        if body.get("open", True) and hooks.get("open_url") and gallery.is_share_url(url):
+            hooks["open_url"](url)
+        return {"url": url, "profile": shared}
     m = re.fullmatch(r"/api/presets/([a-z0-9\-]{1,64})/apply", path)
     if m:
         preset = next((p for p in store.get_presets() if p["id"] == m.group(1)), None)

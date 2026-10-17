@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import urllib.request
+import webbrowser
 
 from . import APP_NAME, __version__, api, autostart, paths
 from .config import Store
@@ -134,7 +135,9 @@ def main(argv=None):
     window = None
     hooks = {"show_window": lambda: window and window.show(),
              # show a saved diagnostics report in Explorer, selected
-             "reveal": lambda f: subprocess.Popen(["explorer", "/select,", str(f)])}
+             "reveal": lambda f: subprocess.Popen(["explorer", "/select,", str(f)]),
+             # the gallery's share page (only GitHub's new-file page for the profiles folder; api.py checks)
+             "open_url": lambda url: webbrowser.open(url)}
     server = start_server(port, ctrl, store, hooks)
     if server is None:
         message_box(f"Ports {port} to {port + PORT_TRIES - 1} are all used by other programs, so Airglow can't "

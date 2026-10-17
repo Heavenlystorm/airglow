@@ -169,7 +169,8 @@ function draw() {
 }
 
 // The Overview's lighting tile: every lit zone, zoomed to fit, same glow as the stage.
-export function paintMini(c) {
+// frames: zone key -> hex colours; the live ones by default, or a profile's preview from the gallery
+export function paintMini(c, frames = st.frames) {
   const r = c.getBoundingClientRect();
   if (!r.width || !r.height) return;
   const dpr = window.devicePixelRatio || 1;
@@ -190,7 +191,7 @@ export function paintMini(c) {
   for (const pass of [0, 1]) {
     ctx.globalCompositeOperation = pass ? "lighter" : "source-over";
     for (const z of zones) {
-      const hex = st.frames[z.key];
+      const hex = frames[z.key];
       const rad = Math.max(1.4, ledRadius(z) * s);
       for (let i = 0; i < z.positions.length; i++) {
         const x = ox + z.positions[i][0] * U * s, y = oy + z.positions[i][1] * U * s;

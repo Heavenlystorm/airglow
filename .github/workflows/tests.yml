@@ -25,6 +25,8 @@ jobs:
       - name: UI scripts parse
         shell: bash
         run: for f in web/js/*.js; do node --check "$f"; done
+      - name: Gallery profiles are valid
+        run: python tools/profiles.py --check
       - name: Device plugins load
         run: python -c "from airglow import plugins; p = plugins.load(); assert p, 'no device plugins found'; print(len(p), 'device plugins')"
 

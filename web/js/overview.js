@@ -15,7 +15,7 @@ const STYLES = [
 ];
 const CONTROL = {
   lighting: { name: "Lighting", desc: "A live miniature of your rig, with on/off and brightness.", w: 2, h: 2 },
-  presets: { name: "Presets", desc: "One click to switch lighting and fans together.", w: 2, h: 1 },
+  presets: { name: "Profiles", desc: "One click to switch lighting and fans together.", w: 2, h: 1 },
   fans: { name: "Case fans", desc: "Fan speed and the curve they follow.", w: 1, h: 1 },
 };
 
@@ -96,7 +96,7 @@ function controlMarkup(t) {
         <label class="switch" title="Lights on or off"><input type="checkbox" class="lt-on"><span></span></label></footer>`;
   }
   if (t.type === "presets") {
-    return `<header class="tile-head"><span class="tile-name">Presets</span><a class="tile-src link" href="#lighting">Edit</a></header><div class="chips pcards"></div>`;
+    return `<header class="tile-head"><span class="tile-name">Profiles</span><a class="tile-src link" href="#lighting">Edit</a></header><div class="chips pcards"></div>`;
   }
   return `<header class="tile-head"><span class="tile-name">Case fans</span><span class="tile-src fan-curve"></span></header>
     <div class="readout"><span class="num">–</span><span class="unit">%</span></div><div class="fan-sub"></div>
@@ -258,7 +258,7 @@ function updateLighting(el) {
   const preset = S.presets.find((p) => p.id === S.state.active_preset);
   setHTML(el.querySelector(".lt-effect"), esc(eff.on ? effectName(eff.effect) : "Lights off"));
   const o = S.state.override;
-  const sub = o?.locked ? "Off while the PC is locked" : o?.lighting ? "An automation is in control" : preset ? `${preset.name} preset` : "Your own settings";
+  const sub = o?.locked ? "Off while the PC is locked" : o?.lighting ? "An automation is in control" : preset ? `${preset.name} profile` : "Your own settings";
   setHTML(el.querySelector(".lt-sub"), esc(sub));
   const bri = el.querySelector(".lt-bri"), on = el.querySelector(".lt-on");
   if (document.activeElement !== bri && Date.now() - (bri._t || 0) > 1500) { bri.value = sc.brightness; rangeFill(bri); }
@@ -287,7 +287,7 @@ function updatePresets(el) {
   setHTML(el.querySelector(".chips"), S.presets.length
     ? S.presets.map((p) => `<button class="pcard" data-preset="${esc(p.id)}" aria-pressed="${p.id === active}" style="--pc:${sceneColor(p)};--ps:${sceneSwatch(p)}">
         <span class="pswatch"></span><span class="pname">${esc(p.name)}</span><span class="pmeta">${esc(effectName(p.effect))}</span></button>`).join("")
-    : `<p class="hint">No presets yet. Save one from the Lighting tab.</p>`);
+    : `<p class="hint">No profiles yet. Save one from the Lighting tab.</p>`);
 }
 
 function updateFans(el) {
