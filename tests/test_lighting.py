@@ -42,6 +42,13 @@ class GeometryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             geometry.validate_layout({"shape": "blob"}, 40)
 
+    def test_long_openrgb_strips_can_be_saved(self):
+        # a 600-LED WLED strip through OpenRGB: Airglow places it by itself, so saving it must work too
+        ok = geometry.validate_layout({"shape": "strip", "leds": 600, "x": 1, "y": 0.5}, 600)
+        self.assertEqual(ok["leds"], 600)
+        dense = geometry.validate_layout({"shape": "fans", "fans": 1, "leds_per_fan": 96, "x": 1, "y": 0.5}, 120)
+        self.assertEqual(dense["leds_per_fan"], 96)
+
 
 class EffectTests(unittest.TestCase):
     LAYOUT = {"shape": "fans", "fans": 3, "leds_per_fan": 8, "x": 0.8, "y": 0.5, "angle": 0, "size": 0.16}

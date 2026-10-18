@@ -455,7 +455,8 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .ports li { display: grid; grid-template-columns: 52px 1fr 88px; gap: 12px; align-items: center; font-size: 13px; }
 .ports .bar { height: 6px; border-radius: 1px; background: var(--well); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .6); overflow: hidden; }
 .ports .bar i { display: block; height: 100%; background: repeating-linear-gradient(90deg, var(--ink-2) 0 3px, transparent 3px 4px); transition: width .8s var(--ease); }
-.ports .rpm, .other-fans span:last-child { text-align: right; color: var(--ink-2); font: 400 12px var(--mono); font-stretch: 87.5%; }
+.ports .ports-dev { display: block; color: var(--ink-3); font-size: 12px; margin-bottom: -4px; }
+.ports .rpm, .other-fans span:last-child { white-space: nowrap; text-align: right; color: var(--ink-2); font: 400 12px var(--mono); font-stretch: 87.5%; }
 .other-fans { display: grid; gap: 6px; align-content: start; font-size: 13px; color: var(--ink-3); }
 .other-fans li { display: flex; justify-content: space-between; }
 .empty-note { color: var(--ink-3); font-size: 13px; }
@@ -811,4 +812,30 @@ button.st-card:hover { transform: translateY(-1px); }
 @media (max-width: 1100px) {
   .st-edit { grid-template-columns: 220px minmax(0, 1fr) 270px; }
   .st-edit.is-code { grid-template-columns: minmax(320px, 1fr) minmax(0, 1fr) 250px; }
+}
+
+/* ------------------------------------------------------------ fans: motherboard headers and coolers (through LHM) */
+.channels { display: grid; gap: 10px; border-top: 1px solid var(--line-soft); padding-top: 16px; }
+.channels h2 { font-size: 15px; margin: 0; }
+.channels > .hint { margin: 0; max-width: 760px; }
+.chan-list { display: grid; gap: 4px; }
+.chan { display: grid; grid-template-columns: minmax(150px, 1.3fr) minmax(60px, 1fr) 80px 170px minmax(150px, 1fr); gap: 6px 14px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.chan:last-child { border-bottom: 0; }
+.chan-name { display: grid; min-width: 0; }
+.chan-name strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chan-name span { color: var(--ink-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chan .bar { height: 6px; border-radius: 1px; background: var(--well); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .6); overflow: hidden; }
+.chan .bar i { display: block; height: 100%; background: repeating-linear-gradient(90deg, var(--ink-2) 0 3px, transparent 3px 4px); transition: width .8s var(--ease); }
+.chan .rpm { white-space: nowrap; text-align: right; color: var(--ink-2); font: 400 12px var(--mono); font-stretch: 87.5%; }
+.chan .select { width: 100%; }
+.chan-steady { display: flex; align-items: center; gap: 10px; }
+.chan-steady[hidden] { display: none; }
+.chan-steady input { flex: 1; min-width: 0; }
+.chan-steady output { font: 400 12px var(--mono); color: var(--ink-2); min-width: 36px; text-align: right; }
+.chan-note { grid-column: 1 / -1; margin: 0; font-size: 12px; }
+.chan-note:empty { display: none; }
+.chan-note.warn { color: var(--warm); }
+@media (max-width: 1180px) {
+  .chan { grid-template-columns: minmax(140px, 1fr) minmax(50px, .7fr) 70px 160px; }
+  .chan-steady { grid-column: 2 / -1; }
 }

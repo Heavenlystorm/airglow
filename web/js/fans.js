@@ -1,7 +1,7 @@
 // Fans screen: temperature/power readouts with history, the curve editor, and fan speeds.
 
 import { ghost } from "./motion.js";
-import { $, S, cap, clamp, curveLabel, emit, esc, fail, fmtTemp, on, post, setHTML, tempLevel, toUnit, toast, unitF } from "./core.js";
+import { $, $$, S, cap, clamp, curveLabel, emit, esc, fail, fmtTemp, on, post, rangeFill, setHTML, tempLevel, toUnit, toast, unitF } from "./core.js";
 
 const HISTORY_SECONDS = 600;
 const num = (v) => `<span class="num" data-ghost="${ghost(v)}">${v}</span>`;
@@ -31,6 +31,8 @@ function renderReadouts() {
       ${tempBig(s.cpu_temp, cpuLvl)}${spark(pts("cpu"), 20, 100, lineColor(cpuLvl))}</div>
     <div class="ro"><div class="head"><span>${esc(shortGpu(s.gpu_name))}</span><span>${s.gpu_power != null ? Math.round(s.gpu_power) + " W" : ""}</span></div>
       ${tempBig(s.gpu_temp, gpuLvl)}${spark(pts("gpu"), 20, 100, lineColor(gpuLvl))}</div>
+    ${s.liquid_temp != null ? `<div class="ro"><div class="head"><span>Coolant</span><span>liquid cooler</span></div>
+      ${tempBig(s.liquid_temp, tempLevel(s.liquid_temp, 40, 50))}</div>` : ""}
     <div class="ro"><div class="head"><span>Power draw</span><span>processor and graphics</span></div>
       <div class="big">${num(s.total_power == null ? "–" : Math.round(s.total_power))}<span class="u">W</span></div>${spark(total, 0, Math.ceil(peak * 1.15 / 50) * 50, "#b9b5aa")}</div>`;
   if (!s.online) {
@@ -92,12 +94,14 @@ function renderEditor() {
   $("#curve-save").disabled = !dirty();
   $("#curve-discard").disabled = !dirty();
   const src = S.settings?.settings?.temp_source;
-  const tracking = src === "cpu" ? "the processor" : src === "gpu" ? "the graphics card" : "whichever part is hotter";
+  const tracking = src === "cpu" ? "the processor" : src === "gpu" ? "the graphics card"
+    : src === "liquid" ? (S.state.sensors.liquid_temp != null ? "the coolant" : "the hotter part until a coolant reading comes through")
+    : "whichever part is hotter";
   $("#curve-lede").textContent = !(F.curve in S.curves.curves)
     ? `The fans follow ${F.curve === "trial" ? "the curve of the profile you're trying" : `${curveLabel(F.curve)}'s own curve`}. Pick a curve here to switch back to one of yours.`
     : F.curve !== F.base_curve
     ? `An automation has switched the fans to ${curveLabel(F.curve)} for now. ${curveLabel(F.base_curve)} comes back when it stops.`
-    : `The NZXT fans follow this curve, tracking ${tracking}.`;
+    : `Fans that Airglow drives follow this curve, tracking ${tracking}.`;
   $("#editor-hint").textContent = dirty() ? "Unsaved changes. The dashed line is the saved curve." : "Drag points, double-click to add one, Delete removes the selected point, arrow keys fine-tune it.";
 }
 
@@ -164,11 +168,78 @@ function wireEditor() {
 // ------------------------------------------------------------ fan speeds
 function renderPorts() {
   const F = S.state.fans, s = S.state.sensors;
+  const channels = F.channels || [];
+  // name the controller above its ports once there's more than one source of fans on the page
+  const named = new Set(F.ports.map((q) => q.device)).size > 1 || channels.length > 0;
   setHTML($("#ports"), F.hub_online
-    ? (F.ports.length ? F.ports.map((p) => `<li><span>${new Set(F.ports.map((q) => q.device)).size > 1 ? `${esc(p.device)}, fan` : "Fan"} ${p.port}</span><span class="bar"><i style="width:${p.duty}%"></i></span><span class="rpm">${p.rpm.toLocaleString()} rpm</span></li>`).join("")
-                      : `<li class="empty-note">No fans are spinning on the NZXT hub.</li>`)
-    : `<li class="empty-note">No NZXT hub connected, so there are no fans for Airglow to drive. Motherboard fans can follow FanControl profiles from your presets.</li>`);
-  setHTML($("#other-fans"), (s.fans || []).map((f) => `<li><span>${esc(cap(f.name))}</span><span>${f.rpm.toLocaleString()} rpm</span></li>`).join(""));
+    ? (F.ports.length ? F.ports.map((p, i) => `${named && p.device !== F.ports[i - 1]?.device ? `<li class="ports-dev">${esc(p.device)}</li>` : ""}<li><span>Fan ${p.port}</span><span class="bar"><i style="width:${p.duty}%"></i></span><span class="rpm">${p.rpm.toLocaleString()} rpm</span></li>`).join("")
+                      : `<li class="empty-note">No fans are spinning on the fan controller.</li>`)
+    : channels.length ? ""
+    : `<li class="empty-note">No fan controller is connected directly. Motherboard headers and cooler pumps show up below once LibreHardwareMonitor runs.</li>`);
+  // fans and pumps Airglow drives through LHM are listed below with their own controls; don't list them twice
+  const listed = new Set(channels.map((c) => c.fan_id).filter(Boolean));
+  setHTML($("#other-fans"), (s.fans || []).filter((f) => !listed.has(f.id)).map((f) => `<li><span>${esc(cap(f.name))}</span><span>${f.rpm.toLocaleString()} rpm</span></li>`).join(""));
+  renderChannels(channels, s.online);
+}
+
+// ------------------------------------------------------------ motherboard headers and coolers (through LHM)
+const MODES = [["", "Leave alone"], ["curve", "Follow the curve"], ["steady", "Steady speed"]];
+let chanKey = "";
+
+function channelRow(c) {
+  const mode = c.mode || "";
+  const steady = c.steady ?? (c.pump ? 70 : 50);
+  return `<li class="chan" data-chan="${esc(c.id)}">
+    <div class="chan-name"><strong>${esc(c.name)}${c.pump ? ` <span class="tag">Pump</span>` : ""}</strong><span>${esc(c.device)}</span></div>
+    <span class="bar" title="What it runs at now"><i></i></span><span class="rpm"></span>
+    <select class="select" data-mode aria-label="How ${esc(c.name)} runs">${MODES.map(([v, l]) => `<option value="${v}"${v === mode ? " selected" : ""}>${l}</option>`).join("")}</select>
+    <span class="chan-steady"${mode === "steady" ? "" : " hidden"}><input type="range" min="${S.curves?.min_duty ?? 20}" max="100" step="5" value="${steady}" data-steady aria-label="Steady speed"><output>${steady}%</output></span>
+    <p class="chan-note hint"></p></li>`;
+}
+
+function renderChannels(channels, lhmOnline) {
+  const box = $("#channels");
+  if (!lhmOnline && !channels.length) {
+    setHTML(box, `<h2>Motherboard and cooler fans</h2><p class="hint">Airglow can drive the board's fan headers and the pumps and fans of many liquid coolers through LibreHardwareMonitor, which isn't responding. Set it up in Settings, Helper programs.</p>`);
+    chanKey = "";
+    return;
+  }
+  if (!channels.length) {
+    setHTML(box, `<h2>Motherboard and cooler fans</h2><p class="hint">LibreHardwareMonitor doesn't list any fan it can drive on this PC. Some boards only allow it with the fan headers set to manual or "full speed" in the BIOS.</p>`);
+    chanKey = "";
+    return;
+  }
+  // rebuild the rows only when what they are changes, never under a control you're using
+  const key = JSON.stringify(channels.map((c) => [c.id, c.name, c.device, c.pump, c.mode, c.steady]));
+  if (key !== chanKey && !box.contains(document.activeElement)) {
+    chanKey = key;
+    setHTML(box, `<h2>Motherboard and cooler fans</h2>
+      <p class="hint">Through LibreHardwareMonitor. Fans left alone keep your BIOS or cooler curve. Pumps usually run best at a steady speed. When Airglow quits, they all go back to their own curves.</p>
+      <ul class="chan-list">${channels.map(channelRow).join("")}</ul>`);
+    $$("#channels input[type=range]").forEach(rangeFill);
+  }
+  for (const c of channels) {
+    const row = box.querySelector(`[data-chan="${CSS.escape(c.id)}"]`);
+    if (!row) continue;
+    const now = c.target ?? c.duty;
+    row.querySelector(".bar i").style.width = `${clamp(now ?? 0, 0, 100)}%`;
+    row.querySelector(".rpm").textContent = c.rpm != null ? `${c.rpm.toLocaleString()} rpm` : now != null ? `${Math.round(now)}%` : "";
+    row.querySelector(".chan-note").textContent = c.error ? `LibreHardwareMonitor won't change it: ${c.error}`
+      : c.pump && c.mode === "curve" ? "A pump following the curve slows down when things are cool. Most run best at a steady 60% or more." : "";
+    row.querySelector(".chan-note").classList.toggle("warn", !!c.error || (c.pump && c.mode === "curve"));
+  }
+}
+
+async function saveChannel(row, patch) {
+  const c = (S.state.fans.channels || []).find((x) => x.id === row.dataset.chan);
+  const body = { id: row.dataset.chan, mode: patch.mode ?? c?.mode ?? "", duty: patch.duty ?? +row.querySelector("[data-steady]").value };
+  try {
+    const r = await post("/api/fans/channel", body);
+    S.state.fans.channels = r.channels;
+    chanKey = "";
+    renderPorts();
+    toast(!body.mode ? `${c?.name || "That fan"} keeps its own curve again` : body.mode === "curve" ? `${c?.name || "That fan"} follows the fan curve` : `${c?.name || "That fan"} holds ${body.duty}%`);
+  } catch (err) { fail(err); chanKey = ""; renderPorts(); }
 }
 
 export function renderFans() {
@@ -180,6 +251,20 @@ export function renderFans() {
 
 export function initFans() {
   wireEditor();
+  const box = $("#channels");
+  box.addEventListener("change", (e) => {
+    const row = e.target.closest("[data-chan]");
+    if (!row) return;
+    if (e.target.matches("[data-mode]")) {
+      row.querySelector(".chan-steady").hidden = e.target.value !== "steady";
+      saveChannel(row, { mode: e.target.value });
+    } else if (e.target.matches("[data-steady]")) saveChannel(row, { mode: "steady", duty: +e.target.value });
+  });
+  box.addEventListener("input", (e) => {
+    if (!e.target.matches("[data-steady]")) return;
+    rangeFill(e.target);
+    e.target.nextElementSibling.textContent = `${e.target.value}%`;
+  });
   on("state", () => { if (!$('[data-view="fans"]').hidden) renderFans(); });
   window.addEventListener("beforeunload", (e) => { if (dirty()) e.preventDefault(); });
 }

@@ -3,7 +3,7 @@
   "tools": {
     "lhm": {
       "name": "LibreHardwareMonitor",
-      "purpose": "temperatures, power and fan readings",
+      "purpose": "temperatures, power, and motherboard and cooler fans",
       "version": "0.9.6",
       "licence": "MPL-2.0",
       "home": "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor",

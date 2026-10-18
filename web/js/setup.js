@@ -182,8 +182,9 @@ function home() {
 function coolerNote() {
   const found = G.data.coolers || [];
   if (found.length) {
+    const fans = found.some((c) => c.lhm) ? " Its pump and fans can follow Airglow: pick them on the Fans tab." : "";
     return `<div class="su-cooler">${icon("ring")}<p><b>${found.map((c) => esc(`${c.brand} ${c.name}`)).join(", ")}</b> found over USB.
-      Its lights run through its own USB connection, which Airglow doesn't drive yet; OpenRGB may.</p></div>`;
+      Its lights run through its own USB connection, which Airglow doesn't drive yet; OpenRGB may.${fans}</p></div>`;
   }
   return `<div class="su-cooler">${icon("ring")}<p><b>No USB cooler found.</b> If your CPU cooler or AIO pump has lights, they're on one of the headers above:
     pick <b>Cooler or pump ring</b> there and count its LEDs.</p></div>`;

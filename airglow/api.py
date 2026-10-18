@@ -33,7 +33,8 @@ EFFECT_FRAME_CSP = ("default-src 'none'; script-src 'self' http://127.0.0.1:* ht
                     "connect-src 'none'; img-src 'none'; style-src 'none'; form-action 'none'; frame-ancestors 'self'")
 # Windows' registry can map .js to text/plain, which browsers refuse to run as a module.
 TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
-         ".svg": "image/svg+xml", ".ico": "image/x-icon", ".png": "image/png", ".json": "application/json"}
+         ".svg": "image/svg+xml", ".ico": "image/x-icon", ".png": "image/png", ".json": "application/json",
+         ".woff2": "font/woff2"}
 
 
 class ApiError(Exception):
@@ -279,6 +280,13 @@ def _coolers():
     return _COOLERS["found"]
 
 
+def _lit_vendors(ctrl, store):
+    """Lower-case vendors of the devices with a zone switched on."""
+    zones = store.zones()
+    return {(d.vendor or "").lower() for d in ctrl.manager.all().values()
+            if any((zones.get(f"{d.id}/{z.id}") or {}).get("enabled") for z in d.zones)}
+
+
 def _setup_pending(ctrl, store):
     return lightsetup.pending(store, [d.info() for d in ctrl.manager.all().values()])
 
@@ -297,7 +305,8 @@ def route(server, method, path, body, query=None):
             return {**ctrl.snapshot(), "temp_unit": store.settings()["temp_unit"], "zones_rev": store.zones_rev,
                     "onboarded": store.state.get("onboarded", False),
                     "online_asked": store.state.get("online_asked", False),
-                    "update": server.updater.status() if server.updater else None, "conflicts": conflicts.detect(),
+                    "update": server.updater.status() if server.updater else None,
+                    "conflicts": conflicts.detect(_lit_vendors(ctrl, store)),
                     "studio": studio.HOST.status(),
                     "setup_pending": lightsetup.pending_count(store, [d.info() for d in ctrl.manager.all().values()]),
                     "readings": ctrl.readings_for(store.tracked_sensors())}
@@ -356,6 +365,14 @@ def route(server, method, path, body, query=None):
     if path == "/api/fan_curve":
         ctrl.set_fan_curve(body.get("name"))
         return {"ok": True}
+    if path == "/api/fans/channel":
+        sid, mode = body.get("id"), body.get("mode")
+        cfg = None if mode in (None, "", "off") else {"mode": mode, "duty": body.get("duty", 60)}
+        if cfg and sid not in {c["id"] for c in ctrl.fan_channels}:
+            raise ApiError(404, "LibreHardwareMonitor doesn't list that fan right now.")
+        store.set_fan_channel(sid, cfg)
+        ctrl.fan_channels_changed()
+        return {"channels": ctrl.fan_channels}
     if path == "/api/presets":
         presets = store.set_presets(body.get("presets"))
         ctrl.presets_changed()

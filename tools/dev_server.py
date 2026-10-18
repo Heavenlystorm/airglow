@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -73,6 +74,10 @@ def sample_rig():
 
 # ---------------------------------------------------------------- made-up LibreHardwareMonitor data (--demo)
 
+# fan and pump controls the demo LHM was told to set (POST /Sensor?action=Set), like LHM's own Control.SetSoftware
+DEMO_CONTROLS = {}
+
+
 def demo_tree(t):
     """A LibreHardwareMonitor data.json with readings that drift like a PC under a light load."""
     wave = lambda period, lo, hi: lo + (hi - lo) * (0.5 + 0.5 * math.sin(t * 2 * math.pi / period))  # noqa: E731
@@ -85,6 +90,14 @@ def demo_tree(t):
 
     def group(name, *c):
         return {"Text": name, "Value": "", "Children": list(c)}
+
+    def control(name, default, sid):
+        v = DEMO_CONTROLS.get(sid, default)
+        return {"Text": name, "Value": f"{v:.1f} %", "SensorId": sid, "Type": "Control", "Children": []}
+
+    def rpm(name, sid, ctl, default, full):
+        return {"Text": name, "Value": f"{jitter(full * DEMO_CONTROLS.get(ctl, default) / 100, 8):.0f} RPM",
+                "SensorId": sid, "Type": "Fan", "Children": []}
 
     def hw(name, hid, img, *groups):
         return {"Text": name, "Value": "", "HardwareId": hid, "ImageURL": f"images_icon/{img}", "Children": list(groups)}
@@ -103,6 +116,20 @@ def demo_tree(t):
            group("Fans", sensor("GPU Fan 1", jitter(wave(140, 900, 1300), 20), "RPM", "/gpu-nvidia/0/fan/1"))),
         hw("Sample NVMe SSD", "/nvme/0", "hdd.png",
            group("Temperatures", sensor("Composite Temperature", jitter(44, 0.4), "°C", "/nvme/0/temperature/0"))),
+        hw("Sample Motherboard", "/motherboard", "mainboard.png",
+           hw("Nuvoton NCT6798D", "/lpc/nct6798d/0", "chip.png",
+              group("Fans", rpm("Fan #1", "/lpc/nct6798d/0/fan/0", "/lpc/nct6798d/0/control/0", 45, 1500),
+                    rpm("Fan #2", "/lpc/nct6798d/0/fan/1", "/lpc/nct6798d/0/control/1", 40, 1400),
+                    rpm("Fan #3", "/lpc/nct6798d/0/fan/2", "/lpc/nct6798d/0/control/2", 40, 1400)),
+              group("Controls", control("Fan #1", 45, "/lpc/nct6798d/0/control/0"),
+                    control("Fan #2", 40, "/lpc/nct6798d/0/control/1"),
+                    control("Fan #3", 40, "/lpc/nct6798d/0/control/2")))),
+        hw("Nzxt Kraken Z", "/nzxt/krakenz/0", "fan.png",
+           group("Temperatures", sensor("Liquid", jitter(wave(200, 30, 34), 0.1), "°C", "/nzxt/krakenz/0/temperature/0")),
+           group("Controls", control("Pump Control", 60, "/nzxt/krakenz/0/control/0"),
+                 control("Fans Control", 40, "/nzxt/krakenz/0/control/1")),
+           group("Fans", rpm("Pump", "/nzxt/krakenz/0/fan/0", "/nzxt/krakenz/0/control/0", 60, 2800),
+                 rpm("Fans", "/nzxt/krakenz/0/fan/1", "/nzxt/krakenz/0/control/1", 40, 1800))),
     ]}]}
 
 
@@ -112,6 +139,18 @@ def serve_demo_lhm():
             body = json.dumps(demo_tree(time.time())).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):                     # LHM's /Sensor?action=Set&id=...&value=<percent or null>
+            q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(self.path).query))
+            if q.get("value") == "null":
+                DEMO_CONTROLS.pop(q.get("id"), None)
+            else:
+                DEMO_CONTROLS[q.get("id")] = float(q.get("value", 0))
+            body = b'{"result": "ok"}'
+            self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

@@ -65,7 +65,7 @@ class Tray:
             lines.append("   ".join(f"{m.get('short', m['name'])} {sensors.fmt(m, m['value'], f)}" for m in pins[:2]))
             if len(pins) > 2:
                 lines.append("   ".join(f"{m.get('short', m['name'])} {sensors.fmt(m, m['value'], f)}" for m in pins[2:4]))
-        if c.fan_duty is not None and c.hub:
+        if c.fan_duty is not None and c.drives_fans:
             curve = curve_label(c.effective_curve, self.store.get_presets(), c.trial)
             lines.append(f"{curve} fans at {c.fan_duty}%")
         if self.updater and self.updater.state == "ready":

@@ -13,7 +13,7 @@ from . import paths
 log = logging.getLogger(__name__)
 
 COLOR_ORDERS = ("RGB", "RBG", "BGR", "BRG", "GBR", "GRB")
-TEMP_SOURCES = ("max", "cpu", "gpu")
+TEMP_SOURCES = ("max", "cpu", "gpu", "liquid")    # liquid: an AIO's or custom loop's coolant, when LHM reads one
 MIN_FAN_DUTY = 20          # below this some fans stall
 SAFETY_TEMP = 90           # at or above this the hub fans run at 100% whatever the curve says
 PERIPHERAL_TYPES = {"Keyboard", "Mouse", "Mouse mat", "Headset", "Headset stand", "Gamepad", "Microphone", "Keypad"}
@@ -44,6 +44,7 @@ DEFAULT_CONFIG = {
     "fan_curves": DEFAULT_CURVES,
     "zones": {},
     "device_params": {},      # device id -> plugin settings (validated against the plugin's PARAMETERS on save)
+    "fan_channels": {},       # LHM control sensor id -> {"mode": "curve"|"steady", "duty"}; missing: left alone
 }
 
 DEFAULT_PRESETS = [
@@ -135,7 +136,7 @@ def validate_settings(patch):
     for key, value in patch.items():
         if key == "temp_source":
             if value not in TEMP_SOURCES:
-                raise ValueError("temperature source must be max, cpu or gpu")
+                raise ValueError("temperature source must be max, cpu, gpu or liquid")
             out[key] = value
         elif key == "temp_unit":
             if value not in ("C", "F"):
@@ -269,6 +270,8 @@ def validate_zone(cfg, max_leds):
     if order not in COLOR_ORDERS:
         raise ValueError(f"colour order must be one of {', '.join(COLOR_ORDERS)}")
     override = cfg.get("override")
+    if override and not isinstance(override, dict):
+        raise ValueError("a zone's own effect must be an object")
     if override:
         override = {"effect": override.get("effect"), "params": effects.clean_params(override.get("effect"), override.get("params"))}
     out = {"name": name, "enabled": bool(cfg.get("enabled", True)), "order": order, "override": override or None,
@@ -376,15 +379,43 @@ def _expected_leds(z):
     return max(leds, 1)
 
 
+FAN_ROWS = 4                # fans stacked in one column of the default layout, like a front intake
+
+
+def _fan_bits(col, row, fans):
+    return ((1 << min(fans, FAN_ROWS)) - 1) << (col * FAN_ROWS + row)
+
+
+def _fan_slot(used, fans):
+    """(column, first row) for a fan zone: the first gap of enough rows in the columns placed so far (used is a
+    bit per column row). A zone never splits over two columns, so a chain of three fans stays together instead of
+    overlapping the next zone, and a single fan fills the gap under a kit."""
+    col = 0
+    while True:
+        for row in range(FAN_ROWS - min(fans, FAN_ROWS) + 1):
+            if not used & _fan_bits(col, row, fans):
+                return col, row
+        col += 1
+
+
+def _slots_after(role, n, z, leds):
+    """A role's slot state once this zone is placed at n: a count, or for fans the rows now taken."""
+    if role != "fans":
+        return n + 1
+    fans = _fan_split(z, leds)[0]
+    return n | _fan_bits(*_fan_slot(n, fans), fans)
+
+
 def _place(role, n, z, leds, geometry):
     """Lay zones out like a PC seen from the side: front fans in a column on the left, the graphics card low in
     the middle, board and strips around it, peripherals parked below the case."""
     if role == "fans":
         fans, per = _fan_split(z, leds)
         size = 0.18
+        col, row = _fan_slot(n, fans)
         layout = geometry.default_layout("fans", per)
-        layout.update(fans=fans, leds_per_fan=per, size=size, angle=90,
-                      x=round(0.22 + 0.24 * (n // 3), 3), y=round(0.2 + 0.3 * (n % 3), 3))
+        layout.update(fans=fans, leds_per_fan=per, size=size, angle=90, x=round(0.22 + 0.24 * col, 3),
+                      y=round(0.14 + 0.24 * (row + (min(fans, FAN_ROWS) - 1) / 2), 3))
         return layout
     if z.get("shape") == "matrix" and z.get("matrix") and leds:
         layout = _matrix_layout(z, leds, geometry)
@@ -479,6 +510,13 @@ class Store:
                 cfg["zones"] = {k: v for k, v in value.items() if isinstance(v, dict) and "layout" in v}
             elif key == "device_params" and isinstance(value, dict):
                 cfg["device_params"] = {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, dict)}
+            elif key == "fan_channels" and isinstance(value, dict):
+                from . import lhmfans
+                for sid, ch in list(value.items())[:lhmfans.MAX_CHANNELS]:
+                    try:
+                        cfg["fan_channels"][lhmfans.validate_id(sid)] = lhmfans.validate(ch)
+                    except ValueError as e:
+                        log.warning("ignoring fan setting for %s: %s", sid, e)
             elif key == "port":
                 cfg["port"] = value if isinstance(value, int) and 1024 <= value <= 65535 else cfg["port"]
             elif key in DEFAULT_CONFIG:
@@ -529,7 +567,7 @@ class Store:
     # -- settings / curves
     def settings(self):
         with self._lock:
-            return {k: v for k, v in self.config.items() if k not in ("fan_curves", "zones", "schema")}
+            return {k: v for k, v in self.config.items() if k not in ("fan_curves", "zones", "schema", "fan_channels")}
 
     def update_settings(self, patch):
         clean = validate_settings(patch)
@@ -570,6 +608,26 @@ class Store:
             self.zones_rev += 1
         return clean
 
+    # -- fans and pumps driven through LibreHardwareMonitor
+    def fan_channels(self):
+        """sensor id -> {"mode", "duty"} for every channel Airglow drives (read-only; use set_fan_channel)."""
+        return self.config["fan_channels"]
+
+    def set_fan_channel(self, sensor_id, cfg):
+        """cfg None: leave the channel alone again (its BIOS or cooler curve)."""
+        from . import lhmfans
+        sid = lhmfans.validate_id(sensor_id)
+        clean = lhmfans.validate(cfg) if cfg is not None else None
+        with self._lock:
+            channels = {k: v for k, v in self.config["fan_channels"].items() if k != sid}
+            if clean is not None:
+                if len(channels) >= lhmfans.MAX_CHANNELS:
+                    raise ValueError(f"Airglow drives up to {lhmfans.MAX_CHANNELS} fans this way")
+                channels[sid] = clean
+            self.config["fan_channels"] = channels
+            self._write("config.json", self.config)
+        return clean
+
     # -- device plugin settings
     def device_params(self):
         """device id -> saved plugin settings (read-only; use set_device_params to change)."""
@@ -607,7 +665,8 @@ class Store:
                                     or cfg["layout"]["shape"] != z["shape"]):
                 stale.add(key)
             else:
-                slots[_role(d, z)] += 1
+                role = _role(d, z)
+                slots[role] = _slots_after(role, slots[role], z, z["default_leds"])
         for d, z in all_zones:
             key = f"{d['id']}/{z['id']}"
             if key in existing and key not in stale:
@@ -615,7 +674,7 @@ class Store:
             leds = z["default_leds"]
             role = _role(d, z)
             layout = _place(role, slots[role], z, leds, geometry)
-            slots[role] += 1
+            slots[role] = _slots_after(role, slots[role], z, leds)
             order = "RGB"
             enabled = leds > 0 and d.get("type") not in PERIPHERAL_TYPES
             name = z["name"] if d["kind"] == "native" else _short_name(d, z, len([1 for dd, _ in all_zones if dd is d]))

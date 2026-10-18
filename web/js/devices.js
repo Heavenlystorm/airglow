@@ -20,7 +20,9 @@ function devices() {
 function renderList() {
   const devs = devices();
   const native = devs.filter((d) => d.kind === "native"), orgb = devs.filter((d) => d.kind === "openrgb");
-  if (!current && devs.length) current = devs[0].id;
+  const dyn = devs.filter((d) => d.kind === "dynamic");
+  // the selected device went away (unplugged, OpenRGB closed): show another one instead of an empty page
+  if ((!current || (current !== "openrgb" && !devs.some((d) => d.id === current))) && devs.length) current = devs[0].id;
   const item = (d) => {
     const lit = d.zones.filter((z) => z.config.enabled).length;
     const sub = d.online ? `${d.type}, ${lit} of ${d.zones.length} zone${d.zones.length === 1 ? "" : "s"} lit` : (d.error || "Not connected");
@@ -33,7 +35,8 @@ function renderList() {
     ${native.length ? `<h2>Connected directly</h2>${native.map(item).join("")}` : ""}
     <h2>Through OpenRGB</h2>${orgb.map(item).join("")}
     <button class="dev-item" role="option" data-dev="openrgb" aria-selected="${current === "openrgb"}">
-      <i class="dot ${o.status?.startsWith("Connected") ? "on" : ""}"></i><span>${orgb.length ? "OpenRGB connection" : "Add more devices"}</span><span class="sub">${esc(o.status || "")}</span></button>`);
+      <i class="dot ${o.status?.startsWith("Connected") ? "on" : ""}"></i><span>${orgb.length ? "OpenRGB connection" : "Add more devices"}</span><span class="sub">${esc(o.status || "")}</span></button>
+    ${dyn.length ? `<h2>Through Windows Dynamic Lighting</h2>${dyn.map(item).join("")}` : ""}`);
 }
 
 function zoneCard(z) {
@@ -48,7 +51,7 @@ function zoneCard(z) {
       <label>Shape<select class="select" data-f="shape"><option value="fans"${L.shape === "fans" ? " selected" : ""}>Fans</option><option value="strip"${L.shape === "strip" ? " selected" : ""}>Strip</option>${grid ? `<option value="matrix"${L.shape === "matrix" ? " selected" : ""}>Grid</option>` : ""}</select></label>
       ${L.shape === "fans"
         ? `<label>Fans<input class="text num" type="number" min="1" max="12" data-f="fans" value="${L.fans}"></label>
-           <label>LEDs per fan<input class="text num" type="number" min="1" max="64" data-f="leds_per_fan" value="${L.leds_per_fan}"></label>`
+           <label>LEDs per fan<input class="text num" type="number" min="1" max="128" data-f="leds_per_fan" value="${L.leds_per_fan}"></label>`
         : L.shape === "matrix"
         ? `<span class="hint">${L.rows} × ${L.cols} grid, as OpenRGB lays it out</span>`
         : `<label>LEDs<input class="text num" type="number" min="1" max="${max}" data-f="leds" value="${L.leds}"></label>`}
@@ -80,7 +83,7 @@ function renderDetail() {
     setHTML(box, `<div><h1>No devices yet</h1><p class="lede">Airglow looks for NZXT Control Hubs and ASUS Aura boards over USB, and for everything else through OpenRGB. Pick <b>Add more devices</b> to set that up.</p></div>`);
     return;
   }
-  const how = d.kind === "native" ? "Direct USB connection" : "Through OpenRGB";
+  const how = { native: "Direct USB connection", openrgb: "Through OpenRGB", dynamic: "Through Windows Dynamic Lighting, lit while Airglow's window is in front" }[d.kind] || "";
   setHTML(box, `<div class="dev-head"><div><h1>${esc(d.name)}</h1><p class="meta">${esc(d.vendor)}, ${esc(d.type)}. ${how}.${d.online ? "" : ` <span style="color:var(--warm)">${esc(d.error || "Not connected")}</span>`}</p></div></div>
     ${d.experimental ? `<p class="hint warn"><b>Experimental support.</b> This controller follows the same protocol as ones Airglow is tested with, but nobody has confirmed it with Airglow yet.${d.note ? ` ${esc(d.note)}` : ""} If something looks wrong, save a diagnostics report (Settings, About) and open an issue.</p>` : ""}
     <p class="hint">Set how many LEDs each zone has and their shape, so effects line up. If you're not sure, press Identify: the first LED blinks green, then a white dot walks through every LED in order.</p>
@@ -173,7 +176,7 @@ export function initDevices() {
         const total = c.layout.shape === "fans" ? c.layout.fans * c.layout.leds_per_fan : c.layout.leds;
         const grid = S.zones?.zones.find((x) => x.key === key)?.zone.matrix;
         c.layout = v === "fans"
-          ? { ...c.layout, shape: "fans", fans: 1, leds_per_fan: Math.max(1, Math.min(total, 64)), size: 0.16 }
+          ? { ...c.layout, shape: "fans", fans: 1, leds_per_fan: Math.max(1, Math.min(total, 128)), size: 0.16 }
           : v === "matrix" && grid
           ? { ...c.layout, shape: "matrix", leds: Math.max(1, total), rows: grid.rows, cols: grid.cols, map: grid.map, length: 0.6 }
           : { ...c.layout, shape: "strip", leds: Math.max(1, total), length: 0.9 };

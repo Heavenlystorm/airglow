@@ -1,4 +1,5 @@
-"""Orchestrates everything: devices, the lighting engine, automations, sensors and the NZXT hub fans.
+"""Orchestrates everything: devices, the lighting engine, automations, sensors and the fans (native fan
+controllers, and the motherboard headers and coolers LibreHardwareMonitor drives).
 
 "Base" is what the user set by hand; automations, sleep and lock lay overrides on top. The effective scene
 and fan curve are recomputed whenever any of those change.
@@ -9,8 +10,8 @@ import logging
 import threading
 import time
 
-from . import automation, devices, fancontrol, fans, sensors, system, tools
-from .config import validate_scene
+from . import automation, devices, fancontrol, fans, lhmfans, sensors, system, tools
+from .config import SAFETY_TEMP, validate_scene
 from .hw import DeviceManager
 from .history import SensorHistory
 from .lighting.engine import Engine
@@ -27,7 +28,7 @@ class Controller:
     STARTUP_GRACE = 45.0
 
     def __init__(self, store, manager=None, read_sensors=None, signals=None, start_power_events=False,
-                 async_writes=True):
+                 async_writes=True, read_flat=None, lhm_fans=None):
         self.store = store
         self.manager = manager or DeviceManager()
         if hasattr(self.manager, "dynamic_enabled"):
@@ -38,6 +39,10 @@ class Controller:
         self.base_curve = s["fan_curve"] if self.curve_points(s["fan_curve"]) else "balanced"
         self.active_preset = s["active_preset"]
         self._read_sensors = read_sensors        # tests pass a summary; normally the full LHM tree is read
+        self._read_flat = read_flat              # tests: LHM's sensors as sensors.flatten() gives them
+        self._flat = []                          # the last LHM sensor list (fan channels come from it)
+        self.lhm_fans = lhm_fans or lhmfans.LhmFans(lambda: store.settings()["lhm_url"], tools.lhm_headers)
+        self.fan_channels = []                   # what LHM can drive, with what Airglow does with each
         self._system = sensors.SystemSensors()
         self.sensors = dict(sensors.OFFLINE)
         self.readings = {}                        # every sensor by id: {name, group, kind, unit, value}
@@ -255,6 +260,7 @@ class Controller:
     def _on_resume(self):
         log.info("system woke up")
         self.sleeping = False
+        self.lhm_fans.resend_all()                # firmware may have taken the headers back while asleep
         self.manager.reset(self.store.openrgb_enabled())
         self.engine.invalidate()
         self.apply()
@@ -294,6 +300,11 @@ class Controller:
         hubs = self.hubs
         return hubs[0] if hubs else None
 
+    @property
+    def drives_fans(self):
+        """Some fan follows Airglow: a native fan controller, or a channel driven through LibreHardwareMonitor."""
+        return bool(self.hubs) or any(c["mode"] for c in self.fan_channels)
+
     @staticmethod
     def _hub_ports(hub):
         # Every port, not only fans reporting RPM: a fan that stalled at a low speed reads 0 and would otherwise
@@ -315,6 +326,11 @@ class Controller:
             target = fans.lowest_duty(curve)
         else:
             target = fans.target_duty(curve, temp, cfg["fan_failsafe_duty"])
+        # "full speed at 90 °C" holds for the hottest part, not only the one the curve follows (the coolant stays
+        # cool while a processor whose pump has stopped overheats)
+        hottest = fans.source_temp(self.sensors, "max")
+        if hottest is not None and hottest >= SAFETY_TEMP:
+            target = 100
         duty = fans.step_toward(self.fan_duty, target, cfg["fan_max_step"])
         self.fan_temp, self.fan_target, self.fan_duty = temp, round(target), duty
         for dev, hub in self._fan_devices():
@@ -323,6 +339,32 @@ class Controller:
                 hub.set_fan_duty({p: duty for p in self._hub_ports(hub)})
             except (devices.DeviceError, OSError) as e:
                 log.warning("%s fans: %s", dev.name, e)
+        self._run_lhm_fans(duty, temp, cfg["fan_failsafe_duty"], grace=temp is None and not self._temp_seen
+                           and time.monotonic() - self._started < self.STARTUP_GRACE, hottest=hottest)
+
+    def _run_lhm_fans(self, duty, temp, failsafe, grace=False, hottest=None):
+        """Motherboard headers, pumps and cooler fans through LibreHardwareMonitor: the ones you chose follow the
+        curve's speed or hold their own. While LHM isn't answering nothing is sent (each try would stall this
+        loop), and everything is sent again once it's back."""
+        chosen = self.store.fan_channels()
+        found = lhmfans.channels(self._flat)
+        targets = {}
+        for ch in found:
+            c = chosen.get(ch["id"])
+            if not c:
+                continue
+            if c["mode"] == "curve":
+                targets[ch["id"]] = duty
+            else:
+                targets[ch["id"]] = c["duty"] if grace else fans.steady_duty(c["duty"], temp, failsafe, hottest)
+        if self._flat:
+            self.lhm_fans.apply(targets)
+        else:
+            self.lhm_fans.resend_all()
+        errors = self.lhm_fans.errors
+        self.fan_channels = [{**ch, "mode": (chosen.get(ch["id"]) or {}).get("mode"),
+                              "steady": (chosen.get(ch["id"]) or {}).get("duty"), "target": targets.get(ch["id"]),
+                              "error": errors.get(ch["id"])} for ch in found]
 
     def failsafe(self):
         duty = self.store.settings()["fan_failsafe_duty"]
@@ -332,25 +374,43 @@ class Controller:
                 log.info("%s fans set to failsafe %d%%", dev.name, duty)
             except (devices.DeviceError, OSError) as e:
                 log.error("could not set failsafe fan speed on %s: %s", dev.name, e)
+        # LHM channels Airglow drives: at least the failsafe speed (a pump held faster keeps its speed)
+        n = self.lhm_fans.failsafe(duty)
+        if n:
+            log.info("%d fan%s through LibreHardwareMonitor set to at least %d%%", n, "" if n == 1 else "s", duty)
+
+    def fan_channels_changed(self):
+        """A channel's setting changed: show it right away; the next fan tick sends it."""
+        chosen = self.store.fan_channels()
+        self.fan_channels = [{**c, "mode": (chosen.get(c["id"]) or {}).get("mode"),
+                              "steady": (chosen.get(c["id"]) or {}).get("duty")} for c in self.fan_channels]
+
+    def release_fans(self):
+        """Quitting: fans driven through LHM go back to the BIOS or the cooler's own curve."""
+        try:
+            self.lhm_fans.release_all()
+        except Exception:
+            log.exception("could not hand fans back to their own control")
 
     # ------------------------------------------------------------ sensors
     def _poll_sensors(self):
         if self._read_sensors:
-            summary, flat = self._read_sensors(), []
+            summary, flat = self._read_sensors(), (self._read_flat() if self._read_flat else [])
         else:
             tree = sensors.read_tree(self.store.settings()["lhm_url"], headers=tools.lhm_headers())
             flat = sensors.flatten(tree) if tree else []
             summary = sensors.summary(flat) if tree else dict(sensors.OFFLINE)
         self.sensors = summary
+        self._flat = flat
         return flat
 
     def _app_readings(self):
         hubs = self.hubs
-        hub = bool(hubs)
         rpms = [h.fans[i]["rpm"] for h in hubs for i in h.connected_fans()]
+        rpms += [c["rpm"] for c in self.fan_channels if c["mode"] == "curve" and c["rpm"]]
         return [
             sensors._meta("app/fan_duty", "Case fan speed", "Fans", "control", "%",
-                          self.fan_duty if hub else None, short="Fans"),
+                          self.fan_duty if self.drives_fans else None, short="Fans"),
             sensors._meta("app/fan_rpm", "Case fan RPM", "Fans", "fan", "RPM",
                           round(sum(rpms) / len(rpms)) if rpms else None, short="Fan RPM"),
         ]
@@ -455,6 +515,7 @@ class Controller:
             self._thread.join(timeout=self.TICK + 1)
         self.engine.stop()
         self.failsafe()
+        self.release_fans()
         self.manager.close()
         log.info("controller stopped")
 
@@ -482,7 +543,8 @@ class Controller:
                      "target": self.fan_target, "duty": self.fan_duty,
                      "ports": [{"port": i + 1, "device": d.name, **h.fans[i]}
                                for d, h in fan_devs for i in h.connected_fans()],
-                     "hub_online": bool(fan_devs)},
+                     "hub_online": bool(fan_devs),
+                     "channels": self.fan_channels},
             "sensors": self.sensors,
             "devices": devs,
             "openrgb": {"enabled": self.store.openrgb_enabled(), "status": self.manager.bridge.status},

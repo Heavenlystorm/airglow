@@ -10,6 +10,8 @@ import numpy as np
 
 CANVAS_W, CANVAS_H = 1.6, 1.0
 SHAPES = ("fans", "strip", "matrix")
+MAX_LEDS = 2048                  # one zone: long OpenRGB strips (WLED, E1.31) and big grids go past a few hundred
+MAX_LEDS_PER_FAN = 128
 
 
 def total_leds(layout):
@@ -98,10 +100,10 @@ def validate_layout(layout, max_leds):
            "angle": num("angle", -360, 360, 0), "reverse": bool(layout.get("reverse", False))}
     if out["shape"] == "fans":
         out["fans"] = num("fans", 1, 12, 1, integer=True)
-        out["leds_per_fan"] = num("leds_per_fan", 1, 64, 8, integer=True)
+        out["leds_per_fan"] = num("leds_per_fan", 1, MAX_LEDS_PER_FAN, 8, integer=True)
         out["size"] = num("size", 0.05, 0.5, 0.16)
     elif out["shape"] == "matrix":
-        out["leds"] = num("leds", 1, 1024, 1, integer=True)
+        out["leds"] = num("leds", 1, MAX_LEDS, 1, integer=True)
         out["rows"] = num("rows", 1, 64, 1, integer=True)
         out["cols"] = num("cols", 1, 128, 1, integer=True)
         out["length"] = num("length", 0.05, 2.0, 0.6)
@@ -113,7 +115,7 @@ def validate_layout(layout, max_leds):
         except (TypeError, ValueError):
             raise ValueError("grid map entries must be LED numbers") from None
     else:
-        out["leds"] = num("leds", 1, 300, 10, integer=True)
+        out["leds"] = num("leds", 1, MAX_LEDS, 10, integer=True)
         out["length"] = num("length", 0.02, 2.0, 0.5)
     if total_leds(out) > max_leds:
         raise ValueError(f"this zone takes at most {max_leds} LEDs (you set {total_leds(out)})")

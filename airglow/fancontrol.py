@@ -4,9 +4,12 @@ import os
 import subprocess
 from pathlib import Path
 
+# the installer's folder (also what winget installs), then a Scoop install and a per-user copy
 GUESSES = [
     Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "FanControl" / "FanControl.exe",
     Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "FanControl" / "FanControl.exe",
+    Path(os.environ.get("SCOOP", Path.home() / "scoop")) / "apps" / "fancontrol" / "current" / "FanControl.exe",
+    Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Programs" / "FanControl" / "FanControl.exe",
 ]
 
 

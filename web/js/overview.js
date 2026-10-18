@@ -293,12 +293,14 @@ function updatePresets(el) {
 
 function updateFans(el) {
   const F = S.state.fans;
-  el.classList.toggle("missing", !F.hub_online);
-  countTo(el.querySelector(".num"), F.duty == null ? "–" : String(F.duty));
-  const rpms = F.ports.map((p) => p.rpm).filter((r) => r > 0);
-  setHTML(el.querySelector(".fan-sub"), F.hub_online
+  const followers = (F.channels || []).filter((c) => c.mode === "curve");     // headers and coolers on the curve
+  const drives = F.hub_online || followers.length > 0;
+  el.classList.toggle("missing", !drives);
+  countTo(el.querySelector(".num"), F.duty == null || !drives ? "–" : String(F.duty));
+  const rpms = [...F.ports.map((p) => p.rpm), ...followers.map((c) => c.rpm)].filter((r) => r > 0);
+  setHTML(el.querySelector(".fan-sub"), drives
     ? (rpms.length ? `${Math.round(rpms.reduce((a, b) => a + b, 0) / rpms.length).toLocaleString()} rpm across ${rpms.length} fan${rpms.length === 1 ? "" : "s"}` : "Fans stopped")
-    : "No NZXT hub connected");
+    : "No fans follow Airglow yet (Fans tab)");
   setHTML(el.querySelector(".fan-curve"), F.curve !== F.base_curve ? `${esc(curveLabel(F.curve))}, by automation` : esc(curveLabel(F.curve)));
   setHTML(el.querySelector(".fan-seg"), Object.keys(S.curves?.curves || {}).map((c) =>
     `<button role="radio" data-curve="${c}" aria-checked="${c === F.base_curve}">${curveLabel(c)}</button>`).join(""));

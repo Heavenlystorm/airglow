@@ -28,7 +28,7 @@ export function sentence(r, html = true, names = {}) {
     idle: () => `When the PC has been idle for ${b(`${w.minutes} minutes`)}`,
     time: () => `Between ${b(w.start)} and ${b(w.end)}${daysText(w.days)}`,
     locked: () => "While the PC is locked",
-    temp_above: () => `When ${b({ max: "the hotter part", cpu: "the processor", gpu: "the graphics card" }[w.source])} is above ${b(tempTxt(w.temp))}`,
+    temp_above: () => `When ${b({ max: "the hotter part", cpu: "the processor", gpu: "the graphics card", liquid: "the coolant" }[w.source])} is above ${b(tempTxt(w.temp))}`,
   }[w.type]();
   const then = {
     preset: () => `use ${b(presetName)}`,
@@ -121,7 +121,7 @@ async function openBuilder(rule, isNew) {
       time: () => `<input class="text" type="time" data-w="start" value="${w.start ?? "23:00"}" style="width:auto"><span>to</span><input class="text" type="time" data-w="end" value="${w.end ?? "07:00"}" style="width:auto">
         <div class="days">${DAYS.map((d, i) => `<button type="button" data-day="${i}" aria-pressed="${(w.days ?? [0, 1, 2, 3, 4, 5, 6]).includes(i)}">${d}</button>`).join("")}</div>`,
       locked: () => "",
-      temp_above: () => `<select class="select" data-w="source" style="width:auto">${[["max", "Hotter part"], ["cpu", "Processor"], ["gpu", "Graphics card"]].map(([v, l]) => `<option value="${v}"${(w.source ?? "max") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
+      temp_above: () => `<select class="select" data-w="source" style="width:auto">${[["max", "Hotter part"], ["cpu", "Processor"], ["gpu", "Graphics card"], ["liquid", "Coolant"]].map(([v, l]) => `<option value="${v}"${(w.source ?? "max") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
         <span>above</span><input class="text" type="number" min="${tempIn(30)}" max="${tempIn(100)}" data-w="temp" value="${tempIn(w.temp ?? 80)}" style="width:80px"><span>°${unitF() ? "F" : "C"}</span>`,
     }[w.type]();
     const thenFields = {
