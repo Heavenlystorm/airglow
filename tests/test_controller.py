@@ -23,10 +23,18 @@ class ControllerTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_tick_runs_fans_on_connected_ports_and_records_history(self):
+    def test_tick_runs_fans_on_every_port_and_records_history(self):
         self.ctrl.tick()
-        self.assertEqual(set(self.nzxt.hub.duties[-1]), {0, 1, 4})
+        self.assertEqual(set(self.nzxt.hub.duties[-1]), {0, 1, 2, 3, 4})
         self.assertEqual(len(self.ctrl.history), 1)
+
+    def test_a_stalled_fan_still_gets_full_speed_when_hot(self):
+        self.nzxt.hub.fans[1]["rpm"] = 0                     # stopped at a low speed: reads 0 RPM
+        self.temps["cpu_temp"] = 95.0
+        self.ctrl.tick()
+        self.assertEqual(self.nzxt.hub.duties[-1][1], 100)
+        self.ctrl.failsafe()
+        self.assertEqual(self.nzxt.hub.duties[-1][1], self.store.settings()["fan_failsafe_duty"])
 
     def test_new_zones_get_default_settings(self):
         zones = self.store.zones()
@@ -172,7 +180,7 @@ class ControllerTests(unittest.TestCase):
         time.sleep(0.4)
         self.ctrl.shutdown()
         failsafe = self.store.settings()["fan_failsafe_duty"]
-        self.assertIn({0: failsafe, 1: failsafe, 4: failsafe}, self.nzxt.hub.duties)
+        self.assertIn({p: failsafe for p in range(5)}, self.nzxt.hub.duties)
 
     def test_snapshot_shape(self):
         self.ctrl.tick()
