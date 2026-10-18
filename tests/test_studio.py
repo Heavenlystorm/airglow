@@ -175,6 +175,33 @@ class LibraryTests(unittest.TestCase):
             self.assertNotIn("fx:me.nothing", effects.EFFECTS)
         self.assertIn("rainbow", effects.EFFECTS)
 
+    def test_the_engine_looks_at_an_effects_file_at_most_once_a_second(self):
+        self.lib.save_mine(builder())
+        now = [100.0]
+        with (mock.patch.object(studio.HOST, "_library", self.lib), mock.patch.object(studio, "_looked_up", {}),
+              mock.patch.object(studio.time, "monotonic", lambda: now[0]),
+              mock.patch.object(self.lib, "get", wraps=self.lib.get) as get):
+            first = effects.EFFECTS.get("fx:me.aurora-wave")
+            for _ in range(10):                                          # every zone, every frame
+                self.assertIs(effects.EFFECTS.get("fx:me.aurora-wave"), first)
+            self.assertEqual(get.call_count, 1)
+            self.assertIsNone(effects.EFFECTS.get("fx:me.nothing"))      # a missing one is remembered too
+            self.assertIsNone(effects.EFFECTS.get("fx:me.nothing"))
+            self.assertEqual(get.call_count, 2)
+            self.lib.save_mine(builder(tags=["edited"]), "fx:me.aurora-wave")                # an edit in Airglow
+            get.reset_mock()
+            edited = effects.EFFECTS.get("fx:me.aurora-wave")
+            self.assertIsNot(edited, first)                              # shows at once
+            effects.EFFECTS.get("fx:me.aurora-wave")
+            self.assertEqual(get.call_count, 1)
+            now[0] += studio.RECHECK_SECONDS                             # a file changed by hand: within a second
+            effects.EFFECTS.get("fx:me.aurora-wave")
+            self.assertEqual(get.call_count, 2)
+            self.lib.set_draft(builder())
+            effects.EFFECTS.get(fxlibrary.DRAFT)
+            effects.EFFECTS.get(fxlibrary.DRAFT)
+            self.assertNotIn(fxlibrary.DRAFT, studio._looked_up)          # the Studio's draft is never cached
+
 
 class HostTests(unittest.TestCase):
     def setUp(self):
@@ -331,6 +358,22 @@ class HostTests(unittest.TestCase):
             self.host.tick(2.0)
         self.assertEqual(self.host.problems[self.eff.fx_id]["reason"], "memory")
 
+    def test_packed_frames_set_colours_and_keep_the_host_alive(self):
+        z = self.zone("hub/1")
+        self.host.render(self.eff, z, 0.0, {})
+        self.host.tick(0.0)
+        iid = next(iter(self.host.instances))
+        colours = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255])
+        packed = bytes([len(iid)]) + iid.encode() + len(colours).to_bytes(2, "little") + colours
+        self.now += 3
+        self.host.packed_frames(packed + bytes([2]) + b"i9" + (3).to_bytes(2, "little") + b"\x01")  # a cut-off record
+        self.assertEqual(self.host._last_frame, self.now)
+        np.testing.assert_allclose(self.host.render(self.eff, z, 0.1, {}), np.eye(3))
+        self.now += 3
+        self.host.packed_frames(b"")                                        # nothing changed: still alive
+        self.assertEqual(self.host._last_frame, self.now)
+        np.testing.assert_allclose(self.host.render(self.eff, z, 0.2, {}), np.eye(3))   # the last colours stay
+
     def test_token_is_checked(self):
         self.assertTrue(self.host.check_token(self.host.token))
         self.assertFalse(self.host.check_token("nope"))
@@ -473,6 +516,23 @@ class StudioApiTests(unittest.TestCase):
     def test_host_routes_need_the_token(self):
         self.assertEqual(self.request("POST", "/api/fx/host/frames", {"token": "wrong"})[0], 403)
         self.assertEqual(self.request("GET", "/api/fx/host/stream?token=wrong")[0], 403)
+
+    def test_packed_frames_need_the_token_header(self):
+        import http.client
+
+        def post(token, body=b""):
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            conn.request("POST", "/api/fx/host/frames", body, {
+                "Host": f"127.0.0.1:{self.port}", "X-Airglow": "1", "Content-Type": "application/octet-stream",
+                "X-Airglow-Token": token})
+            r = conn.getresponse()
+            r.read()
+            conn.close()
+            return r.status
+        self.assertEqual(post("wrong", b"\x02i1\x03\x00abc"), 403)
+        with mock.patch.object(studio.HOST, "packed_frames", return_value={"ok": True}) as packed:
+            self.assertEqual(post(studio.HOST.token, b"\x02i1\x03\x00abc"), 200)
+        packed.assert_called_once_with(b"\x02i1\x03\x00abc")
 
     def test_effect_frame_is_locked_down(self):
         import http.client

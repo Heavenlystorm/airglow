@@ -47,5 +47,15 @@ class ReleaseToolTests(unittest.TestCase):
                          "https://github.com/Heavenlystorm/airglow/releases/download/v$version/Airglow-stable-Portable.zip")
 
 
+
+class EntryPointTests(unittest.TestCase):
+    def test_numpy_gets_one_blas_thread(self):
+        """OpenBLAS reads these when numpy is first imported: run.py has to set them before importing Airglow."""
+        src = (Path(__file__).resolve().parent.parent / "run.py").read_text(encoding="utf-8")
+        first_import = src.index("from airglow")
+        for var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS"):
+            self.assertLess(src.index(var), first_import)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -146,6 +146,13 @@ class UpdaterTests(unittest.TestCase):
         u = self.updater(kind="scoop", managers={"stable": [FakeManager("9.0.0")]})
         self.assertEqual(u.check_now()["state"], "idle")
 
+    def test_copies_that_cant_update_say_what_they_are(self):
+        with mock.patch.object(updates.sys, "frozen", False, create=True):
+            self.assertEqual(updates.install_kind(), "source")
+        with (mock.patch.object(updates.sys, "frozen", True, create=True),
+              mock.patch.dict("sys.modules", {"velopack": None})):             # PyInstaller only, no Velopack around it
+            self.assertEqual(updates.install_kind(), "build")
+
     def test_manual_installs_only_report(self):
         manual = mock.Mock(return_value={"newer": True, "latest": "9.0.0", "url": "https://x", "notes": ""})
         u = self.updater(kind="manual", manual_check=manual)

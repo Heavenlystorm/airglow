@@ -10,13 +10,22 @@ const sw = (id, on) => `<label class="switch"><input type="checkbox" id="${id}"$
 // ------------------------------------------------------------ updates
 const ONLINE_HELP = "Looks for updates a minute after Airglow starts and every 6 hours, and downloads them in the background. When this is off, Airglow only goes online when you press a button.";
 
+const RELEASES = `<a href="https://github.com/Heavenlystorm/airglow/releases" target="_blank" rel="noopener">releases page</a>`;
+
+// why this copy can't install the update itself, and where to get it
+function selfUpdate(kind) {
+  if (kind === "source") return `You're running Airglow from source: pull the latest code, or get a release from the ${RELEASES}.`;
+  if (kind === "build") return `This is a build that wasn't installed (like dist\\Airglow from build.ps1), so it can't update itself. Get the new version from the ${RELEASES}.`;
+  return `This copy can't update itself: get the new version from the ${RELEASES}.`;
+}
+
 function updateText(u) {
   switch (u.state) {
     case "checking": return "Checking GitHub for a newer release.";
     case "downloading": return `Downloading Airglow ${esc(u.latest)}: ${u.progress}%.`;
     case "ready": return `Airglow ${esc(u.latest)} is downloaded. It's installed the next time Airglow starts, or now if you restart.`;
     case "latest": return `You have the latest version (${esc(u.current)}).`;
-    case "available": return `Airglow ${esc(u.latest)} is available. This copy can't update itself: download it from the GitHub releases page.`;
+    case "available": return `Airglow ${esc(u.latest)} is available. ${selfUpdate(u.kind)}`;
     case "error": return `The last check didn't work: ${esc(u.error)}`;
     default: return u.kind === "velopack" ? "Checks GitHub for a newer release and installs it." : "Checks GitHub for a newer release.";
   }

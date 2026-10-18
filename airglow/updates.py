@@ -119,14 +119,16 @@ def fetch_meta(url=META_URL, timeout=6, opener=urllib.request.urlopen):
 # ---------------------------------------------------------------- what kind of install this is
 
 def install_kind():
-    """"velopack" (updates itself), "scoop" (Scoop updates it) or "manual" (from source, or a loose build)."""
+    """"velopack" (Setup or the portable zip: updates itself), "scoop" (Scoop updates it), "build" (a PyInstaller
+    build that Velopack didn't pack, such as dist\\Airglow from build.ps1) or "source" (run.py). The last two can
+    only say a newer release is out."""
     if not getattr(sys, "frozen", False):
-        return "manual"
+        return "source"
     try:
         import velopack
         mgr = velopack.UpdateManager(_source(False))
     except (ImportError, RuntimeError):
-        return "manual"
+        return "build"
     if mgr.get_is_portable() and "\\scoop\\apps\\" in str(Path(sys.executable)).lower():
         return "scoop"
     return "velopack"
