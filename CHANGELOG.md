@@ -17,6 +17,10 @@
 - A running GNU C compiler (gcc.exe) is no longer taken for Gigabyte Control Center, so "Close it" can't end it.
   For RGB programs that run as Windows services, Airglow now says to stop them in Services instead of offering to
   close them.
+- Empty NZXT hub channels no longer turn into enabled 40-LED strips on some starts. The hub answers "what's
+  plugged in" about 0.6 seconds after it's asked, and Airglow only waited 0.5; once lighting started, the answer
+  could get lost. Airglow now waits for it, asks again if it doesn't come, and a channel the hub never reported
+  keeps the setup you saved.
 
 ## 1.6.6
 - Fans driven through LibreHardwareMonitor: if a speed change didn't get through (LibreHardwareMonitor busy for a

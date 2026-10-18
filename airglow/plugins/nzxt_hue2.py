@@ -128,6 +128,7 @@ class NzxtDevice(Device):
             self._set_zones(acc if acc is not None else [None] * getattr(self.hub, "led_channels", 5))
             for z in self._zones:
                 z.provisional = waiting
+                z.guessed = acc is None
             self._zones_for = key
         return self._zones
 
