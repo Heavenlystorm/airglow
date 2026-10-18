@@ -25,6 +25,9 @@ and optionally:
     OPENRGB_SKIP_TYPES
                   OpenRGB device types (openrgb.DEVICE_TYPES, e.g. "Motherboard") OPENRGB_SKIP is limited to, so a
                   brand-wide fragment never hides the same brand's other devices. Default: any type.
+    Product.openrgb_detector
+                  the name of OpenRGB's detector for a product. When Airglow's helper setup installs OpenRGB, it
+                  switches off the detectors of controllers Airglow lights on this PC, so OpenRGB never opens them.
     PARAMETERS    per-device settings, in the same schema as effect parameters (types range, choice, toggle,
                   color). The Devices tab draws them; saved values reach the device through Device.set_params().
 
@@ -50,6 +53,8 @@ class Product:
     interface: int | None = None        # the HID interface to use when the controller exposes several
     experimental: bool = False          # same protocol as a tested model, but not confirmed with Airglow yet
     note: str | None = None
+    openrgb_detector: str | None = None # OpenRGB's detector for this controller, switched off when Airglow sets
+                                        # OpenRGB up and lights it itself (several products can share one)
     facts: dict = field(default_factory=dict)    # anything model-specific the plugin needs (channel counts, ...)
 
 

@@ -290,6 +290,57 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(seen.get("Authorization"), "Basic x")
 
 
+class OpenRGBDetectorTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "OpenRGB" / "OpenRGB.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def native(self, plugin, pid, lighting=True):
+        product = next(p for p in plugin.PRODUCTS if p.pid == pid)
+        return SimpleNamespace(product=product, lighting=lighting)
+
+    def test_only_detectors_for_controllers_airglow_lights_are_switched_off(self):
+        from airglow.hw import openrgb_detectors_to_disable
+        from airglow.plugins import asus_aura_usb, nzxt_hue2
+        hub, board = self.native(nzxt_hue2, 0x2022), self.native(asus_aura_usb, 0x19AF)
+        self.assertEqual(openrgb_detectors_to_disable([hub, board]),
+                         ["ASUS Aura Motherboard", "NZXT RGB & Fan Controller 2024"])
+        # a fans-only revision leaves its lighting to OpenRGB, so the detector it shares stays on
+        lit, fans_only = self.native(nzxt_hue2, 0x2009), self.native(nzxt_hue2, 0x2011, lighting=False)
+        self.assertEqual(openrgb_detectors_to_disable([lit, fans_only]), [])
+        self.assertEqual(openrgb_detectors_to_disable([SimpleNamespace(lighting=True)]), [])
+
+    def test_a_new_file_gets_just_the_detectors(self):
+        self.assertTrue(tools.disable_openrgb_detectors(["NZXT Hue 2"], self.path))
+        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")),
+                         {"Detectors": {"detectors": {"NZXT Hue 2": False}}})
+
+    def test_an_existing_file_is_merged(self):
+        self.path.parent.mkdir(parents=True)
+        mine = {"Detectors": {"detectors": {"NZXT Hue 2": True, "Corsair Vengeance": True}, "other": 1},
+                "Server": {"port": 6742}, "ProfileManager": {"open_profile": "Desk"}}
+        self.path.write_text(json.dumps(mine), encoding="utf-8")
+        self.assertTrue(tools.disable_openrgb_detectors(["NZXT Hue 2", "ASUS Aura Motherboard"], self.path))
+        got = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(got["Detectors"], {"detectors": {"NZXT Hue 2": False, "Corsair Vengeance": True,
+                                                          "ASUS Aura Motherboard": False}, "other": 1})
+        self.assertEqual((got["Server"], got["ProfileManager"]), (mine["Server"], mine["ProfileManager"]))
+
+    def test_an_unreadable_file_is_left_alone(self):
+        self.path.parent.mkdir(parents=True)
+        for text in ("{not json", json.dumps({"Detectors": {"detectors": []}}), "[]"):
+            self.path.write_text(text, encoding="utf-8")
+            with self.assertLogs("airglow.tools", "WARNING"):
+                self.assertFalse(tools.disable_openrgb_detectors(["NZXT Hue 2"], self.path))
+            self.assertEqual(self.path.read_text(encoding="utf-8"), text)
+
+    def test_nothing_to_switch_off_writes_nothing(self):
+        self.assertTrue(tools.disable_openrgb_detectors([], self.path))
+        self.assertFalse(self.path.exists())
+
 class SetupFlowTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -302,6 +353,7 @@ class SetupFlowTests(unittest.TestCase):
                    mock.patch.object(tools, "pawnio_needed", return_value=False),
                    mock.patch.object(tools, "vcredist_needed", return_value=False),
                    mock.patch.object(tools, "current_user_sid", return_value="S-1-5-21-9"),
+                   mock.patch.object(tools, "openrgb_settings_file", return_value=self.data / "OpenRGB.json"),
                    mock.patch.object(tools, "download", side_effect=lambda url, dest, *a, **k: Path(dest).write_bytes(b"z") and Path(dest))]
         for p in patches:
             p.start()
@@ -338,6 +390,16 @@ class SetupFlowTests(unittest.TestCase):
         self.assertNotIn(auth["password"], json.dumps(self.store.settings()))  # never in settings or bug reports
         self.assertEqual(self.store.settings()["lhm_url"], tools.LHM_URL)
         self.assertFalse((self.data / "downloads").exists())
+
+    def test_installing_openrgb_switches_off_the_detectors_for_what_airglow_lights(self):
+        from airglow.plugins import nzxt_hue2
+        hub = SimpleNamespace(id="nzxt-hub", lighting=True, product=nzxt_hue2.PRODUCTS[0])
+        self.ctrl.manager.natives = {"nzxt-hub": hub}
+        with mock.patch.object(tools, "run_elevated", side_effect=self.elevated_ok):
+            tools.start_setup(self.ctrl, self.store, ["openrgb"])
+            self.assertEqual(self.wait()["state"], "done")
+        got = json.loads((self.data / "OpenRGB.json").read_text(encoding="utf-8"))
+        self.assertEqual(got["Detectors"]["detectors"], {"NZXT RGB & Fan Controller 2024": False})
 
     def test_saying_no_at_the_prompt_changes_nothing(self):
         with mock.patch.object(tools, "run_elevated", return_value=None):

@@ -26,30 +26,32 @@ _FANS_ONLY = ("Airglow drives its fans only: this revision changed its lighting 
               "and Airglow leaves it to OpenRGB.")
 
 
-def _nzxt(pid, name, leds, fans, experimental=True, note=None):
-    return Product(0x1E71, pid, name, experimental=experimental, note=note,
+def _nzxt(pid, name, leds, fans, detector, experimental=True, note=None):
+    return Product(0x1E71, pid, name, experimental=experimental, note=note, openrgb_detector=detector,
                    facts={"led_channels": leds, "fan_ports": fans})
 
 
+# The fifth value is OpenRGB's detector for that id (NZXTHue2ControllerDetect.cpp): one name covers several ids, and
+# the fans-only revisions share theirs with ones Airglow lights.
 PRODUCTS = [
-    _nzxt(0x2022, "NZXT Control Hub", 5, 5, experimental=False),
-    _nzxt(0x2006, "NZXT Smart Device V2", 2, 3),
-    _nzxt(0x200D, "NZXT Smart Device V2", 2, 3),
-    _nzxt(0x200F, "NZXT Smart Device V2", 2, 3),
-    _nzxt(0x2001, "NZXT HUE 2", 4, 0),
-    _nzxt(0x2002, "NZXT HUE 2 Ambient", 2, 0),
-    _nzxt(0x2009, "NZXT RGB & Fan Controller", 2, 3),
-    _nzxt(0x200E, "NZXT RGB & Fan Controller", 2, 3),
-    _nzxt(0x2010, "NZXT RGB & Fan Controller", 2, 3),
-    _nzxt(0x2011, "NZXT RGB & Fan Controller", 0, 3, note=_FANS_ONLY),
-    _nzxt(0x2019, "NZXT RGB & Fan Controller", 0, 3, note=_FANS_ONLY),
-    _nzxt(0x201F, "NZXT RGB & Fan Controller", 0, 3, note=_FANS_ONLY),
-    _nzxt(0x2020, "NZXT RGB & Fan Controller", 6, 3),
+    _nzxt(0x2022, "NZXT Control Hub", 5, 5, "NZXT RGB & Fan Controller 2024", experimental=False),
+    _nzxt(0x2006, "NZXT Smart Device V2", 2, 3, "NZXT Smart Device V2"),
+    _nzxt(0x200D, "NZXT Smart Device V2", 2, 3, "NZXT Smart Device V2"),
+    _nzxt(0x200F, "NZXT Smart Device V2", 2, 3, "NZXT Smart Device V2"),
+    _nzxt(0x2001, "NZXT HUE 2", 4, 0, "NZXT Hue 2"),
+    _nzxt(0x2002, "NZXT HUE 2 Ambient", 2, 0, "NZXT Hue 2 Ambient"),
+    _nzxt(0x2009, "NZXT RGB & Fan Controller", 2, 3, "NZXT RGB & Fan Controller"),
+    _nzxt(0x200E, "NZXT RGB & Fan Controller", 2, 3, "NZXT RGB & Fan Controller"),
+    _nzxt(0x2010, "NZXT RGB & Fan Controller", 2, 3, "NZXT RGB & Fan Controller"),
+    _nzxt(0x2011, "NZXT RGB & Fan Controller", 0, 3, "NZXT RGB & Fan Controller", note=_FANS_ONLY),
+    _nzxt(0x2019, "NZXT RGB & Fan Controller", 0, 3, "NZXT RGB & Fan Controller", note=_FANS_ONLY),
+    _nzxt(0x201F, "NZXT RGB & Fan Controller", 0, 3, "NZXT RGB & Fan Controller", note=_FANS_ONLY),
+    _nzxt(0x2020, "NZXT RGB & Fan Controller", 6, 3, "NZXT RGB & Fan Controller"),
     # NZXT N7 motherboards' built-in HUE 2 channels (OpenRGB drives them with the same protocol). Lighting only:
     # their fan headers belong to the board's Super I/O chip, which LibreHardwareMonitor drives (Fans tab).
-    _nzxt(0x2005, "NZXT motherboard lighting", 2, 0),
-    _nzxt(0x200B, "NZXT motherboard lighting", 2, 0),
-    _nzxt(0x201B, "NZXT N7 B650E lighting", 6, 0),
+    _nzxt(0x2005, "NZXT motherboard lighting", 2, 0, "NZXT Hue 2 Motherboard"),
+    _nzxt(0x200B, "NZXT motherboard lighting", 2, 0, "NZXT Hue 2 Motherboard"),
+    _nzxt(0x201B, "NZXT N7 B650E lighting", 6, 0, "NZXT B650E Motherboard"),
 ]
 
 # Accessory id (from the hub's LED info report) -> what's plugged in. Unknown accessories fall back to the channel
