@@ -204,6 +204,24 @@ class TrialTests(unittest.TestCase):
         self.assertEqual(self.ctrl.fan_target, 50)
         self.assertEqual(self.store.state["fan_curve"], "profile:neon")   # remembered across restarts
 
+    def test_picking_a_preset_while_trying_ends_the_trial(self):
+        self.ctrl.set_fan_curve("silent")
+        key = "strip/z1"
+        cfg = self.store.zones()[key]
+        mine = {"effect": "solid", "params": {"color": "#abcdef"}}
+        self.store.set_zone(key, {**cfg, "override": mine, "component": {"id": None, "count": 1, "spot": "front"}}, 16)
+        self.ctrl.try_profile(profiles.scene_of(self.shared), "Neon", fan_points=self.shared["fans"]["curve"], clear_zones=[key])
+        night = next(p for p in self.store.get_presets() if p["id"] == "night")
+        self.assertTrue(all(s["ok"] for s in self.ctrl.apply_preset({**night, "fan_curve": None})))  # the tray
+        self.assertIsNone(self.ctrl.trial)
+        self.assertEqual(self.ctrl.active_preset, "night")
+        self.assertEqual(self.ctrl.base_curve, "silent")                  # the tried curve is gone, yours is back
+        self.assertEqual(self.store.zones()[key]["override"], mine)
+        self.assertEqual(self.store.state["active_preset"], "night")      # saved, like any preset you pick
+        self.ctrl.end_trial()                                             # a late Discard has nothing to undo
+        self.assertEqual(self.ctrl.active_preset, "night")
+        self.assertEqual(self.ctrl.base_scene["effect"], night["effect"])
+
     def test_changes_while_trying_are_never_saved(self):
         self.ctrl.set_scene({"effect": "solid", "params": {"color": "#123456"}})
         self.ctrl.set_fan_curve("silent")
