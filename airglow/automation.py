@@ -64,8 +64,8 @@ def validate_rule(r, preset_ids=None, curve_names=None):
         if not 30 <= temp <= 100:
             raise ValueError("temperature must be between 30 and 100 °C")
         src = w.get("source", "max")
-        if src not in ("max", "cpu", "gpu"):
-            raise ValueError("temperature source must be max, cpu or gpu")
+        if src not in ("max", "cpu", "gpu", "liquid"):
+            raise ValueError("temperature source must be max, cpu, gpu or liquid")
         when.update(temp=temp, source=src)
     then = {"type": tt}
     if tt == "preset":
@@ -115,6 +115,8 @@ def is_active(rule, sig, sensors, was_active=False):
         temps = {"cpu": sensors.get("cpu_temp"), "gpu": sensors.get("gpu_temp")}
         known = [v for v in temps.values() if v is not None]
         temp = (max(known) if known else None) if w["source"] == "max" else temps.get(w["source"])
+        if w["source"] == "liquid":
+            temp = sensors.get("liquid_temp")
         limit = w["temp"] - TEMP_HYSTERESIS if was_active else w["temp"]
         return temp is not None and temp >= limit
     return False

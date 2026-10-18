@@ -1,6 +1,7 @@
 import socket
 import struct
 import threading
+import time
 import unittest
 
 from airglow import openrgb
@@ -222,6 +223,21 @@ class ClientTests(unittest.TestCase):
         threading.Thread(target=engine_like_loop, daemon=True).start()
         self.assertTrue(done.wait(5), "client hung while handling a dropped connection")
         self.assertFalse(c.connected)
+
+    def test_a_notification_that_stops_half_way_does_not_hang_the_client(self):
+        """A header with no body after it used to block poll_notifications (and every lighting write) for ever."""
+        srv = FakeServer()
+        srv.start()
+        c = openrgb.OpenRGBClient(port=srv.port, timeout=0.3)
+        c.connect()
+        c.controllers()
+        srv.conn.sendall(openrgb.header(0, openrgb.DEVICE_LIST_UPDATED, 8))      # promises 8 bytes, sends none
+        time.sleep(0.1)
+        done = threading.Event()
+        threading.Thread(target=lambda: (c.poll_notifications(), done.set()), daemon=True).start()
+        self.assertTrue(done.wait(3), "poll_notifications waited for ever on a half-sent packet")
+        self.assertFalse(c.connected)                    # the stream can't be trusted any more: reconnect
+        srv.conn.close()
 
     def test_writing_after_another_thread_closed_is_an_openrgb_error(self):
         """Regression: the device thread closes the connection on a reset after sleep while the lights are mid-frame;

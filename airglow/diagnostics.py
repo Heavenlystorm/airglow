@@ -79,6 +79,7 @@ def report(ctrl, store):
         "conflicts": conflicts.detect(),
     }
     settings = {"settings": store.settings(), "zones": store.zones(), "curves": store.curves(),
+                "fan_channels": store.fan_channels(),
                 "presets": store.get_presets(), "automations": store.get_rules()}
     files = {"about.json": json.dumps(about, indent=2, ensure_ascii=False, default=str),
              "settings.json": json.dumps(settings, indent=2, ensure_ascii=False, default=str)}

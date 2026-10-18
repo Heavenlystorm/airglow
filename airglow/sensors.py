@@ -16,7 +16,7 @@ import urllib.request
 _NUM = re.compile(r"-?\d+(?:[.,]\d+)?")
 _IGPU = re.compile(r"Radeon\(TM\) Graphics|Intel.*(UHD|Iris|Arc\(TM\) Graphics)|Intel\(R\) Graphics", re.I)
 
-OFFLINE = {"online": False, "cpu_temp": None, "gpu_temp": None, "gpu_hotspot": None,
+OFFLINE = {"online": False, "cpu_temp": None, "gpu_temp": None, "gpu_hotspot": None, "liquid_temp": None,
            "cpu_power": None, "gpu_power": None, "total_power": None, "fans": [],
            "cpu_name": None, "gpu_name": None}
 
@@ -81,6 +81,23 @@ def flatten(node, hw=None, hw_name=None, group=None, out=None):
     return out
 
 
+# An AIO's or custom loop's coolant: "Liquid" (NZXT Kraken, MSI CoreLiquid), "Liquid Temperature", "Coolant" or
+# "Water" (Aquacomputer, a board's "Water In" header). Never the processor, graphics card or a drive, whatever their
+# sensors are called, and never a reading no coolant can have: an unplugged probe reads -40 or 127 °C, and fans
+# following that would stay slow.
+_LIQUID = re.compile(r"liquid|coolant|water", re.I)
+LIQUID_RANGE = (5.0, 85.0)
+
+
+def liquid_temp(sensors):
+    lo, hi = LIQUID_RANGE
+    for s in sensors:
+        if (s["type"] in ("temperature", "temperatures") and s["value"] is not None and _LIQUID.search(s["name"])
+                and s["hw"] not in ("cpu", "gpu", "igpu", "storage", "memory", "network") and lo <= s["value"] <= hi):
+            return s["value"]
+    return None
+
+
 def _pick(sensors, hw, type_word, prefer):
     s = _pick_sensor(sensors, hw, type_word, prefer)
     return s["value"] if s else None
@@ -98,9 +115,14 @@ def _pick_sensor(sensors, hw, type_word, prefer):
 def summary(sensors):
     cpu_w = _pick(sensors, "cpu", "power", ["package"])
     gpu_w = _pick(sensors, "gpu", "power", ["gpu package", "gpu power", "board power", "total"])
-    fans = [{"name": ("GPU " + s["name"].replace("GPU ", "").lower()) if s["hw"] == "gpu" else f"Board {s['name'].lower()}",
-             "rpm": round(s["value"])}
-            for s in sensors if s["type"] in ("fan", "fans") and s["value"] and s["hw"] in ("gpu", "board")]
+    def fan_name(s):
+        if s["hw"] == "gpu":
+            return "GPU " + s["name"].replace("GPU ", "").lower()
+        if s["hw"] == "board":
+            return f"Board {s['name'].lower()}"
+        return f"{s['hw_name']} {s['name'].lower()}"            # a cooler or fan hub: "NZXT Kraken Z pump"
+    fans = [{"id": s["id"], "name": fan_name(s), "rpm": round(s["value"])}
+            for s in sensors if s["type"] in ("fan", "fans") and s["value"] and s["hw"] in ("gpu", "board", "other")]
     names = {s["hw"]: s["hw_name"] for s in sensors if s["hw"] in ("cpu", "gpu")}
     return {
         "online": True,
@@ -109,6 +131,7 @@ def summary(sensors):
         "cpu_temp": _pick(sensors, "cpu", "temperature", ["tctl/tdie", "tdie", "package", "core max"]),
         "gpu_temp": _pick(sensors, "gpu", "temperature", ["gpu core", "edge", "core"]),
         "gpu_hotspot": _pick(sensors, "gpu", "temperature", ["hot spot", "hotspot", "junction"]),
+        "liquid_temp": liquid_temp(sensors),
         "cpu_power": cpu_w,
         "gpu_power": gpu_w,
         "total_power": round(cpu_w + gpu_w, 1) if cpu_w is not None and gpu_w is not None else None,
@@ -168,6 +191,7 @@ AUTO = {
     "auto/cpu_temp":    ("Processor temperature", "CPU", "temperature", "°C", _by("cpu", "temperature", ["tctl/tdie", "tdie", "package", "core max"])),
     "auto/gpu_temp":    ("Graphics temperature", "GPU", "temperature", "°C", _by("gpu", "temperature", ["gpu core", "edge", "core"])),
     "auto/gpu_hotspot": ("Graphics hot spot", "GPU hot spot", "temperature", "°C", _by("gpu", "temperature", ["hot spot", "hotspot", "junction"])),
+    "auto/liquid_temp": ("Coolant temperature", "Coolant", "temperature", "°C", lambda flat, sysr: liquid_temp(flat)),
     "auto/cpu_load":    ("Processor load", "CPU load", "load", "%", _either(_first("cpu", "load", "total"), "cpu_load")),
     "auto/gpu_load":    ("Graphics load", "GPU load", "load", "%", _by("gpu", "load", ["gpu core", "d3d 3d"])),
     "auto/cpu_power":   ("Processor power", "CPU power", "power", "W", _by("cpu", "power", ["package"])),

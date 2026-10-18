@@ -49,8 +49,12 @@ or the rest of Airglow. [docs/EFFECT-STUDIO.md](docs/EFFECT-STUDIO.md) has the d
 ![Community effects, each shown on your own case](docs/screenshots/community.png)
 
 ## Fans and automations
-Fan curves are a line you drag into shape. Fans never go below 20 %, and at 90 °C they run at full speed whatever the
-curve says. If the temperature readings stop, the fans go to a failsafe speed until they come back.
+Fan curves are a line you drag into shape, following the processor, the graphics card, whichever is hotter, or the
+coolant of a liquid cooler. Besides the fans on an NZXT hub, Airglow can drive the motherboard's own fan headers and
+the pump and fans of many liquid coolers through LibreHardwareMonitor: each one stays on its BIOS or cooler curve
+until you choose to have it follow the curve or hold a steady speed. Fans never go below 20 %, and at 90 °C they run
+at full speed whatever the curve says. If the temperature readings stop, the fans go to a failsafe speed until they
+come back, and when Airglow quits, the headers and coolers get their own curves back.
 
 Automations are rules that read like sentences: "Between 23:00 and 07:00, turn the lights off", "When
 Cyberpunk2077.exe is running, use Gaming". When a rule stops applying, you get your own settings back. Airglow also
@@ -88,19 +92,21 @@ Windows 10 it usually comes with Edge.
 - Most RGB devices (RAM, graphics cards, keyboards, mice, strips, coolers) go through [OpenRGB](https://openrgb.org).
   Start it with its SDK server on (Settings, SDK Server, Start Server, or run it with `--server`) and they appear in
   Airglow's Devices tab.
-- Motherboard fans are handled by [FanControl](https://getfancontrol.com). Airglow switches its profiles when you
-  switch profiles in Airglow.
+- Motherboard fan headers and the pumps of supported coolers are driven through LibreHardwareMonitor too: pick them
+  on the Fans tab. If you'd rather keep them in [FanControl](https://getfancontrol.com), Airglow switches its
+  profiles when you switch profiles in Airglow.
 </details>
 
 ## Supported hardware
 | Connection | Devices |
 |---|---|
 | Directly over USB | NZXT Control Hub. ASUS Aura USB motherboard controller `0B05:19AF`. |
-| Directly over USB, experimental | NZXT RGB & Fan Controller, Smart Device V2, HUE 2 and HUE 2 Ambient; ASUS Aura motherboard controllers `18F3`, `1939`, `1AA6`, `1BED`. They speak the same protocol as the tested ones but nobody has confirmed them with Airglow yet. If you own one, please [say how it went](CONTRIBUTING.md#reporting-a-problem). |
+| Directly over USB, experimental | NZXT RGB & Fan Controller, Smart Device V2, HUE 2, HUE 2 Ambient and the HUE 2 lighting of NZXT N7 motherboards; ASUS Aura motherboard controllers `18F3`, `1939`, `1AA6`, `1BED`. They speak the same protocol as the tested ones but nobody has confirmed them with Airglow yet. If you own one, please [say how it went](CONTRIBUTING.md#reporting-a-problem). |
 | Through OpenRGB | Everything OpenRGB supports. ARGB headers it splits into fans show up as fan rings, keyboards as a grid. |
+| Fans and pumps through LibreHardwareMonitor | The motherboard's fan headers, and the pumps and fans of NZXT Kraken X3, Z3, 2023 and 2024 Elite and older Kraken X coolers, MSI CoreLiquid, Aquacomputer D5 Next and Aquastream XT, Arctic and Razer fan controllers and the NZXT Grid+. Everything LibreHardwareMonitor can control, except graphics card fans, which stay with the card. |
 | Windows Dynamic Lighting, experimental | Keyboards, mice and accessories with HID LampArray support. Off by default (Settings, More devices), because Windows only lets Airglow light them while its window is in front. |
 | Sensors | Everything LibreHardwareMonitor reports. Memory, network, disk and processor load work without it. |
-| Motherboard fans | Through FanControl profiles. |
+| Motherboard fans | Directly through LibreHardwareMonitor (Fans tab), or through FanControl profiles. |
 
 Controllers Airglow drives directly come from device plugins, one file per family in
 [`airglow/plugins/`](airglow/plugins/). [CONTRIBUTING.md](CONTRIBUTING.md) explains how to add one.
