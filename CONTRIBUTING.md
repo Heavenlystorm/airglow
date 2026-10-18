@@ -22,6 +22,9 @@ declares. The contract is at the top of [`airglow/plugins/__init__.py`](airglow/
   until someone has confirmed it on real hardware.
 - If you own an experimental one and it works, say so in an issue (with a diagnostics report) and we'll drop the flag.
 - NZXT accessory LED counts are in `airglow/plugins/nzxt_hue2.py` under `ACCESSORIES`.
+- `OPENRGB_SKIP` keeps OpenRGB away from what a plugin drives. Keep it narrow: a brand-wide fragment needs
+  `OPENRGB_SKIP_TYPES` (as the ASUS plugin limits itself to "Motherboard"), or it hides that brand's graphics cards,
+  memory and keyboards too.
 - A new protocol is a new plugin: packet builders as pure functions in `airglow/devices.py` (with tests built from
   real captures), and a module in `airglow/plugins/` with `PRODUCTS`, a `Device` subclass and `create()`. Give it
   a new `ID_PREFIX`, and never change one after a release: saved zone settings are keyed by it.
@@ -36,6 +39,11 @@ the real product or found in the maker's documentation; anything else is better 
 
 Sources for device facts must be public documentation or open-source projects with a compatible way of learning
 from them (we credit liquidctl and OpenRGB). Don't contribute anything taken from closed vendor software.
+
+**Fans and coolers.** Motherboard headers and cooler pumps are driven through LibreHardwareMonitor
+(`airglow/lhmfans.py`), so a cooler LibreHardwareMonitor can control works in Airglow without new code. Coolers that
+show up over USB are named in the setup guide from [`airglow/data/coolers.json`](airglow/data/coolers.json); mark
+the ones LibreHardwareMonitor drives with `"lhm": true`.
 
 **Sensors.** A diagnostics report contains `lhm_data.json`, LibreHardwareMonitor's data in the shape the tests use.
 If sensor picking is wrong on your PC (wrong CPU temperature, missing graphics card), that file lets us add your

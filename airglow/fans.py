@@ -20,8 +20,22 @@ def source_temp(sensors, source):
         return cpu
     if source == "gpu":
         return gpu
+    if source == "liquid" and sensors.get("liquid_temp") is not None:
+        return sensors["liquid_temp"]
+    # "max", and "liquid" while no coolant reading comes through (cooler unplugged, LHM without it): the hotter
+    # part runs warmer than any coolant, so the fans err on the fast side
     temps = [t for t in (cpu, gpu) if t is not None]
     return max(temps) if temps else None
+
+
+def steady_duty(duty, temp, failsafe, hottest=None):
+    """A channel held at a steady speed (a pump): still full speed when the curve's temperature or the hottest
+    part is very hot, and never below the failsafe speed while temperatures can't be read."""
+    if (hottest or 0) >= SAFETY_TEMP or (temp or 0) >= SAFETY_TEMP:
+        return 100
+    if temp is None:
+        return max(duty, failsafe)
+    return duty
 
 
 def lowest_duty(points):

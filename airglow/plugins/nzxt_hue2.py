@@ -1,4 +1,5 @@
-"""NZXT HUE 2 generation: Control Hub, Smart Device V2, HUE 2, HUE 2 Ambient and RGB & Fan Controller.
+"""NZXT HUE 2 generation: Control Hub, Smart Device V2, HUE 2, HUE 2 Ambient, RGB & Fan Controller and the HUE 2
+channels built into NZXT N7 motherboards.
 
 They share one protocol (airglow/devices.py, NzxtControlHub) and differ only in how many lighting channels and fan
 ports they have. Product ids, channel counts and accessory sizes follow liquidctl and OpenRGB.
@@ -15,13 +16,14 @@ NAME = "NZXT HUE 2 family"
 VENDOR = "NZXT"
 TRANSPORT = "hid"
 ID_PREFIX = "nzxt-hub"
-OPENRGB_SKIP = ["NZXT RGB & Fan Controller", "NZXT Hue 2", "NZXT Control Hub", "NZXT Smart Device"]
+OPENRGB_SKIP = ["NZXT RGB & Fan Controller", "NZXT Hue 2", "NZXT Control Hub", "NZXT Smart Device", "NZXT B650E"]
 
 PARAMETERS = [
     p_range("brightness_limit", "Brightness limit", 100, lo=10, hi=100, step=5, unit="%"),
 ]
 
-_FANS_ONLY = "Fans only: this revision changed its lighting protocol."
+_FANS_ONLY = ("Airglow drives its fans only: this revision changed its lighting protocol. OpenRGB can light it, "
+              "and Airglow leaves it to OpenRGB.")
 
 
 def _nzxt(pid, name, leds, fans, experimental=True, note=None):
@@ -43,6 +45,11 @@ PRODUCTS = [
     _nzxt(0x2019, "NZXT RGB & Fan Controller", 0, 3, note=_FANS_ONLY),
     _nzxt(0x201F, "NZXT RGB & Fan Controller", 0, 3, note=_FANS_ONLY),
     _nzxt(0x2020, "NZXT RGB & Fan Controller", 6, 3),
+    # NZXT N7 motherboards' built-in HUE 2 channels (OpenRGB drives them with the same protocol). Lighting only:
+    # their fan headers belong to the board's Super I/O chip, which LibreHardwareMonitor drives (Fans tab).
+    _nzxt(0x2005, "NZXT motherboard lighting", 2, 0),
+    _nzxt(0x200B, "NZXT motherboard lighting", 2, 0),
+    _nzxt(0x201B, "NZXT N7 B650E lighting", 6, 0),
 ]
 
 # Accessory id (from the hub's LED info report) -> what's plugged in. Unknown accessories fall back to the channel
@@ -107,6 +114,7 @@ class NzxtDevice(Device):
             leds, fans = product.facts["led_channels"], product.facts["fan_ports"]
             self.type_name = ("Fan and lighting hub" if leds and fans else "Fan controller" if fans
                               else "Lighting controller")
+            self.lighting = bool(leds)              # fans-only revisions: OpenRGB can still light them
 
     @property
     def zones(self):

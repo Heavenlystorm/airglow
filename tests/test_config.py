@@ -135,6 +135,27 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(z["openrgb:kb/z0"]["name"], "Keychron K2 HE")             # single-zone device: just its name
         self.assertFalse(s.ensure_zones(devs))                          # idempotent
 
+    def test_default_fan_zones_never_overlap(self):
+        # two F360 kits and two F120s on one hub: each kit gets a column of its own, the single fans fill the gaps
+        s = config.Store(self.dir)
+        zones = [{"id": f"ch{i}", "name": f"Channel {i}", "default_leds": 8 * n, "shape": "fans", "fans": n}
+                 for i, n in ((1, 3), (2, 3), (3, 1), (4, 1))]
+        s.ensure_zones([{"id": "nzxt-hub", "kind": "native", "type": "Fan and lighting hub", "name": "NZXT",
+                         "zones": zones}])
+        from airglow.lighting import geometry
+        circles = []
+        for key, cfg in s.zones().items():
+            L = cfg["layout"]
+            pos, _, fan = geometry.positions(L)
+            for f in range(L["fans"]):
+                circles.append((key, pos[fan == f].mean(axis=0), L["size"] / 2))
+        for i, (ka, ca, ra) in enumerate(circles):
+            for kb, cb, rb in circles[i + 1:]:
+                if ka != kb:
+                    self.assertGreaterEqual(float(((ca - cb) ** 2).sum() ** 0.5), ra + rb, f"{ka} overlaps {kb}")
+            # inside the case, and left of where strips and the board start, like front intake fans
+            self.assertTrue(0 <= ca[1] - ra and ca[1] + ra <= 1 and ca[0] + ra < 0.65, f"{ka} sits at {ca}")
+
     def test_auto_zones_follow_detection_but_user_zones_dont(self):
         s = config.Store(self.dir)
         before = [{"id": "nzxt-hub", "kind": "native", "type": "Fan and lighting hub", "name": "NZXT",

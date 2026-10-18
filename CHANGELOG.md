@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.6.5
+- Fan safety: "full speed at 90 °C" now watches the hottest part, whatever the curve follows. With the curve on the
+  graphics card (or the new coolant reading), a processor at 95 °C used to leave the fans on the curve.
+- **Motherboard fan headers and liquid coolers.** The Fans tab lists every fan and pump LibreHardwareMonitor can
+  drive: the board's own fan headers, and the pumps and fans of NZXT Kraken X3, Z3, 2023 and 2024 Elite, older
+  Kraken X coolers, MSI CoreLiquid, Aquacomputer D5 Next and Aquastream XT pumps, Arctic and Razer fan controllers
+  and the NZXT Grid+. Each one is left alone until you pick: follow the fan curve, or hold a steady speed (pumps).
+  Fan safety applies to them too: full speed at 90 °C, at least the failsafe speed without temperatures, and when
+  Airglow quits they go back to their BIOS or cooler curve.
+- Fans can follow the **coolant temperature** of an AIO or custom loop (Settings, Fans), and so can "running hot"
+  automations. The Fans tab shows it next to the processor and graphics card.
+- An ASUS Aura board no longer hides the rest of ASUS from OpenRGB: ROG and TUF graphics cards, memory, keyboards,
+  mice and monitors used to disappear from Airglow as soon as the board was found.
+- NZXT RGB & Fan Controllers whose lighting Airglow can't drive (the 3+6 channel revisions) are no longer hidden from
+  OpenRGB either, so OpenRGB lights them while Airglow runs their fans.
+- New, experimental: the HUE 2 lighting built into NZXT N7 motherboards.
+- More liquid coolers are recognised in the setup guide (Corsair H110i GT, MSI CoreLiquid, ASUS ROG Ryuo, Ryujin
+  and Strix LC, Aquacomputer pumps), and it says when a cooler's pump and fans can follow Airglow.
+- Logitech G HUB, SteelSeries GG and Engine, MSI Mystic Light's LEDKeeper and the current Lian Li L-Connect 3 are
+  recognised as programs that fight over the same lights. Peripheral software only counts while Airglow lights that
+  brand's devices, so nobody is nagged about the program their mouse needs.
+- Fans set up on one controller no longer start out drawn on top of each other on the Lighting stage: every kit of
+  fans gets a column of its own.
+- Windows Dynamic Lighting devices appear in the Devices tab, so their zones can be named, switched and checked.
+- Long OpenRGB strips (WLED, E1.31, long ARGB runs) of more than 300 LEDs, and fans with more than 64 LEDs, can be
+  saved; they used to be refused with an error.
+- An OpenRGB message that stops half way no longer freezes the lights; Airglow reconnects instead.
+- FanControl is also found when it was installed with Scoop or into your user folder.
+
 ## 1.6.2
 - Fan safety: Airglow now sets the speed of every fan port on the NZXT hub. Before, a fan that read 0 RPM, for
   example one that had stalled at a low speed, was left out, so it stayed at that speed however hot the PC got and

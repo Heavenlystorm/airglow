@@ -66,6 +66,14 @@ class ApiTests(unittest.TestCase):
         self.assertIn("scene", events["state"])
         self.assertIn("zones", events["frames"])
 
+    def test_fan_channels_only_take_fans_lhm_lists(self):
+        status, body = self.request("POST", "/api/fans/channel", {"id": "/lpc/nct6798d/0/control/0", "mode": "curve"})
+        self.assertEqual(status, 404)
+        status, body = self.request("POST", "/api/fans/channel", {"id": "/lpc/nct6798d/0/control/0", "mode": "off"})
+        self.assertEqual((status, body), (200, {"channels": []}))         # leaving one alone always works
+        status, body = self.request("POST", "/api/fans/channel", {"id": "nonsense", "mode": "off"})
+        self.assertEqual(status, 400)
+
     def test_event_stream_skips_frames_that_did_not_change(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         conn.request("GET", "/api/stream?frames=1", headers={"Host": f"127.0.0.1:{self.port}"})

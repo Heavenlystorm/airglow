@@ -56,8 +56,8 @@ class ManagerTests(unittest.TestCase):
                 return [{"vendor_id": 0x1E71, "product_id": 0x2022}]
         m = hw.DeviceManager(hid_backend=Backend())
         self.assertEqual(list(m.natives), ["nzxt-hub"])
-        self.assertIn("NZXT RGB & Fan Controller", m.bridge.skip)
-        self.assertNotIn("AULA", m.bridge.skip)
+        self.assertIn(("NZXT RGB & Fan Controller", None), m.bridge.skip)
+        self.assertFalse(any(name == "ASUS" for name, _ in m.bridge.skip))
 
     def test_openrgb_duplicates_of_native_devices_are_skipped(self):
         bridge = hw.OpenRGBBridge(skip=("NZXT RGB & Fan Controller",))
