@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import threading
+import time
 from pathlib import Path
 
 from . import paths
@@ -437,7 +438,14 @@ class Store:
         with self._lock:
             tmp = self.dir / (name + ".tmp")
             tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-            tmp.replace(self.dir / name)
+            for wait in (0.05, 0.1, 0.2, 0.4, None):
+                try:
+                    tmp.replace(self.dir / name)
+                    return
+                except PermissionError:             # antivirus or the search indexer has the file open for a moment
+                    if wait is None:
+                        raise
+                    time.sleep(wait)
 
     def _upgrade(self):
         """Files are converted while loading (see _migrate_preset and _load_state); once that happened, save them
@@ -648,6 +656,8 @@ class Store:
         if not isinstance(rules, list) or len(rules) > 50:
             raise ValueError("expected a list of up to 50 automations")
         clean = [validator(r) for r in rules]
+        if len({r["id"] for r in clean}) != len(clean):
+            raise ValueError("automation ids must be unique")
         with self._lock:
             self.rules = clean
             self._write("automations.json", clean)

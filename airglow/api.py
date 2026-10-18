@@ -362,8 +362,10 @@ def route(server, method, path, body, query=None):
         return presets
     if path == "/api/presets/from-current":
         name = str(body.get("name") or "").strip()
-        pid = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "preset"
-        pid = f"{pid}-{int(time.time()) % 100000:05d}"
+        presets = store.get_presets()
+        if len(presets) >= 24:
+            raise ApiError(400, "You have 24 profiles already. Remove one first (Profiles, Edit).")
+        pid = profiles.new_id(name, {p["id"] for p in presets})
         scene = ctrl.base_scene
         new = {"id": pid, "name": name, "effect": scene["effect"], "params": scene["params"],
                "brightness": scene["brightness"], "areas": _current_areas(ctrl, store), "fan_curve": None,
@@ -373,7 +375,7 @@ def route(server, method, path, body, query=None):
                 new["fan_curve"] = ctrl.base_curve
             else:                                   # a profile's own curve, or one being tried: keep its points
                 new["fan_points"] = ctrl.curve_points(ctrl.base_curve)
-        presets = store.set_presets(store.get_presets() + [new])
+        presets = store.set_presets(presets + [new])
         ctrl.mark_preset(pid)
         return {"presets": presets, "id": pid}
     if path == "/api/preview":

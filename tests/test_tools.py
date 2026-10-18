@@ -322,7 +322,8 @@ class SetupFlowTests(unittest.TestCase):
     def elevated_ok(self, args):
         job = json.loads(Path(args[1]).read_text(encoding="utf-8"))
         self.job = job
-        Path(job["result"]).write_text(json.dumps({"ok": True, "done": job["tools"]}), encoding="utf-8")
+        Path(args[1]).with_name("setup-result.json").write_text(json.dumps({"ok": True, "done": job["tools"]}),
+                                                                encoding="utf-8")
         return 0
 
     def test_success_stores_the_password_and_points_airglow_at_lhm(self):
@@ -348,14 +349,33 @@ class SetupFlowTests(unittest.TestCase):
 
     def test_a_failed_elevated_step_is_reported(self):
         def failing(args):
-            job = json.loads(Path(args[1]).read_text(encoding="utf-8"))
-            Path(job["result"]).write_text(json.dumps({"ok": False, "error": "disk full"}), encoding="utf-8")
+            Path(args[1]).with_name("setup-result.json").write_text(json.dumps({"ok": False, "error": "disk full"}),
+                                                                    encoding="utf-8")
             return 1
         with mock.patch.object(tools, "run_elevated", side_effect=failing):
             tools.start_setup(self.ctrl, self.store)
             snap = self.wait()
         self.assertEqual((snap["state"], snap["error"]), ("failed", "disk full"))
         self.assertFalse(tools.auth_file().exists())
+
+    def test_the_elevated_copy_only_writes_its_result_next_to_the_job_file(self):
+        jobs = Path(self.tmp.name) / "jobs"
+        jobs.mkdir()
+        elsewhere = Path(self.tmp.name) / "elsewhere.json"
+        job = jobs / "remove-job.json"
+        job.write_text(json.dumps({"result": str(elsewhere)}), encoding="utf-8")
+        root = tools.logging.getLogger()
+        before = list(root.handlers)
+        try:
+            with mock.patch.object(tools.paths, "log_dir", return_value=Path(self.tmp.name)),                     mock.patch.object(tools, "remove") as remove:
+                self.assertEqual(tools.elevated_main(["--remove-tools", str(job)]), 0)
+        finally:
+            for h in set(root.handlers) - set(before):
+                root.removeHandler(h)
+                h.close()
+        remove.assert_called_once()
+        self.assertFalse(elsewhere.exists())
+        self.assertTrue(json.loads((jobs / "remove-result.json").read_text(encoding="utf-8"))["ok"])
 
     def test_only_missing_tools_are_set_up(self):
         self.ctrl.manager.bridge.client.connected = True
