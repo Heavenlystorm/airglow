@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.6.8
+- **Much less processor time with OpenRGB.** Graphics cards and memory sit on a slow bus, and an animated effect
+  sent them 30 updates a second: one RTX 5080 kept OpenRGB busy on a whole core. They now get at most 10 a second,
+  only when the colour really changes, and each device gets one update per frame instead of one per zone. With an
+  animated effect, Airglow, OpenRGB and the effect together went from about a full core to about a sixth of one.
+- A still scene (Solid or Off) is drawn 4 times a second instead of 30. Airglow then uses almost no processor time.
+  Anything that moves, an identify flash or the setup guide gets the full 30 again right away.
+- Without LibreHardwareMonitor, every temperature check held up automations and fans for 3 seconds. Temperatures
+  are now read on their own, every 12 seconds until LibreHardwareMonitor answers, and the default address is
+  `http://127.0.0.1:8085` (a saved "localhost" changes to it).
+- When Airglow sets up OpenRGB, OpenRGB leaves alone the controllers Airglow drives itself (the ASUS Aura board and
+  the NZXT hub), so the two programs no longer both open them.
+- A hub or board controller plugged in after Airglow started, or one that wasn't ready at sign-in, is found within
+  15 seconds instead of only after a restart.
+- A running GNU C compiler (gcc.exe) is no longer taken for Gigabyte Control Center, so "Close it" can't end it.
+  For RGB programs that run as Windows services, Airglow now says to stop them in Services instead of offering to
+  close them.
+- Empty NZXT hub channels no longer turn into enabled 40-LED strips on some starts. The hub answers "what's
+  plugged in" about 0.6 seconds after it's asked, and Airglow only waited 0.5; once lighting started, the answer
+  could get lost. Airglow now waits for it, asks again if it doesn't come, and a channel the hub never reported
+  keeps the setup you saved.
+
 ## 1.6.7
 - Setting up the helper programs on a PC without the Visual C++ runtime stopped at its first step with "isn't signed
   by Microsoft", so neither LibreHardwareMonitor nor OpenRGB was installed. The runtime is now checked and installed.

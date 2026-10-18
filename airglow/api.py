@@ -525,6 +525,8 @@ def route(server, method, path, body, query=None):
                 store.save_state(online_asked=True)     # answered, whether from the question or from Settings
             if {"online_checks", "update_channel"} & set(body) and server.updater:
                 server.updater.settings_changed()
+            if "lhm_url" in body:
+                ctrl.lhm.wake()                               # try the new address now
             if {"openrgb_host", "openrgb_port", "openrgb_enabled"} & set(body):
                 ctrl.manager.bridge.client.host = store.settings()["openrgb_host"]
                 ctrl.manager.bridge.client.port = store.settings()["openrgb_port"]
@@ -544,7 +546,7 @@ def route(server, method, path, body, query=None):
         ctrl.apply()
         return {"paused_until": ctrl.automations.paused_until or None}
     if path == "/api/conflicts/close":
-        return {"failed": conflicts.close(str(body.get("name")))}
+        return conflicts.close(str(body.get("name")))
     if path in ("/api/tools/setup", "/api/tools/remove"):
         try:
             if path.endswith("setup"):

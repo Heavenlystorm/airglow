@@ -1,5 +1,6 @@
 """The lighting engine: renders effects for every enabled zone ~30 times a second and streams the result to
-the devices. Only changed frames are written (plus a keep-alive), so static scenes cost almost nothing."""
+the devices. Only changed frames are written (plus a keep-alive), and while nothing on screen moves (Solid, Off)
+it renders only IDLE_FPS frames a second, so static scenes cost almost nothing."""
 
 import logging
 import threading
@@ -70,6 +71,7 @@ class DeviceWriter:
 
 class Engine:
     FPS = 30
+    IDLE_FPS = 4             # while every zone shows a still effect; any command brings back FPS at once
     KEEPALIVE = 5.0          # re-send unchanged frames this often (some controllers forget)
     RESUME_GAP = 10.0        # a frame gap this long means the PC slept
     IDENTIFY_SECONDS = 6.0
@@ -84,7 +86,7 @@ class Engine:
         self._online = {}                # device id -> the device object if it was online last frame (re-send on change)
         self.scene = dict(store.state["scene"])
         self.screen, self.audio = ScreenSampler(), AudioAnalyzer()
-        self.frames = {}                 # zone key -> "rrggbb..." for the live preview
+        self._frames = ({}, {})          # (zone key -> the last frame's bytes, the same as hex once someone asked)
         self.frame_id = 0
         self.fps = 0.0
         self._identify = {}              # zone key -> deadline
@@ -93,6 +95,7 @@ class Engine:
         self._preview = None             # (scene, deadline): a profile drawn for the gallery, never sent to devices
         self.preview_frames = {}
         self._last = {}                  # zone key -> (bytes, time sent)
+        self._dev_sent = {}              # device id -> time a frame was last sent to it (for Device.max_fps)
         self._geom = {}                  # zone key -> (layout snapshot, namespace)
         self._missing = set()            # effects not on this PC (drawn as Solid), logged once each
         self._failing = set()            # effects whose render raised, logged once until they work again
@@ -103,6 +106,24 @@ class Engine:
         self._t0 = time.monotonic()
         self._last_tick = None
         self.last_frame = None           # monotonic time of the last finished frame (for the health check)
+        self.idle = False                # the last frame had nothing moving: render at IDLE_FPS
+        self._moving = False             # set by render_zone when an animated effect was drawn this frame
+        self._kick = threading.Event()   # a command arrived: render the next frame now
+
+    @property
+    def frames(self):
+        """zone key -> "rrggbb..." for the live preview and the tray icon. Made into hex only when read: nobody
+        reads it while the window is closed, and the engine has better things to do 30 times a second."""
+        raw, hexed = self._frames
+        if hexed is None:
+            hexed = {k: v.tobytes().hex() for k, v in raw.items()}
+            if self._frames[0] is raw:               # still the newest frame
+                self._frames = (raw, hexed)
+        return hexed
+
+    @frames.setter
+    def frames(self, value):
+        self._frames = ({}, dict(value))
 
     # ------------------------------------------------------------ commands
     def set_scene(self, scene):
@@ -115,9 +136,11 @@ class Engine:
         with self._lock:
             self.scene = scene
             self._last.clear()                       # force a full re-send
+        self._kick.set()
 
     def identify(self, zone_key):
         self._identify[zone_key] = time.monotonic() + self.IDENTIFY_SECONDS
+        self._kick.set()
 
     def probe(self, zone_key, mode, n=0):
         """Light a zone for the setup guide, over every LED the header can drive, whatever is configured:
@@ -130,6 +153,7 @@ class Engine:
             else:
                 self._probe[zone_key] = (mode, int(n), time.monotonic() + self.PROBE_SECONDS)
             self._last.pop(zone_key, None)
+        self._kick.set()
 
     def preview(self, scene):
         """Render a profile for the gallery's mini stage alongside the real frames, for a few seconds. None stops."""
@@ -137,6 +161,7 @@ class Engine:
             self._preview = (scene, time.monotonic() + self.PREVIEW_SECONDS) if scene else None
             if not scene:
                 self.preview_frames = {}
+        self._kick.set()
 
     def _render_preview(self, zones, now, t):
         scene, deadline = self._preview
@@ -176,6 +201,7 @@ class Engine:
             else:
                 self._geom.clear()
                 self._last.clear()
+        self._kick.set()                             # a zone's settings changed (an override, its layout)
 
     # ------------------------------------------------------------ rendering
     def _geometry(self, key, layout, zcfg=None):
@@ -238,6 +264,8 @@ class Engine:
             eff, params = effects.EFFECTS["solid"], self._solid
         else:
             self._missing.discard(eff_id)
+        if eff.animated:
+            self._moving = True
         ctx = self._context(eff.needs, params)
         try:
             rgb = eff.render(z, t, params, ctx)
@@ -254,6 +282,16 @@ class Engine:
         vals = np.clip(rgb * (brightness / 100.0), 0, 1)
         return (vals * 255 + 0.5).astype(np.uint8)
 
+    @staticmethod
+    def _small_change(old, new, limit):
+        """True when frame `new` is within `limit` of the last one sent on every channel. A channel going dark
+        always counts, so a fade never stops a few steps short of off."""
+        if len(old) != len(new):
+            return False
+        a = np.frombuffer(old, np.uint8).astype(np.int16)
+        b = np.frombuffer(new, np.uint8).astype(np.int16)
+        return int(np.abs(a - b).max(initial=0)) <= limit and not np.any((b == 0) & (a != 0))
+
     def tick(self):
         now = time.monotonic()
         wall = time.time()
@@ -268,6 +306,7 @@ class Engine:
         t = now - self._t0
         zones = self.store.zones()
         frames = {}
+        self._moving = False
         for dev in list(self.manager.all().values()):
             online = dev.online
             # (re)connected, or reloaded as a new object (OpenRGB's device list changed): send every zone again
@@ -277,6 +316,13 @@ class Engine:
             self._online[dev.id] = dev if online else None
             if not online:
                 continue
+            # a slow device is sent at most max_fps frames a second (half an engine frame of slack, so timer
+            # jitter doesn't turn 10 fps into 7.5); its zones are still rendered for the live preview
+            max_fps = getattr(dev, "max_fps", None)
+            sent = self._dev_sent.get(dev.id)
+            throttled = bool(max_fps) and sent is not None and now - sent < 1.0 / max_fps - 0.5 / self.FPS
+            min_change = getattr(dev, "min_change", 0)
+            keepalive = getattr(dev, "keepalive", True)
             wrote = False
             for zone in dev.zones:
                 key = f"{dev.id}/{zone.id}"
@@ -298,13 +344,20 @@ class Engine:
                     else:
                         rgb, bri = self.render_zone(key, zcfg, now, t)
                 rgb_ints = self._to_bytes(rgb, bri)
-                frames[key] = rgb_ints.tobytes().hex()                      # preview shows true colours
+                frames[key] = rgb_ints                                      # preview shows true colours
                 order = zcfg.get("order", "RGB") if zcfg else "RGB"
                 ints = rgb_ints[:, list(ORDERS[order])] if order != "RGB" else rgb_ints
+                if throttled:
+                    if ended:                          # the dark frame after a probe goes out next time
+                        with self._lock:
+                            self._probe_done.add(key)
+                    continue
                 raw = ints.tobytes()
                 prev = self._last.get(key)
-                if prev and prev[0] == raw and now - prev[1] < self.KEEPALIVE:
+                if prev and (not keepalive or now - prev[1] < self.KEEPALIVE) and (
+                        prev[0] == raw or (min_change and self._small_change(prev[0], raw, min_change))):
                     continue
+                self._dev_sent[dev.id] = now
                 if self.async_writes:
                     writer = self._writers.get(dev.id)
                     if writer is None or writer.dev is not dev:
@@ -328,7 +381,7 @@ class Engine:
                     dev.flush()
                 except (DeviceError, OpenRGBError, OSError) as e:
                     dev.error = str(e)
-        self.frames = frames
+        self._frames = (frames, None)
         studio.HOST.tick(t, self.audio.frame if self.audio.active else None)
         if self._preview:
             with self._lock:
@@ -336,6 +389,9 @@ class Engine:
         self.frame_id += 1
         self.last_frame = time.monotonic()
         self._identify = {k: d for k, d in self._identify.items() if d > now}
+        with self._lock:
+            busy = self._probe or self._probe_done or self._preview
+        self.idle = not (self._moving or self._identify or busy or self.screen.active or self.audio.active)
 
     # ------------------------------------------------------------ lifecycle
     def _loop(self):
@@ -343,6 +399,7 @@ class Engine:
         count, window = 0, time.monotonic()
         while not self._stop.is_set():
             start = time.monotonic()
+            self._kick.clear()
             try:
                 self.tick()
             except Exception:
@@ -351,6 +408,9 @@ class Engine:
             count += 1
             if start - window >= 2.0:
                 self.fps, count, window = count / (start - window), 0, start
+            if self.idle:                    # nothing moves: wait longer, but wake for a command right away
+                self._kick.wait(max(0.0, 1.0 / self.IDLE_FPS - (time.monotonic() - start)))
+                continue
             # time.sleep uses a high-resolution timer on Windows (Python 3.11+); Event.wait rounds up to ~15.6 ms
             # steps, which turned a 33 ms frame into 47 ms (21 fps).
             time.sleep(max(0.0, period - (time.monotonic() - start)))

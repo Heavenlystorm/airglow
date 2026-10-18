@@ -171,6 +171,59 @@ class DeviceShapeTests(unittest.TestCase):
         self.assertAlmostEqual(pos[1][1], pos[0][1])
 
 
+class _RecordingClient:
+    connected = True
+
+    def __init__(self):
+        self.calls = []
+
+    def set_custom_mode(self, dev_idx):
+        self.calls.append(("mode", dev_idx))
+
+    def resize_zone(self, dev_idx, zone_idx, size):
+        self.calls.append(("resize", zone_idx, size))
+
+    def update_zone(self, dev_idx, zone_idx, colors):
+        self.calls.append(("zone", zone_idx, list(colors)))
+
+    def update_leds(self, dev_idx, colors):
+        self.calls.append(("leds", list(colors)))
+
+
+class DeviceWriteTests(unittest.TestCase):
+    def device(self, location="HID: /dev", zones=(("Top", 0, 1, 1, 1), ("Side", 0, 2, 2, 2))):
+        from types import SimpleNamespace
+        from airglow import hw
+        ctrl = openrgb.parse_controller(controller_blob(5, name="GPU", zones=zones, ctype=2), 5)
+        ctrl["location"] = location
+        client = _RecordingClient()
+        return hw.OpenRGBDevice(SimpleNamespace(client=client), {"index": 3, **ctrl}), client
+
+    def test_graphics_cards_and_memory_on_i2c_are_slow_devices(self):
+        gpu, _ = self.device("I2C: NVIDIA GPU, address 0x71")
+        self.assertEqual((gpu.max_fps, gpu.min_change, gpu.keepalive), (10, 3, False))
+        hub, _ = self.device("HID: \\\\?\\hid#vid_1e71")
+        self.assertEqual((hub.max_fps, hub.min_change, hub.keepalive), (None, 0, False))
+
+    def test_one_packet_per_device_once_every_zone_is_written(self):
+        dev, client = self.device()
+        dev.write_zone("z0", [(1, 2, 3)])
+        dev.flush()
+        self.assertEqual(client.calls[-1], ("zone", 0, [(1, 2, 3)]))     # Side isn't Airglow's (yet): left alone
+        client.calls.clear()
+        dev.write_zone("z0", [(4, 5, 6)])
+        dev.write_zone("z1", [(7, 8, 9)] * 2)
+        dev.flush()
+        self.assertEqual(client.calls, [("leds", [(4, 5, 6), (7, 8, 9), (7, 8, 9)])])
+        client.calls.clear()
+        dev.write_zone("z1", [(1, 1, 1)])                                # only one zone changed, and too short
+        dev.flush()
+        self.assertEqual(client.calls, [("leds", [(4, 5, 6), (1, 1, 1), (0, 0, 0)])])
+        client.calls.clear()
+        dev.flush()                                                      # nothing new: nothing sent
+        self.assertEqual(client.calls, [])
+
+
 class ClientTests(unittest.TestCase):
     def test_negotiates_version_and_lists_controllers(self):
         srv = FakeServer(server_version=5)

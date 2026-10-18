@@ -1,4 +1,5 @@
 import json
+import time
 import unittest
 from pathlib import Path
 
@@ -49,3 +50,41 @@ class ParseEdgeCaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LhmPollerTests(unittest.TestCase):
+    def poller(self, replies):
+        calls = []
+
+        def read(url, headers=None):
+            calls.append(time.monotonic())
+            return replies.pop(0) if replies else None
+        p = sensors.LhmPoller(lambda: "http://127.0.0.1:8085", read=read)
+        p.INTERVAL, p.OFFLINE_RETRY = 0.02, 0.5
+        return p, calls
+
+    def test_offline_lhm_is_retried_slowly(self):
+        p, calls = self.poller([])
+        p.start()
+        time.sleep(0.3)
+        p.stop()
+        self.assertEqual(len(calls), 1)            # offline: the next try waits OFFLINE_RETRY, not INTERVAL
+        self.assertIsNone(p.tree)
+
+    def test_online_lhm_is_read_every_interval_and_wake_retries_now(self):
+        p, calls = self.poller([None, {"Children": []}, {"Children": []}])
+        p.start()
+        time.sleep(0.05)
+        self.assertEqual(len(calls), 1)
+        p.wake()                                   # a new address or helper setup: try again right away
+        time.sleep(0.2)
+        p.stop()
+        self.assertGreaterEqual(len(calls), 3)
+
+    def test_a_failing_read_counts_as_offline(self):
+        def boom(url, headers=None):
+            raise RuntimeError("bug")
+        p = sensors.LhmPoller(lambda: "x", read=boom)
+        p.tree = {"old": 1}
+        with self.assertLogs("airglow.sensors", "ERROR"):
+            self.assertIsNone(p.poll())
