@@ -26,7 +26,8 @@ DEFAULT_CURVES = {
 
 DEFAULT_CONFIG = {
     "port": 8787,
-    "lhm_url": "http://localhost:8085",
+    # not "localhost": Windows tries ::1 and then 127.0.0.1, so a poll with LHM missing waited out two timeouts
+    "lhm_url": "http://127.0.0.1:8085",
     "temp_source": "max",
     "temp_unit": "C",
     "fan_failsafe_duty": 60,
@@ -148,8 +149,8 @@ def validate_settings(patch):
             out[key] = _int_in(value, 1, 25, "Ramp speed")
         elif key == "lhm_url":
             if not re.fullmatch(r"https?://[\w.\-]+(:\d{1,5})?/?", str(value)):
-                raise ValueError("sensor address must look like http://localhost:8085")
-            out[key] = str(value).rstrip("/")
+                raise ValueError("sensor address must look like http://127.0.0.1:8085")
+            out[key] = re.sub(r"^(https?://)localhost(?=[:/]|$)", r"\g<1>127.0.0.1", str(value).rstrip("/"), flags=re.I)
         elif key in ("fancontrol_exe", "fancontrol_configs_dir"):
             out[key] = str(value or "")
         elif key in ("openrgb_enabled", "lights_off_on_sleep", "lights_off_on_lock", "dynamic_lighting_enabled",

@@ -22,7 +22,8 @@ class ValidationTests(unittest.TestCase):
 
     def test_settings(self):
         self.assertEqual(config.validate_settings({"fan_failsafe_duty": "70"}), {"fan_failsafe_duty": 70})
-        self.assertEqual(config.validate_settings({"lhm_url": "http://localhost:8085/"}), {"lhm_url": "http://localhost:8085"})
+        self.assertEqual(config.validate_settings({"lhm_url": "http://localhost:8085/"}), {"lhm_url": "http://127.0.0.1:8085"})
+        self.assertEqual(config.validate_settings({"lhm_url": "http://localhost.lan:8085"}), {"lhm_url": "http://localhost.lan:8085"})
         self.assertEqual(config.validate_settings({"openrgb_port": "6742"}), {"openrgb_port": 6742})
         for bad in ({"fan_failsafe_duty": 10}, {"temp_unit": "K"}, {"nope": 1}, {"lhm_url": "file:///c:/"},
                     {"openrgb_host": "bad host!"}):
@@ -78,6 +79,12 @@ class StoreTests(unittest.TestCase):
         again = config.Store(self.dir)
         mine = next(p for p in again.get_presets() if p["id"] == "mine")
         self.assertEqual((mine["effect"], mine["params"]), ("fx:me.gone", {"speed": 7}))
+
+    def test_a_saved_localhost_sensor_address_becomes_127_0_0_1(self):
+        self.dir.mkdir(parents=True)
+        (self.dir / "config.json").write_text(json.dumps({"lhm_url": "http://localhost:8085"}), encoding="utf-8")
+        self.assertEqual(config.Store(self.dir).settings()["lhm_url"], "http://127.0.0.1:8085")
+        self.assertEqual(config.DEFAULT_CONFIG["lhm_url"], "http://127.0.0.1:8085")
 
     def test_defaults_when_empty(self):
         s = config.Store(self.dir)

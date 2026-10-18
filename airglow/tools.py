@@ -538,6 +538,8 @@ def start_setup(ctrl, store, ids=None):
         if password:
             auth_file().write_text(json.dumps({"user": LHM_USER, "password": password}), encoding="utf-8")
             store.update_settings({"lhm_url": LHM_URL})
+        if "lhm" in wanted and hasattr(ctrl, "lhm"):
+            ctrl.lhm.wake()                                     # read it as soon as it answers, not in 12 s
         if "openrgb" in wanted:
             store.update_settings({"openrgb_enabled": True})
             ctrl.manager.bridge._last_try = 0.0                 # connect as soon as OpenRGB's server is up

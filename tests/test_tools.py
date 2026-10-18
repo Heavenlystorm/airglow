@@ -345,7 +345,7 @@ class SetupFlowTests(unittest.TestCase):
             snap = self.wait()
         self.assertEqual(snap["state"], "cancelled")
         self.assertFalse(tools.auth_file().exists())
-        self.assertEqual(self.store.settings()["lhm_url"], "http://localhost:8085")
+        self.assertEqual(self.store.settings()["lhm_url"], config.DEFAULT_CONFIG["lhm_url"])
 
     def test_a_failed_elevated_step_is_reported(self):
         def failing(args):
