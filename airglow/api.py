@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (__version__, autostart, conflicts, coolers, diagnostics, fancontrol, gallery, lightsetup, paths, profiles,
                system, tools, updates)
-from .automation import validate_rule
+from .automation import validate_rule, whole_number
 from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP
 from .lighting import effects, geometry, studio
 
@@ -520,7 +520,7 @@ def route(server, method, path, body, query=None):
         ctrl.apply()
         return rules
     if path == "/api/automations/pause":
-        ctrl.automations.pause(int(body.get("minutes", 0)))
+        ctrl.automations.pause(whole_number(body.get("minutes", 0), "minutes must be a whole number"))
         ctrl.automations.evaluate()
         ctrl.apply()
         return {"paused_until": ctrl.automations.paused_until or None}

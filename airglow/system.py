@@ -130,7 +130,7 @@ WTS_SESSION_LOCK, WTS_SESSION_UNLOCK = 0x7, 0x8
 
 class PowerEvents:
     """Hidden top-level window (message-only windows don't get broadcasts) on its own thread.
-    handlers: dict with optional suspend, resume, shutdown, lock, unlock callables."""
+    handlers: dict with optional suspend, resume, shutdown, shutdown_cancelled, lock, unlock callables."""
 
     def __init__(self, handlers):
         self.handlers = handlers
@@ -155,8 +155,9 @@ class PowerEvents:
         if msg == WM_QUERYENDSESSION:
             self._fire("shutdown")
             return 1
-        if msg == WM_ENDSESSION and wparam:
-            self._fire("shutdown")
+        if msg == WM_ENDSESSION:
+            # wparam FALSE: something cancelled the shutdown announced by WM_QUERYENDSESSION
+            self._fire("shutdown" if wparam else "shutdown_cancelled")
             return 0
         if msg == WM_WTSSESSION_CHANGE:
             if wparam == WTS_SESSION_LOCK:

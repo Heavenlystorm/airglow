@@ -176,8 +176,8 @@ async function applyState(state) {
   // device list or connection changed: reload zones so the stage and Devices stay accurate
   const key = JSON.stringify([S.state.zones_rev, S.state.devices.map((d) => [d.id, d.online, d.zones.length])]);
   if (key !== deviceKey) {
-    deviceKey = key;
     S.zones = await get("/api/zones");
+    deviceKey = key;                 // only once they arrived: a failed fetch is tried again with the next state
     emit("zones");
   }
   renderBar();
