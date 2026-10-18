@@ -116,7 +116,8 @@ A device is missing or says "busy": another RGB program still has it open. Close
 a few seconds.
 
 No temperatures: LibreHardwareMonitor isn't running, or its web server is off. Airglow looks for it at the address in
-Settings, Sensors, which is `http://localhost:8085` unless you changed it.
+Settings, Sensors, which is `http://127.0.0.1:8085` unless you changed it. While it can't be reached, Airglow
+tries again every 12 seconds.
 
 OpenRGB devices don't show up: make sure OpenRGB's SDK server is running. Airglow tries again every 10 seconds.
 

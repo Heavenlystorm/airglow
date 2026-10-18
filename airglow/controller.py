@@ -41,6 +41,7 @@ class Controller:
         self._read_sensors = read_sensors        # tests pass a summary; normally the full LHM tree is read
         self._read_flat = read_flat              # tests: LHM's sensors as sensors.flatten() gives them
         self._flat = []                          # the last LHM sensor list (fan channels come from it)
+        self.lhm = sensors.LhmPoller(lambda: store.settings()["lhm_url"], tools.lhm_headers)
         self.lhm_fans = lhm_fans or lhmfans.LhmFans(lambda: store.settings()["lhm_url"], tools.lhm_headers)
         self.fan_channels = []                   # what LHM can drive, with what Airglow does with each
         self._system = sensors.SystemSensors()
@@ -397,7 +398,7 @@ class Controller:
         if self._read_sensors:
             summary, flat = self._read_sensors(), (self._read_flat() if self._read_flat else [])
         else:
-            tree = sensors.read_tree(self.store.settings()["lhm_url"], headers=tools.lhm_headers())
+            tree = self.lhm.tree                       # read on the poller's thread, never here
             flat = sensors.flatten(tree) if tree else []
             summary = sensors.summary(flat) if tree else dict(sensors.OFFLINE)
         self.sensors = summary
@@ -497,6 +498,8 @@ class Controller:
         self.manager.start(self.store.openrgb_enabled)
         self.store.ensure_zones([d.info() for d in self.manager.all().values()])
         self._apply_device_params()
+        if not self._read_sensors:
+            self.lhm.start()
         self.engine.start()
         if self._power:
             self._power.start()
@@ -513,6 +516,7 @@ class Controller:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=self.TICK + 1)
+        self.lhm.stop()
         self.engine.stop()
         self.failsafe()
         self.release_fans()

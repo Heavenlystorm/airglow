@@ -1,8 +1,9 @@
 import tempfile
 import time
 import unittest
+from unittest import mock
 
-from airglow import config
+from airglow import config, sensors
 from airglow.controller import Controller
 from tests.fakes import FakeLightDevice, FakeManager, FakeNzxt, signals
 
@@ -27,6 +28,19 @@ class ControllerTests(unittest.TestCase):
         self.ctrl.tick()
         self.assertEqual(set(self.nzxt.hub.duties[-1]), {0, 1, 2, 3, 4})
         self.assertEqual(len(self.ctrl.history), 1)
+
+    def test_a_tick_never_waits_on_lhm(self):
+        ctrl = Controller(self.store, manager=self.manager, signals=lambda: self.sig, async_writes=False)
+        with mock.patch.object(sensors, "read_tree", side_effect=AssertionError("read on the controller thread")):
+            started = time.monotonic()
+            ctrl.tick()
+            ctrl.tick()
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertFalse(ctrl.sensors["online"])
+        ctrl.lhm.tree = {"Text": "PC", "Children": []}          # what the poller thread read
+        ctrl.tick()
+        ctrl.tick()
+        self.assertTrue(ctrl.sensors["online"])
 
     def test_a_stalled_fan_still_gets_full_speed_when_hot(self):
         self.nzxt.hub.fans[1]["rpm"] = 0                     # stopped at a low speed: reads 0 RPM
