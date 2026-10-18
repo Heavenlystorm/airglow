@@ -12,7 +12,6 @@ much memory it's ended and started again, and an effect that misbehaves is turne
 """
 
 import base64
-import json
 import logging
 import secrets
 import subprocess
@@ -136,9 +135,8 @@ class EffectHost:
             return inst.colours(key)
 
     def _instance(self, eff, params):
-        sig = json.dumps(params, sort_keys=True)
         for inst in self.instances.values():
-            if inst.eff.fx_id == eff.fx_id and json.dumps(inst.params, sort_keys=True) == sig:
+            if inst.eff.fx_id == eff.fx_id and inst.params == params:
                 if inst.eff.sha256 != eff.sha256:                  # edited (the Studio's draft): reload it
                     inst.eff, inst.loaded = eff, False
                 return inst
@@ -240,6 +238,27 @@ class EffectHost:
                     self._emit({"type": "unload", "id": iid})
         for line in (body.get("logs") or [])[:20]:
             log.info("effect: %s", str(line)[:300])
+        return {"ok": True}
+
+    def packed_frames(self, data):
+        """POST /api/fx/host/frames as application/octet-stream: for each instance, the id's length (1 byte), the id,
+        the colours' length (2 bytes, little endian) and the colours. Empty: nothing changed, the host is alive."""
+        frames, o = {}, 0
+        while o + 3 <= len(data):
+            n = data[o]
+            iid = data[o + 1:o + 1 + n].decode("ascii", "replace")
+            size = int.from_bytes(data[o + 1 + n:o + 3 + n], "little")
+            o += 3 + n
+            if o + size > len(data):
+                break                                    # cut short: keep what arrived whole
+            frames[iid] = data[o:o + size]
+            o += size
+        with self._lock:
+            self._last_frame = self._clock()
+            for iid, colours in frames.items():
+                inst = self.instances.get(iid)
+                if inst:
+                    inst.colors = colours
         return {"ok": True}
 
     # ------------------------------------------------------------ problems
@@ -384,18 +403,31 @@ class JsEffect(effects.Effect):
 
 HOST = EffectHost()
 _effects = {}                  # (fx_id, sha256) -> JsEffect
+_looked_up = {}                # fx_id -> (library, its rev, when, JsEffect or None)
+RECHECK_SECONDS = 1.0          # the engine asks for every zone on every frame; the file is looked at this often
 
 
 def _provide(fx_id):
-    eff = HOST.library.get(fx_id)
-    if not eff:
-        return None
-    key = (fx_id, eff["sha256"])
-    found = _effects.get(key)
-    if found is None:
-        found = _effects[key] = JsEffect(eff)
-        if len(_effects) > 64:
-            _effects.pop(next(iter(_effects)))
+    # Looking an effect up checks its file, and the engine asks for every zone 30 times a second: that was most of
+    # the lighting thread's time. Changes made in Airglow bump the library's rev and show at once; an effect file
+    # replaced by hand shows within RECHECK_SECONDS. The Studio's draft is in memory, so it's never cached.
+    lib, now = HOST.library, time.monotonic()
+    hit = _looked_up.get(fx_id)
+    if hit and hit[0] is lib and hit[1] == lib.rev and now - hit[2] < RECHECK_SECONDS:
+        return hit[3]
+    eff = lib.get(fx_id)
+    found = None
+    if eff:
+        key = (fx_id, eff["sha256"])
+        found = _effects.get(key)
+        if found is None:
+            found = _effects[key] = JsEffect(eff)
+            if len(_effects) > 64:
+                _effects.pop(next(iter(_effects)))
+    if fx_id != fxlibrary.DRAFT:
+        _looked_up[fx_id] = (lib, lib.rev, now, found)
+        if len(_looked_up) > 64:
+            _looked_up.pop(next(iter(_looked_up)))
     return found
 
 

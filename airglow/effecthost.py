@@ -27,6 +27,9 @@ def main(argv):
     parent = int(argv[3]) if len(argv) > 3 and argv[2] == "--parent" and argv[3].isdigit() else None
 
     import webview
+
+    from .window import quiet_requests
+    quiet_requests()                       # 30 frame POSTs a second: don't route each one through this process
     win = webview.create_window("Airglow effects", url, hidden=True, width=320, height=200)
 
     def watch_parent():
