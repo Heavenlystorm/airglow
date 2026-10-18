@@ -28,7 +28,7 @@ export function initStudio() {
   box().addEventListener("keydown", (e) => {          // layer rows are list items: Enter or Space picks one
     if ((e.key === "Enter" || e.key === " ") && e.target.matches("li[data-sel]")) { e.preventDefault(); e.target.click(); }
   });
-  on("state", () => { if (!box().closest(".view").hidden) paintProblems(); });
+  on("state", () => { followLights(); if (!box().closest(".view").hidden) paintProblems(); });
   on("zones", () => { if (E.runner) restartRunner(); });
   on("studio:open", (req) => { pending = req; if (location.hash === "#studio/edit") renderStudio("edit"); else location.hash = "#studio/edit"; });
 }
@@ -532,8 +532,18 @@ const syncLights = coalesce(async () => {
   catch (e) { E.problem = e.message; paintConsole(); }
 }, 350);
 
+// picking a profile (the tray, say) ends what the Studio plays on your lights: the switch follows
+function followLights() {
+  const playing = S.state?.trial?.kind === "studio";
+  if (E.lights && playing) E.lightsSeen = true;
+  else if (E.lights && E.lightsSeen && !playing) {
+    E.lights = E.lightsSeen = false;
+    const cb = $("#st-lights"); if (cb) cb.checked = false;
+  }
+}
+
 async function setLights(on) {
-  E.lights = on;
+  E.lights = on; E.lightsSeen = false;
   const cb = $("#st-lights"); if (cb) cb.checked = on;
   try {
     if (on) { await post("/api/studio/draft", { ...payload(E.doc), values: E.doc.values, lights: true }); toast("Playing on your lights"); }

@@ -24,6 +24,7 @@ let connected = true;
 let deviceKey = "";
 let setupDismissed = 0;          // "Not now" on the new-lights notice: quiet until even more new lights appear
 let updateDismissed = null;      // "Later" on the update notice, for that version
+let bootFailed = false;          // "Couldn't reach Airglow" is said once, not on every retry
 
 // ------------------------------------------------------------ routing
 function route() {
@@ -176,8 +177,8 @@ async function applyState(state) {
   // device list or connection changed: reload zones so the stage and Devices stay accurate
   const key = JSON.stringify([S.state.zones_rev, S.state.devices.map((d) => [d.id, d.online, d.zones.length])]);
   if (key !== deviceKey) {
-    deviceKey = key;
     S.zones = await get("/api/zones");
+    deviceKey = key;                 // only once they arrived: a failed fetch is tried again with the next state
     emit("zones");
   }
   renderBar();
@@ -206,7 +207,8 @@ async function boot() {
     S.history = history.filter((p) => p.t > Date.now() / 1000 - HISTORY_SECONDS);
     deviceKey = JSON.stringify([state.zones_rev, state.devices.map((d) => [d.id, d.online, d.zones.length])]);
   } catch (e) {
-    toast(`Couldn't reach Airglow: ${e.message}. Retrying.`, true);
+    if (!bootFailed) toast(`Couldn't reach Airglow: ${e.message}. Retrying.`, true);
+    bootFailed = true;
     setTimeout(boot, 3000);
     return;
   }

@@ -204,6 +204,40 @@ class TrialTests(unittest.TestCase):
         self.assertEqual(self.ctrl.fan_target, 50)
         self.assertEqual(self.store.state["fan_curve"], "profile:neon")   # remembered across restarts
 
+    def test_picking_a_preset_while_trying_ends_the_trial(self):
+        self.ctrl.set_fan_curve("silent")
+        key = "strip/z1"
+        cfg = self.store.zones()[key]
+        mine = {"effect": "solid", "params": {"color": "#abcdef"}}
+        self.store.set_zone(key, {**cfg, "override": mine, "component": {"id": None, "count": 1, "spot": "front"}}, 16)
+        self.ctrl.try_profile(profiles.scene_of(self.shared), "Neon", fan_points=self.shared["fans"]["curve"], clear_zones=[key])
+        night = next(p for p in self.store.get_presets() if p["id"] == "night")
+        self.assertTrue(all(s["ok"] for s in self.ctrl.apply_preset({**night, "fan_curve": None})))  # the tray
+        self.assertIsNone(self.ctrl.trial)
+        self.assertEqual(self.ctrl.active_preset, "night")
+        self.assertEqual(self.ctrl.base_curve, "silent")                  # the tried curve is gone, yours is back
+        self.assertEqual(self.store.zones()[key]["override"], mine)
+        self.assertEqual(self.store.state["active_preset"], "night")      # saved, like any preset you pick
+        self.ctrl.end_trial()                                             # a late Discard has nothing to undo
+        self.assertEqual(self.ctrl.active_preset, "night")
+        self.assertEqual(self.ctrl.base_scene["effect"], night["effect"])
+
+    def test_changes_while_trying_are_never_saved(self):
+        self.ctrl.set_scene({"effect": "solid", "params": {"color": "#123456"}})
+        self.ctrl.set_fan_curve("silent")
+        self.ctrl.try_profile(profiles.scene_of(self.shared), "Neon", fan_points=self.shared["fans"]["curve"])
+        self.ctrl.set_scene({"brightness": 40})                 # the Overview slider or the tray, while trying
+        self.assertEqual(self.ctrl.base_scene["brightness"], 40)
+        self.assertEqual(self.store.state["scene"]["effect"], "solid")
+        self.assertEqual(self.store.state["fan_curve"], "silent")
+        # a restart while trying comes back with what you had
+        again = Controller(config.Store(self.tmp.name), manager=FakeManager(), signals=lambda: signals(),
+                           read_sensors=lambda: {}, async_writes=False)
+        self.assertEqual(again.base_scene["params"]["color"], "#123456")
+        self.assertEqual(again.base_curve, "silent")
+        self.ctrl.end_trial()
+        self.assertEqual(self.store.state["scene"]["params"]["color"], "#123456")
+
     def test_automation_using_a_profile_brings_its_areas_and_curve(self):
         preset = config.validate_preset(profiles.to_preset(self.shared, "neon"), set(self.store.curves()))
         self.store.set_presets(self.store.get_presets() + [preset])

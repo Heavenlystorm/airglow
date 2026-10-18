@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from airglow import config
 
@@ -157,6 +158,35 @@ class StoreTests(unittest.TestCase):
         s = config.Store(self.dir)
         with self.assertRaises(ValueError):
             s.set_presets([{"id": "a", "name": "A"}, {"id": "a", "name": "B"}])
+
+
+    def test_duplicate_automation_ids_rejected(self):
+        s = config.Store(self.dir)
+        rule = {"id": "night", "when": {"type": "time", "start": "23:00", "end": "07:00"}, "then": {"type": "lights_off"}}
+        with self.assertRaises(ValueError):
+            s.set_rules([rule, dict(rule)], lambda r: dict(r))
+        self.assertEqual(s.get_rules(), [])
+
+    def test_a_briefly_locked_file_is_written_on_a_retry(self):
+        s = config.Store(self.dir)
+        real, calls = Path.replace, []
+
+        def flaky(path, target):
+            calls.append(target)
+            if len(calls) < 3:
+                raise PermissionError(13, "The process cannot access the file")
+            return real(path, target)
+        with mock.patch.object(Path, "replace", flaky), mock.patch.object(config.time, "sleep"):
+            s.update_settings({"temp_unit": "F"})
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(config.Store(self.dir).settings()["temp_unit"], "F")
+
+    def test_a_file_that_stays_locked_still_fails(self):
+        s = config.Store(self.dir)
+        with mock.patch.object(Path, "replace", side_effect=PermissionError(13, "locked")),                 mock.patch.object(config.time, "sleep") as sleep:
+            with self.assertRaises(PermissionError):
+                s.update_settings({"temp_unit": "F"})
+        self.assertEqual(sleep.call_count, 4)
 
 
 class RegressionTests(unittest.TestCase):

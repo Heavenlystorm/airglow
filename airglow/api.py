@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (__version__, autostart, conflicts, coolers, diagnostics, fancontrol, gallery, lightsetup, paths, profiles,
                system, tools, updates)
-from .automation import validate_rule
+from .automation import validate_rule, whole_number
 from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP
 from .lighting import effects, geometry, studio
 
@@ -362,8 +362,10 @@ def route(server, method, path, body, query=None):
         return presets
     if path == "/api/presets/from-current":
         name = str(body.get("name") or "").strip()
-        pid = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "preset"
-        pid = f"{pid}-{int(time.time()) % 100000:05d}"
+        presets = store.get_presets()
+        if len(presets) >= 24:
+            raise ApiError(400, "You have 24 profiles already. Remove one first (Profiles, Edit).")
+        pid = profiles.new_id(name, {p["id"] for p in presets})
         scene = ctrl.base_scene
         new = {"id": pid, "name": name, "effect": scene["effect"], "params": scene["params"],
                "brightness": scene["brightness"], "areas": _current_areas(ctrl, store), "fan_curve": None,
@@ -373,7 +375,7 @@ def route(server, method, path, body, query=None):
                 new["fan_curve"] = ctrl.base_curve
             else:                                   # a profile's own curve, or one being tried: keep its points
                 new["fan_points"] = ctrl.curve_points(ctrl.base_curve)
-        presets = store.set_presets(store.get_presets() + [new])
+        presets = store.set_presets(presets + [new])
         ctrl.mark_preset(pid)
         return {"presets": presets, "id": pid}
     if path == "/api/preview":
@@ -520,7 +522,7 @@ def route(server, method, path, body, query=None):
         ctrl.apply()
         return rules
     if path == "/api/automations/pause":
-        ctrl.automations.pause(int(body.get("minutes", 0)))
+        ctrl.automations.pause(whole_number(body.get("minutes", 0), "minutes must be a whole number"))
         ctrl.automations.evaluate()
         ctrl.apply()
         return {"paused_until": ctrl.automations.paused_until or None}

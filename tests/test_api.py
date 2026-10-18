@@ -300,6 +300,21 @@ class ApiTests(unittest.TestCase):
         self.assertIn(r["id"], [p["id"] for p in r["presets"]])
         self.store.set_presets([p for p in self.store.get_presets() if p["id"] != r["id"]])
 
+    def test_saving_the_same_name_twice_gives_two_profiles(self):
+        ids = [self.request("POST", "/api/presets/from-current", {"name": "Twice"})[1]["id"] for _ in range(2)]
+        self.assertEqual(ids, ["twice", "twice-2"])
+        self.store.set_presets([p for p in self.store.get_presets() if p["id"] not in ids])
+
+    def test_saving_past_24_profiles_says_why(self):
+        before = self.store.get_presets()
+        self.store.set_presets(before + [{"id": f"p{n}", "name": f"P{n}"} for n in range(24 - len(before))])
+        try:
+            status, r = self.request("POST", "/api/presets/from-current", {"name": "One more"})
+            self.assertEqual(status, 400)
+            self.assertIn("24 profiles", r["error"])
+        finally:
+            self.store.set_presets(before)
+
     def test_automations(self):
         rules = [{"id": "night", "when": {"type": "time", "start": "23:00", "end": "07:00"}, "then": {"type": "lights_off"}}]
         status, saved = self.request("POST", "/api/automations", {"rules": rules})
@@ -310,6 +325,21 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(r["paused_until"])
         self.request("POST", "/api/automations/pause", {"minutes": 0})
         self.request("POST", "/api/automations", {"rules": []})
+
+    def test_malformed_automations_are_refused_not_crashes(self):
+        before = self.store.get_rules()
+        lights_off = {"type": "lights_off"}
+        for when, then in [({"type": "idle", "minutes": None}, lights_off),
+                           ({"type": "temp_above", "temp": [80]}, lights_off),
+                           ({"type": "locked"}, {"type": "dim", "brightness": {}}),
+                           ({"type": "locked"}, {"type": "preset", "preset": ["gaming"]}),
+                           ({"type": "locked"}, {"type": "fan_curve", "curve": {"x": 1}}),
+                           ("locked", lights_off)]:
+            status, r = self.request("POST", "/api/automations", {"rules": [{"id": "x", "when": when, "then": then}]})
+            self.assertEqual(status, 400, (when, then, r))
+        for minutes in (None, "soon", [5], True):
+            self.assertEqual(self.request("POST", "/api/automations/pause", {"minutes": minutes})[0], 400, minutes)
+        self.assertEqual(self.store.get_rules(), before)
 
     def test_settings_update(self):
         status, s = self.request("POST", "/api/settings", {"temp_unit": "F", "lights_off_on_lock": True})

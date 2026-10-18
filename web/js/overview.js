@@ -3,7 +3,7 @@
 // flashing, and dragging never fights the 2-second refresh.
 
 import { $, $$, S, clamp, curveLabel, effectName, emit, esc, fail, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
-import { R, defaultStyle, ensureHistory, fmt, fmtText, level, loadCatalog, range, resample, sensorName, toDisplay, value } from "./readings.js";
+import { R, defaultStyle, ensureHistory, fmt, fmtText, level, loadCatalog, range, resample, sensorName, value } from "./readings.js";
 import { EASE, SPRING, countTo, flip, reduced } from "./motion.js";
 import { paintMini } from "./stage.js";
 import { closeSheet, openSheet } from "./sheet.js";
@@ -163,7 +163,7 @@ function unavailable(id) {
 function source(meta) {
   if (!meta) return "";
   const s = meta.source || (meta.group !== "Quick picks" && meta.group !== "Windows" ? meta.group : "");
-  return (s || "").replace(/^AMD |^Intel\(R\) Core\(TM\) |^NVIDIA GeForce |^NVIDIA |\(TM\)|\(R\)/g, "").trim();
+  return (s || "").replace(/^AMD |^Intel\(R\) Core\(TM\) |^NVIDIA GeForce |^NVIDIA |\(TM\)|\(R\)| \d+-Core Processor$/g, "").trim();
 }
 
 function updateSensor(el, t) {
@@ -172,11 +172,12 @@ function updateSensor(el, t) {
   setHTML(el.querySelector(".tile-name"), esc(name));
   const src = el.querySelector(".tile-src"), srcText = t.style === "graph" ? "" : source(meta);
   setHTML(src, esc(srcText));
-  // the title wins: when both don't fit, the source moves to the title's tooltip
+  // the title wins: the source is shortened first, and when too little of it is left it moves to the title's tooltip
   const nameEl = el.querySelector(".tile-name");
   src.hidden = false;
-  src.hidden = !!srcText && nameEl.scrollWidth > nameEl.clientWidth;
+  src.hidden = !!srcText && (nameEl.scrollWidth > nameEl.clientWidth || src.clientWidth < 64);
   nameEl.title = src.hidden ? `${name} · ${srcText}` : "";
+  src.title = !src.hidden && src.scrollWidth > src.clientWidth ? srcText : "";
   const missing = v == null && t.style !== "graph";
   el.classList.toggle("missing", missing);
   let note = el.querySelector(".tile-note");
@@ -247,7 +248,7 @@ function updateSensor(el, t) {
       setPath(el.querySelector(`.l-${i}`), p.d);
       setPath(el.querySelector(`.a-${i}`), p.area);
     });
-    setHTML(el.querySelector(".ax-hi"), esc(fmtText(meta, toDisplay(meta, ghi) === ghi ? ghi : ghi)));
+    setHTML(el.querySelector(".ax-hi"), esc(fmtText(meta, ghi)));
     setHTML(el.querySelector(".ax-mid"), esc(fmtText(meta, (glo + ghi) / 2)));
     if (!t.label) setHTML(el.querySelector(".tile-name"), esc(t.sensors.length > 1 ? `${metas[0]?.short || ""} and ${metas[1]?.short || ""}`.trim() : name));
   }
