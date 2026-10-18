@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.7
 - Setting up the helper programs on a PC without the Visual C++ runtime stopped at its first step with "isn't signed
   by Microsoft", so neither LibreHardwareMonitor nor OpenRGB was installed. The runtime is now checked and installed.
 - A PC without the Edge WebView2 runtime used to get an empty window and no explanation. The installer now adds the
