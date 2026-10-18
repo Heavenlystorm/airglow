@@ -91,7 +91,9 @@ class LhmFans:
 
     def __init__(self, base_url, headers=lambda: {}, send=http_set):
         self._base_url, self._headers, self._send = base_url, headers, send
-        self.sent = {}          # sensor id -> (duty, monotonic time sent)
+        # sensor id -> (duty, monotonic time sent) for every channel Airglow drives; (None, -inf) after a failed send:
+        # still ours (handed back, and in the failsafe), and tried again next time
+        self.sent = {}
         self.errors = {}        # sensor id -> last error text
         # the controller's loop, the power events (failsafe at shutdown) and quitting all send
         self._lock = threading.RLock()
@@ -118,20 +120,27 @@ class LhmFans:
                 if self.errors.get(sid) != str(e):
                     log.warning("fan %s: %s", sid, e)
                 self.errors[sid] = str(e)
-                self.sent.pop(sid, None)           # try again next time
+                # an earlier speed may still be on it: keep it ours, so it's handed back (or set to the failsafe
+                # speed) even if no later send gets through; the unknown speed makes the next apply try again
+                self.sent[sid] = (None, float("-inf"))
 
     def release(self, sid):
         with self._lock:
             self._release(sid)
 
     def _release(self, sid):
-        self.sent.pop(sid, None)
-        self.errors.pop(sid, None)
         try:
             self._send(self._base_url(), sid, None, self._headers())
-            log.info("fan %s handed back to its own control", sid)
         except OSError as e:
-            log.warning("fan %s: couldn't hand it back: %s", sid, e)
+            text = f"couldn't hand it back: {e}"
+            if self.errors.get(sid) != text:
+                log.warning("fan %s: %s", sid, text)
+            self.errors[sid] = text
+            self.sent[sid] = (None, float("-inf"))     # still ours: the next apply tries again
+            return
+        self.sent.pop(sid, None)
+        self.errors.pop(sid, None)
+        log.info("fan %s handed back to its own control", sid)
 
     def release_all(self):
         with self._lock:
@@ -147,7 +156,7 @@ class LhmFans:
         """Everything Airglow drives to at least duty, now (a channel held faster keeps its speed). Returns how
         many channels that was."""
         with self._lock:
-            targets = {sid: max(d, duty) for sid, (d, _) in self.sent.items()}
+            targets = {sid: duty if d is None else max(d, duty) for sid, (d, _) in self.sent.items()}
             self.resend_all()
             self._apply(targets)
             return len(targets)
