@@ -3,7 +3,7 @@
 // flashing, and dragging never fights the 2-second refresh.
 
 import { $, $$, S, clamp, curveLabel, effectName, emit, esc, fail, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
-import { R, defaultStyle, ensureHistory, fmt, fmtText, level, loadCatalog, range, resample, sensorName, toDisplay, value } from "./readings.js";
+import { R, defaultStyle, ensureHistory, fmt, fmtText, level, loadCatalog, range, resample, sensorName, value } from "./readings.js";
 import { EASE, SPRING, countTo, flip, reduced } from "./motion.js";
 import { paintMini } from "./stage.js";
 import { closeSheet, openSheet } from "./sheet.js";
@@ -247,7 +247,7 @@ function updateSensor(el, t) {
       setPath(el.querySelector(`.l-${i}`), p.d);
       setPath(el.querySelector(`.a-${i}`), p.area);
     });
-    setHTML(el.querySelector(".ax-hi"), esc(fmtText(meta, toDisplay(meta, ghi) === ghi ? ghi : ghi)));
+    setHTML(el.querySelector(".ax-hi"), esc(fmtText(meta, ghi)));
     setHTML(el.querySelector(".ax-mid"), esc(fmtText(meta, (glo + ghi) / 2)));
     if (!t.label) setHTML(el.querySelector(".tile-name"), esc(t.sensors.length > 1 ? `${metas[0]?.short || ""} and ${metas[1]?.short || ""}`.trim() : name));
   }
