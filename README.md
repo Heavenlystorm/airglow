@@ -7,7 +7,7 @@
 [![Tests](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml/badge.svg)](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml)
 ![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4)
 [![MIT licence](https://img.shields.io/github/license/Heavenlystorm/airglow)](LICENSE)
-[![r/AirglowRGB on Reddit](https://img.shields.io/reddit/subreddit-subscribers/AirglowRGB?style=flat&logo=reddit&logoColor=white&label=r%2FAirglowRGB&color=ff4500)](https://www.reddit.com/r/AirglowRGB/)
+[![r/AirglowRGB on Reddit](https://img.shields.io/badge/Reddit-r%2FAirglowRGB-ff4500?logo=reddit&logoColor=white)](https://www.reddit.com/r/AirglowRGB/)
 
 Airglow runs the RGB lighting, the fans and the temperature readouts of a Windows PC from one app. If you've ended up
 with NZXT CAM, Armoury Crate and an RGB program all running at once and fighting over the same LEDs, this replaces
