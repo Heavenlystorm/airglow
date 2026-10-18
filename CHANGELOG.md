@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.5
 - Fan safety: "full speed at 90 °C" now watches the hottest part, whatever the curve follows. With the curve on the
   graphics card (or the new coolant reading), a processor at 95 °C used to leave the fans on the curve.
 - **Motherboard fan headers and liquid coolers.** The Fans tab lists every fan and pump LibreHardwareMonitor can
