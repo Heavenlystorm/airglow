@@ -10,7 +10,7 @@ import threading
 import urllib.request
 import webbrowser
 
-from . import APP_NAME, __version__, api, autostart, install, paths, updates
+from . import APP_NAME, __version__, api, autostart, install, paths, updates, webview2
 from .config import Store
 from .controller import Controller
 
@@ -84,6 +84,17 @@ def message_box(text):
     ctypes.windll.user32.MessageBoxW(None, text, APP_NAME, 0x10)
 
 
+def offer_webview2_download():
+    """The window needs the WebView2 runtime (see webview2.py). Say so, and offer Microsoft's download page."""
+    MB_YESNO, MB_ICONERROR, IDYES = 0x4, 0x10, 6
+    answer = ctypes.windll.user32.MessageBoxW(
+        None, "Airglow needs the Microsoft Edge WebView2 Runtime to show its window, and this PC doesn't have it.\n\n"
+              "Open Microsoft's download page now? Install the Evergreen Bootstrapper there, then start Airglow again.",
+        APP_NAME, MB_YESNO | MB_ICONERROR)
+    if answer == IDYES:
+        webbrowser.open(webview2.DOWNLOAD_URL)
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     install.run_hooks()             # when Velopack started us for an install/uninstall hook, this runs it and exits
@@ -120,6 +131,13 @@ def main(argv=None):
             ask_running_instance_to_show(running_port(port))
         return 0
     updates.apply_pending(argv)     # an update downloaded last time: apply it and start again (doesn't return)
+
+    if not webview2.installed():
+        log.error("the Microsoft Edge WebView2 runtime isn't installed, so the window can't open")
+        if not background:
+            offer_webview2_download()
+            return 1
+        # started with Windows: carry on, the lights and fans don't need the window
 
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Airglow.App")

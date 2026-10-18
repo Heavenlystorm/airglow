@@ -50,9 +50,11 @@ if ($Delta) {
 python tools\release.py notes $version dist\notes.md
 if ($LASTEXITCODE -ne 0) { throw "CHANGELOG.md has no notes for $version." }
 
+# --framework webview2: Setup installs the Edge WebView2 runtime when the PC lacks it. Airglow's window can't open
+# without it (some Windows 10 setups, and "debloated" ones, don't have it).
 $pack = @("pack", "--packId", "Airglow", "--packVersion", $version, "--packDir", "dist\Airglow", "--mainExe", "Airglow.exe",
           "--packTitle", "Airglow", "--packAuthors", "The Airglow contributors", "--icon", "airglow.ico",
-          "--channel", $channel, "--releaseNotes", "dist\notes.md", "--outputDir", $out)
+          "--channel", $channel, "--framework", "webview2", "--releaseNotes", "dist\notes.md", "--outputDir", $out)
 if ($env:AIRGLOW_SIGN) { $pack += @("--signTemplate", $env:AIRGLOW_SIGN.Replace("{file}", "{{file}}")) }
 vpk @pack
 if ($LASTEXITCODE -ne 0) { throw "vpk pack failed." }
