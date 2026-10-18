@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.6.9
+- **Studio effects take less than half the processor time.** With an animated Studio effect and the window in the
+  tray, Airglow, its effect host and their WebView2 processes went from about a fifth of a core to under a
+  tenth. The effect file was checked on disk for every zone on every frame; WebView2 handed every frame Airglow's
+  effect host sent back to Python and back for nothing; and frames now go back as plain bytes, only when they changed.
+- Closed to the tray, Airglow's window kept drawing the live preview 15 times a second, because WebView2 wasn't
+  told it was hidden. Now it is: the page stops, and WebView2 lets go of most of its memory (about 120 MB to 10 MB).
+- Graphics cards and memory on the slow I²C bus are sent at most 5 updates a second instead of 10. With an animated
+  effect, OpenRGB went from about 13% of a core to about 6% on an RTX 5080.
+- Airglow and its effect host each start one numerical worker thread instead of one per processor core. Airglow's
+  main process went from 42 threads to 27 and from 585 MB of reserved memory to about 100 MB.
+- LibreHardwareMonitor set up by Airglow reads only what Airglow uses: no network adapters, power supplies or
+  batteries, every 2 seconds instead of every second, drive health every 30 seconds, and 30 seconds of history
+  instead of 12 hours. This applies when Airglow installs or reinstalls it. A LibreHardwareMonitor you installed
+  yourself is left as it is.
+- A copy that can't update itself now says why, running from source or a build that wasn't installed, and links
+  to the releases page.
+
 ## 1.6.8
 - **Much less processor time with OpenRGB.** Graphics cards and memory sit on a slow bus, and an animated effect
   sent them 30 updates a second: one RTX 5080 kept OpenRGB busy on a whole core. They now get at most 10 a second,

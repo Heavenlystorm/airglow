@@ -95,8 +95,8 @@ class OpenRGBDevice(Device):
     kind = "openrgb"
     keepalive = False         # OpenRGB keeps the colours itself; a reconnect or reload still re-sends everything
     # Graphics cards and memory sit on I²C (often over NVAPI), where every update costs OpenRGB kernel time: 30
-    # frames a second of an animated effect kept a whole core busy for one RTX 5080.
-    SLOW_BUS_FPS = 10
+    # frames a second of an animated effect kept a whole core busy for one RTX 5080, and 10 still took 12-14%.
+    SLOW_BUS_FPS = 5
     SLOW_BUS_MIN_CHANGE = 3
 
     def __init__(self, bridge, ctrl):
