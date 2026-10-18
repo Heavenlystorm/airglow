@@ -1,7 +1,10 @@
 import hashlib
 import io
 import json
+import os
 import re
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -43,10 +46,11 @@ class Commands:
     """Stands in for subprocess.run and records what would have run."""
 
     def __init__(self, code=0):
-        self.calls, self.code = [], code
+        self.calls, self.kwargs, self.code = [], [], code
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
+        self.kwargs.append(kw)
         return SimpleNamespace(returncode=self.code, stdout="", stderr="")
 
     def named(self, *words):
@@ -149,6 +153,51 @@ class FileTests(unittest.TestCase):
         self.assertEqual(root.find(".//t:Principal/t:RunLevel", ns).text, "HighestAvailable")
         self.assertEqual(root.find(".//t:Exec/t:Arguments", ns).text, '--server --name "a<b&c"')
         self.assertEqual(root.find(".//t:ExecutionTimeLimit", ns).text, "PT0S")
+
+
+class SignatureCheckTests(unittest.TestCase):
+    def test_the_path_is_in_the_script_not_after_it(self):
+        # Arguments after "-Command" never reach $args: PowerShell glues them onto the end of the script. That made
+        # the check fail for every file, and it would split a path with spaces.
+        run = Commands()
+        path = r"C:\Program Files\Airglow Tools\.staging\O'Brien\vc_redist.x64.exe"
+        self.assertTrue(tools._microsoft_signed(path, run))
+        (cmd,) = run.calls
+        self.assertEqual(cmd[-2], "-Command")               # the script is the last argument
+        self.assertNotIn("$args", cmd[-1])
+        self.assertIn(tools._ps_literal(path), cmd[-1])
+        self.assertIn("O''Brien", cmd[-1])                  # an apostrophe in the path can't end the string early
+
+    def test_a_failing_check_says_no(self):
+        self.assertFalse(tools._microsoft_signed("vc_redist.x64.exe", Commands(code=1)))
+
+    def test_powershell_7_module_path_is_not_passed_on(self):
+        run = Commands()
+        with mock.patch.dict(os.environ, {"PSModulePath": r"C:\Program Files\PowerShell\7\Modules"}):
+            tools._microsoft_signed("vc_redist.x64.exe", run)
+        self.assertNotIn("PSModulePath", run.kwargs[0]["env"])
+
+    @unittest.skipUnless(sys.platform == "win32", "needs Windows PowerShell")
+    def test_real_powershell_accepts_microsoft_files_and_refuses_others(self):
+        results = []
+
+        def run(cmd, **kw):                                 # the real thing, keeping what PowerShell said
+            results.append(subprocess.run(cmd, **kw))
+            return results[-1]
+
+        def said():
+            r = results[-1]
+            return f"exit {r.returncode}; stdout {r.stdout!r}; stderr {r.stderr!r}"
+
+        cmd_exe = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+        self.assertTrue(tools._microsoft_signed(cmd_exe, run), said())
+        with tempfile.TemporaryDirectory() as d:
+            unsigned = Path(d) / "not signed.exe"
+            unsigned.write_bytes(b"MZ not really")
+            self.assertFalse(tools._microsoft_signed(unsigned, run), said())
+        defender = Path(os.environ.get("ProgramFiles", "")) / "Windows Defender" / "MpCmdRun.exe"
+        if defender.exists():                               # a path with a space in it
+            self.assertTrue(tools._microsoft_signed(defender, run), said())
 
 
 class InstallTests(unittest.TestCase):
