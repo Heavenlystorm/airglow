@@ -20,7 +20,11 @@ and optionally:
                   accept or reject one USB interface of a matching controller (default: the product's interface,
                   or the first interface seen when it names none)
     OPENRGB_SKIP  name fragments of OpenRGB devices this plugin already drives, so two programs never fight over
-                  the same LEDs. Only applied when one of the plugin's controllers is actually present.
+                  the same LEDs. Only applied when one of the plugin's controllers is actually present and lights
+                  something (Device.lighting).
+    OPENRGB_SKIP_TYPES
+                  OpenRGB device types (openrgb.DEVICE_TYPES, e.g. "Motherboard") OPENRGB_SKIP is limited to, so a
+                  brand-wide fragment never hides the same brand's other devices. Default: any type.
     PARAMETERS    per-device settings, in the same schema as effect parameters (types range, choice, toggle,
                   color). The Devices tab draws them; saved values reach the device through Device.set_params().
 

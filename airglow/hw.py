@@ -41,6 +41,7 @@ class Device:
     type_name = "Device"
     experimental = False      # driver not yet confirmed on real hardware (shown in the Devices tab)
     note = None
+    lighting = True           # drives LEDs; a fans-only controller leaves its lighting to OpenRGB
     plugin = None             # the plugin module that drives it (native devices only)
     parameters = ()           # per-device settings schema, drawn by the Devices tab
 
@@ -149,7 +150,9 @@ class OpenRGBBridge:
 
     def __init__(self, host="127.0.0.1", port=6742, skip=()):
         self.client = OpenRGBClient(host, port)
-        self.skip = skip            # name fragments of devices we drive natively (avoid double control)
+        # devices we drive natively (avoid double control): name fragments, each with the OpenRGB device types it
+        # applies to, or None for any type. A plain string is a fragment for any type.
+        self.skip = tuple(s if isinstance(s, tuple) else (s, None) for s in skip)
         self.devices = {}
         self.status = "OpenRGB isn't running"
         self._last_try = 0.0
@@ -185,12 +188,18 @@ class OpenRGBBridge:
             return
         found = {}
         for c in ctrls:
-            if any(s.lower() in f"{c['vendor']} {c['name']}".lower() for s in self.skip):
+            if self.skipped(c):
                 continue
             d = OpenRGBDevice(self, c)
             found[d.id] = d
         self.devices = found
         self.status = f"Connected, {len(found)} device{'s' if len(found) != 1 else ''}"
+
+    def skipped(self, ctrl):
+        """True for an OpenRGB controller that Airglow already drives directly."""
+        text = f"{ctrl['vendor']} {ctrl['name']}".lower()
+        return any(frag.lower() in text and (types is None or ctrl.get("type_name") in types)
+                   for frag, types in self.skip)
 
 
 # ---------------------------------------------------------------- manager
@@ -232,9 +241,13 @@ class DeviceManager:
                 log.warning("USB device scan failed: %s", e)
                 natives = []
         self.natives = {d.id: d for d in natives}
-        # leave out of OpenRGB whatever a plugin already drives, but only for families that are actually here
-        present = {id(m): m for m in (getattr(d, "plugin_module", None) for d in natives) if m is not None}
-        skip = [name for m in sorted(present.values(), key=lambda m: m.ID_PREFIX)
+        # leave out of OpenRGB whatever a plugin already lights, but only for families that are actually here: a
+        # fans-only controller leaves its lighting to OpenRGB, and a board plugin only claims motherboard devices,
+        # not the same brand's graphics cards, memory or keyboards
+        present = {id(m): m for m in (getattr(d, "plugin_module", None) for d in natives if d.lighting)
+                   if m is not None}
+        skip = [(name, tuple(getattr(m, "OPENRGB_SKIP_TYPES", ())) or None)
+                for m in sorted(present.values(), key=lambda m: m.ID_PREFIX)
                 for name in getattr(m, "OPENRGB_SKIP", [])]
         self.bridge = bridge or OpenRGBBridge(skip=tuple(skip))
         from .dynlight import DynamicLightingBridge

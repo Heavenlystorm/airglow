@@ -68,18 +68,21 @@ export function renderSettings() {
       ${row("Lights off while the PC is locked", "", sw("s-lock", s.lights_off_on_lock))}
     </section>
     <section class="set-group"><h2>Fans</h2>
-      ${row("Follow the temperature of", "The fan curve reacts to this reading.", `<select class="select" id="s-source" style="width:220px">
+      ${row("Follow the temperature of", s.temp_source === "liquid" && S.state?.sensors?.liquid_temp == null
+        ? "The fan curve reacts to this reading. No coolant temperature is coming through, so the hotter part is used until it does."
+        : "The fan curve reacts to this reading. Coolant suits radiator fans: it changes slowly, so they don't rev up and down.", `<select class="select" id="s-source" style="width:220px">
         <option value="max"${s.temp_source === "max" ? " selected" : ""}>Whichever is hotter</option>
         <option value="cpu"${s.temp_source === "cpu" ? " selected" : ""}>Processor</option>
-        <option value="gpu"${s.temp_source === "gpu" ? " selected" : ""}>Graphics card</option></select>`)}
+        <option value="gpu"${s.temp_source === "gpu" ? " selected" : ""}>Graphics card</option>
+        <option value="liquid"${s.temp_source === "liquid" ? " selected" : ""}>Coolant (liquid cooler)</option></select>`)}
       ${row("Failsafe speed", "Used when temperatures can't be read, and left on the fans when Airglow quits.", `<input type="range" id="s-failsafe" min="40" max="100" step="5" value="${s.fan_failsafe_duty}"><output id="s-failsafe-v">${s.fan_failsafe_duty}%</output>`)}
       ${row("Ramp speed", "How much fan speed may change every 2 seconds. Lower is calmer.", `<input type="range" id="s-step" min="1" max="25" value="${s.fan_max_step}"><output id="s-step-v">${s.fan_max_step}%</output>`)}
-      ${row("Motherboard fans", v.fancontrol_installed
-        ? (v.fan_profiles.length ? `FanControl has ${v.fan_profiles.length} saved profile${v.fan_profiles.length > 1 ? "s" : ""}. Presets can switch between them.` : "FanControl is installed but has no saved profiles yet. Save some in FanControl to use them in presets.")
-        : "These follow your BIOS curve. Install FanControl if you want presets to switch them too.", "")}
+      ${row("Motherboard and cooler fans", `Airglow can drive the board's fan headers and the pumps and fans of many coolers through LibreHardwareMonitor: pick them on the <a href="#fans">Fans</a> tab. Until you do, they keep your BIOS or cooler curve. ${v.fancontrol_installed
+        ? (v.fan_profiles.length ? `FanControl has ${v.fan_profiles.length} saved profile${v.fan_profiles.length > 1 ? "s" : ""}, which profiles can switch between too.` : "FanControl is installed but has no saved profiles yet.")
+        : ""}`, "")}
     </section>
     <section class="set-group"><h2>Helper programs</h2>
-      <p class="hint">Temperatures come from LibreHardwareMonitor, and most RGB devices other than NZXT and ASUS from OpenRGB.</p>
+      <p class="hint">Temperatures and motherboard and cooler fan control come from LibreHardwareMonitor, and most RGB devices other than NZXT and ASUS from OpenRGB.</p>
       <div class="tools-box" data-tools="full"></div>
     </section>
     <section class="set-group"><h2>Sensors</h2>

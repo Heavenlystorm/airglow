@@ -12,7 +12,10 @@ NAME = "ASUS Aura USB"
 VENDOR = "ASUS"
 TRANSPORT = "hid"
 ID_PREFIX = "asus-aura"
-OPENRGB_SKIP = ["ASUS TUF", "ASUS ROG", "ASUS PRIME", "ASUS ProArt", "ASUS Aura", "AULA"]
+# OpenRGB names this controller "ASUS <board name>". Only its motherboard entries are ours: ASUS graphics cards,
+# memory, keyboards, mice and monitors are named "ASUS ROG ..." and "ASUS TUF ..." too, and stay with OpenRGB.
+OPENRGB_SKIP = ["ASUS"]
+OPENRGB_SKIP_TYPES = ["Motherboard"]
 
 PARAMETERS = [
     p_toggle("board_leds", "Light the board's own LEDs", True),

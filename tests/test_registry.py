@@ -76,8 +76,34 @@ class PluginTests(unittest.TestCase):
 
     def test_openrgb_skips_what_we_drive_natively(self):
         manager = hw.DeviceManager(natives=hw.detect_natives([hid_entry(0x1E71, 0x2022)], backend=FakeHidBackend()))
-        self.assertIn("NZXT Control Hub", manager.bridge.skip)
-        self.assertNotIn("ASUS ROG", manager.bridge.skip)
+        self.assertIn(("NZXT Control Hub", None), manager.bridge.skip)
+        self.assertFalse(any(name == "ASUS" for name, _ in manager.bridge.skip))
+
+    @staticmethod
+    def _orgb(name, type_name, vendor="ASUS"):
+        return {"vendor": vendor, "name": name, "type_name": type_name}
+
+    def test_an_aura_board_only_hides_asus_motherboard_entries(self):
+        # OpenRGB names the board "ASUS <board>"; the same brand's cards, memory and keyboards are "ASUS ROG ..." too
+        manager = hw.DeviceManager(natives=hw.detect_natives([hid_entry(0x0B05, 0x19AF, interface=2)],
+                                                             backend=FakeHidBackend()))
+        skipped = manager.bridge.skipped
+        self.assertTrue(skipped(self._orgb("ASUS ROG STRIX B650E-F GAMING WIFI", "Motherboard")))
+        self.assertTrue(skipped(self._orgb("ASUS TUF GAMING X670E-PLUS", "Motherboard")))
+        self.assertFalse(skipped(self._orgb("ASUS ROG STRIX RTX 4080 OC", "Graphics card")))
+        self.assertFalse(skipped(self._orgb("ASUS ROG Strix Scope II", "Keyboard")))
+        self.assertFalse(skipped(self._orgb("ASUS TUF Gaming K3", "Keyboard")))
+        self.assertFalse(skipped(self._orgb("ASUS Aura DRAM", "Memory")))
+        self.assertFalse(skipped(self._orgb("NZXT Hue 2", "LED strip", vendor="NZXT")))
+
+    def test_a_fans_only_nzxt_controller_leaves_its_lighting_to_openrgb(self):
+        manager = hw.DeviceManager(natives=hw.detect_natives([hid_entry(0x1E71, 0x2011)], backend=FakeHidBackend()))
+        self.assertEqual(list(manager.natives), ["nzxt-hub"])                  # Airglow still drives its fans
+        self.assertFalse(manager.natives["nzxt-hub"].lighting)
+        self.assertFalse(manager.bridge.skipped(self._orgb("NZXT RGB & Fan Controller", "LED strip", vendor="NZXT")))
+        both = hw.DeviceManager(natives=hw.detect_natives([hid_entry(0x1E71, 0x2011), hid_entry(0x1E71, 0x2022)],
+                                                          backend=FakeHidBackend()))
+        self.assertTrue(both.bridge.skipped(self._orgb("NZXT Control Hub", "LED strip", vendor="NZXT")))
 
 
 class DeviceParameterTests(unittest.TestCase):

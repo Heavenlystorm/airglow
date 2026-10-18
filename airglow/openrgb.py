@@ -298,7 +298,7 @@ class OpenRGBClient:
                         if not head:
                             self.close()
                         break
-                    self.sock.setblocking(True)
+                    self.sock.settimeout(self.timeout)       # the rest is on its way; never wait for ever
                     _, pid, _ = self._read_packet()
                     self.sock.setblocking(False)
                     if pid == DEVICE_LIST_UPDATED:
