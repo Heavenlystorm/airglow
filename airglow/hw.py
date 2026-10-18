@@ -44,6 +44,9 @@ class Device:
     lighting = True           # drives LEDs; a fans-only controller leaves its lighting to OpenRGB
     plugin = None             # the plugin module that drives it (native devices only)
     parameters = ()           # per-device settings schema, drawn by the Devices tab
+    max_fps = None            # frames per second this device is sent at most (None: every engine frame)
+    min_change = 0            # skip a frame unless some channel moved by more than this (0: any change is sent)
+    keepalive = True          # re-send unchanged frames now and then (for controllers that forget their colours)
 
     def __init__(self):
         self.zones = []
@@ -88,6 +91,11 @@ class Device:
 
 class OpenRGBDevice(Device):
     kind = "openrgb"
+    keepalive = False         # OpenRGB keeps the colours itself; a reconnect or reload still re-sends everything
+    # Graphics cards and memory sit on I²C (often over NVAPI), where every update costs OpenRGB kernel time: 30
+    # frames a second of an animated effect kept a whole core busy for one RTX 5080.
+    SLOW_BUS_FPS = 10
+    SLOW_BUS_MIN_CHANGE = 3
 
     def __init__(self, bridge, ctrl):
         super().__init__()
@@ -120,6 +128,11 @@ class OpenRGBDevice(Device):
                 zone.shape, zone.fans = "fans", len(segs)
             self.zones.append(zone)
         self._custom_mode_set = False
+        slow = str(ctrl.get("location") or "").lower().startswith("i2c")
+        self.max_fps = self.SLOW_BUS_FPS if slow else None
+        self.min_change = self.SLOW_BUS_MIN_CHANGE if slow else 0
+        self._pending = {}                # zone index -> colours written since the last flush
+        self._sent = {}                   # zone index -> colours last sent, for one-packet updates
 
     @property
     def online(self):
@@ -140,7 +153,26 @@ class OpenRGBDevice(Device):
             self.bridge.client.set_custom_mode(self.index)
             self._custom_mode_set = True
         self.ensure_size(zone_id, len(colors))
-        self.bridge.client.update_zone(self.index, self.zone_index(zone_id), colors)
+        self._pending[self.zone_index(zone_id)] = list(colors)
+
+    def flush(self):
+        """Send what write_zone collected: one UPDATE_LEDS for the whole device once Airglow has written every zone
+        (OpenRGB queues those on the device's own thread instead of writing each zone as it arrives), else one
+        UPDATE_ZONE_LEDS per zone so zones Airglow doesn't drive are left alone."""
+        pending, self._pending = self._pending, {}
+        if not pending:
+            return
+        zones = self.ctrl["zones"]
+        if all(zi in pending or zi in self._sent for zi in range(len(zones))):
+            colors = []
+            for zi, z in enumerate(zones):
+                zc = (pending[zi] if zi in pending else self._sent[zi])[:z["leds_count"]]
+                colors += zc + [(0, 0, 0)] * (z["leds_count"] - len(zc))
+            self.bridge.client.update_leds(self.index, colors)
+        else:
+            for zi, colors in pending.items():
+                self.bridge.client.update_zone(self.index, zi, colors)
+        self._sent.update(pending)
 
 
 class OpenRGBBridge:

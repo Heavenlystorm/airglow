@@ -176,6 +176,60 @@ class EngineTests(unittest.TestCase):
         self.engine.blackout()
         self.assertEqual(set(self.dev.last("z1")), {(0, 0, 0)})
 
+    def _z1_writes(self):
+        return len([w for w in self.dev.writes if w[0] == "z1"])
+
+    def test_slow_device_is_sent_at_most_max_fps(self):
+        self.dev.max_fps = 10
+        self.engine.set_scene({"effect": "rainbow", "params": {}, "brightness": 100, "on": True})
+        self.engine.tick()
+        self.engine._t0 -= 2.0                                  # the frame changes...
+        self.engine.tick()
+        self.assertEqual(self._z1_writes(), 1)                  # ...but comes too soon after the last one
+        self.assertTrue(self.engine.frames["d/z1"])            # the live preview still gets it
+        self.engine._dev_sent["d"] -= 0.1                       # one slow-device frame later
+        self.engine.tick()
+        self.assertEqual(self._z1_writes(), 2)
+
+    def test_slow_device_skips_small_changes(self):
+        self.dev.min_change = 3
+        self.engine.tick()                                      # (128, 64, 0) on every LED
+        raw, sent = self.engine._last["d/z1"]
+        self.engine._last["d/z1"] = (bytes([126, 61, 0] * 6), sent)
+        self.engine.tick()
+        self.assertEqual(self._z1_writes(), 1)                  # nothing moved by more than 3
+        self.engine._last["d/z1"] = (bytes([124, 64, 0] * 6), sent)
+        self.engine.tick()
+        self.assertEqual(self._z1_writes(), 2)                  # red moved by 4
+
+    def test_a_small_step_to_dark_is_still_sent(self):
+        self.dev.min_change = 3
+        self.engine.tick()
+        raw, sent = self.engine._last["d/z1"]
+        self.engine._last["d/z1"] = (bytes([128, 64, 2] * 6), sent)
+        self.engine.tick()
+        self.assertEqual(self._z1_writes(), 2)
+
+    def test_no_keepalive_for_devices_that_keep_their_colours(self):
+        self.dev.keepalive = False
+        self.engine.tick()
+        raw, sent = self.engine._last["d/z1"]
+        self.engine._last["d/z1"] = (raw, sent - self.engine.KEEPALIVE - 1)
+        self.engine.tick()
+        self.assertEqual(self._z1_writes(), 1)
+
+    def test_dark_frame_after_a_probe_waits_for_a_throttled_device(self):
+        self.dev.max_fps = 10
+        self.engine.probe("d/z1", "count", 2)
+        self.engine.tick()
+        self.engine.probe("d/z1", "off")
+        self.engine.tick()                                      # throttled: not sent yet
+        self.assertNotEqual(set(self.dev.last("z1")), {(0, 0, 0)})
+        self.engine._dev_sent["d"] -= 0.1
+        self.engine.tick()
+        zone = self.dev.zones[0]
+        self.assertEqual(self.dev.last("z1"), [(0, 0, 0)] * zone.max_leds)
+
 
 if __name__ == "__main__":
     unittest.main()
