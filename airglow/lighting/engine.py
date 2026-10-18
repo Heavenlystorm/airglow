@@ -86,7 +86,7 @@ class Engine:
         self._online = {}                # device id -> the device object if it was online last frame (re-send on change)
         self.scene = dict(store.state["scene"])
         self.screen, self.audio = ScreenSampler(), AudioAnalyzer()
-        self.frames = {}                 # zone key -> "rrggbb..." for the live preview
+        self._frames = ({}, {})          # (zone key -> the last frame's bytes, the same as hex once someone asked)
         self.frame_id = 0
         self.fps = 0.0
         self._identify = {}              # zone key -> deadline
@@ -109,6 +109,21 @@ class Engine:
         self.idle = False                # the last frame had nothing moving: render at IDLE_FPS
         self._moving = False             # set by render_zone when an animated effect was drawn this frame
         self._kick = threading.Event()   # a command arrived: render the next frame now
+
+    @property
+    def frames(self):
+        """zone key -> "rrggbb..." for the live preview and the tray icon. Made into hex only when read: nobody
+        reads it while the window is closed, and the engine has better things to do 30 times a second."""
+        raw, hexed = self._frames
+        if hexed is None:
+            hexed = {k: v.tobytes().hex() for k, v in raw.items()}
+            if self._frames[0] is raw:               # still the newest frame
+                self._frames = (raw, hexed)
+        return hexed
+
+    @frames.setter
+    def frames(self, value):
+        self._frames = ({}, dict(value))
 
     # ------------------------------------------------------------ commands
     def set_scene(self, scene):
@@ -329,7 +344,7 @@ class Engine:
                     else:
                         rgb, bri = self.render_zone(key, zcfg, now, t)
                 rgb_ints = self._to_bytes(rgb, bri)
-                frames[key] = rgb_ints.tobytes().hex()                      # preview shows true colours
+                frames[key] = rgb_ints                                      # preview shows true colours
                 order = zcfg.get("order", "RGB") if zcfg else "RGB"
                 ints = rgb_ints[:, list(ORDERS[order])] if order != "RGB" else rgb_ints
                 if throttled:
@@ -366,7 +381,7 @@ class Engine:
                     dev.flush()
                 except (DeviceError, OpenRGBError, OSError) as e:
                     dev.error = str(e)
-        self.frames = frames
+        self._frames = (frames, None)
         studio.HOST.tick(t, self.audio.frame if self.audio.active else None)
         if self._preview:
             with self._lock:
