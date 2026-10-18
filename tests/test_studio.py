@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -116,6 +117,26 @@ class LibraryTests(unittest.TestCase):
         v2 = v1.replace('"density": 30', '"density": 80')
         self.lib.install(v2, hashlib.sha256(v2.encode()).hexdigest())
         self.assertEqual(self.lib.rollback(e["fx_id"])["layers"][1]["params"]["density"], 30)
+
+    def test_same_size_edits_on_one_timestamp_are_seen(self):
+        # two writes inside one file-time tick keep (mtime, size), so the library mustn't trust its cache for its own writes
+        write = fxlibrary._write
+
+        def same_mtime(path, text):
+            write(path, text)
+            os.utime(path, ns=(1_700_000_000 * 10**9,) * 2)
+
+        density = lambda e: e["layers"][1]["params"]["density"]
+        with mock.patch.object(fxlibrary, "_write", same_mtime):
+            e = self.lib.save_mine(builder())
+            edited = self.lib.save_mine(builder().replace('"density": 30', '"density": 90'), e["fx_id"])
+            self.assertEqual((density(edited), density(self.lib.get(e["fx_id"]))), (90, 90))
+            self.assertNotEqual(edited["sha256"], e["sha256"])
+            v1 = builder(author="jane-dev")
+            v2 = v1.replace('"density": 30', '"density": 80')
+            c = self.lib.install(v1, hashlib.sha256(v1.encode()).hexdigest())
+            self.assertEqual(density(self.lib.install(v2, hashlib.sha256(v2.encode()).hexdigest())), 80)
+            self.assertEqual(density(self.lib.rollback(c["fx_id"])), 30)
 
     def test_revocation_turns_off_matching_versions(self):
         src = builder(author="jane-dev")
