@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.2
+- Fan safety: Airglow now sets the speed of every fan port on the NZXT hub. Before, a fan that read 0 RPM, for
+  example one that had stalled at a low speed, was left out, so it stayed at that speed however hot the PC got and
+  the failsafe skipped it too.
+- A Studio effect that's deleted, or taken down from the gallery, no longer breaks what uses it. Profiles that use it
+  are kept (they used to be dropped at the next start), zones show a plain colour until it's back, and the log gets
+  one line instead of filling up within minutes. The Studio won't delete an effect a profile or zone still uses.
+- Lights on OpenRGB devices no longer freeze when the connection drops in the middle of a frame (it can happen when
+  the PC wakes from sleep).
+
 ## 1.6.1
 - "Lights off when the PC sleeps or shuts down" now really leaves them off at shutdown. Before, the next frame lit
   them again; if the shutdown is cancelled, they come back on.
