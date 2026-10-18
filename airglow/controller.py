@@ -294,8 +294,11 @@ class Controller:
         hubs = self.hubs
         return hubs[0] if hubs else None
 
-    def _hub_ports(self, hub):
-        return hub.connected_fans() or list(range(hub.FAN_PORTS))
+    @staticmethod
+    def _hub_ports(hub):
+        # Every port, not only fans reporting RPM: a fan that stalled at a low speed reads 0 and would otherwise
+        # never be sent a faster one, however hot it gets. An empty port ignores the command.
+        return list(range(hub.FAN_PORTS))
 
     def _run_fans(self):
         cfg = self.store.settings()

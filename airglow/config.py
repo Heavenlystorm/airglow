@@ -182,7 +182,7 @@ def validate_areas(areas):
     for spot, a in areas.items():
         if spot not in lightsetup.SPOTS:
             raise ValueError(f"unknown area '{spot}'")
-        if not isinstance(a, dict) or a.get("effect") not in effects.EFFECTS:
+        if not isinstance(a, dict) or not (a.get("effect") in effects.EFFECTS or effects.is_missing_studio(a.get("effect"))):
             raise ValueError(f"the {lightsetup.SPOTS[spot]['label'].lower()} area needs an effect")
         out[spot] = {"effect": a["effect"], "params": effects.clean_params(a["effect"], a.get("params"))}
     return out
