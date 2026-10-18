@@ -72,7 +72,8 @@ export async function closeConflict(button) {
   button.disabled = true;
   try {
     const r = await post("/api/conflicts/close", { name: button.dataset.closeApp });
-    if (r.failed.length) toast(`Couldn't close ${r.failed.join(", ")}. It may need to be closed from its own tray icon.`, true);
+    if (r.services?.length) toast(`${button.dataset.closeApp} runs as a Windows service, so Airglow can't close it and it would start again on its own. Stop it in Services (services.msc) or uninstall it.`, true);
+    else if (r.failed.length) toast(`Couldn't close ${r.failed.join(", ")}. It may need to be closed from its own tray icon.`, true);
     else { toast(`${button.dataset.closeApp} closed`); button.closest(".onb-item")?.remove(); }
     emit("refresh");
   } catch (err) { fail(err); button.disabled = false; }
