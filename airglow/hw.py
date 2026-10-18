@@ -253,11 +253,22 @@ def detect_natives(hid_list, plugins=None, backend=None):
             log.error("%s: could not set up %s: %s", plugin.NAME, product.name, e)
             counts[plugin.ID_PREFIX] -= 1
             continue
-        dev.plugin_module = plugin
+        dev.plugin_module, dev.product = plugin, product
         found.append(dev)
         log.info("found %s (%04x:%04x) via %s%s", product.name, product.vid, product.pid, plugin.NAME,
                  ", experimental support" if product.experimental else "")
     return found
+
+
+def openrgb_detectors_to_disable(natives):
+    """OpenRGB detectors for the controllers Airglow lights here. A detector also covering a controller Airglow
+    leaves to OpenRGB (a fans-only revision) stays on."""
+    off, keep = set(), set()
+    for d in natives:
+        det = getattr(getattr(d, "product", None), "openrgb_detector", None)
+        if det:
+            (off if d.lighting else keep).add(det)
+    return sorted(off - keep)
 
 
 class DeviceManager:
