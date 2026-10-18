@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.6.1
+- "Lights off when the PC sleeps or shuts down" now really leaves them off at shutdown. Before, the next frame lit
+  them again; if the shutdown is cancelled, they come back on.
+- Trying a profile (or "Also on my lights" in the Studio) is never saved. A restart while trying used to keep the
+  borrowed look and put the fans on Balanced; now you get back what you had. Picking a profile while trying one
+  ends the trial, so Discard no longer undoes it.
+- After waking from sleep, devices from OpenRGB get every zone sent again, and Airglow no longer gathers a
+  background thread per device each time.
+- The tray tooltip calls a profile's own fan curve by the profile's name.
+- Temperatures in automations follow your °C or °F setting, in the editor and in the Lighting tab.
+- Overview tiles keep their titles readable when a long processor or graphics card name sits next to them.
+- On the Lighting stage, zones at the edge of the case show whole, names step away from fans they would cover, and
+  long effect names fit their cards.
+- Saving settings retries when another program holds the file for a moment, instead of failing.
+- Two profiles saved under the same name no longer clash, and automations with the same id are refused.
+- Malformed requests to the automations API get a clear error instead of an internal one.
+
 ## 1.6.0
 - **The Studio**, a new tab for making your own effects. Pick a starting point (or remix any effect), stack layers
   such as gradients, plasma, waves, sparkles, a scanner, breathing and three that follow the music, choose how each

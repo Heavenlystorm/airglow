@@ -103,6 +103,23 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(set(self.dev.last("z1")), {(0, 0, 0)})
         eng.stop()
 
+    def test_replaced_device_stops_its_old_writer(self):
+        eng = Engine(self.manager, self.store, async_writes=True)
+        eng.tick()
+        old = eng._writers["d"]
+        new_dev = FakeLightDevice("d", "Dev", zones=(("z1", 6), ("z2", 0)))   # OpenRGB reloaded its device list
+        new_dev.open()
+        self.manager.natives["d"] = new_dev
+        eng.tick()
+        self.assertIs(eng._writers["d"].dev, new_dev)
+        old.thread.join(2)
+        self.assertFalse(old.thread.is_alive())
+        eng._writers["d"].wait_idle(2)
+        self.assertEqual(new_dev.last("z1"), self.dev.last("z1"))     # sent in full, though nothing changed
+        eng.blackout()                                          # reaches the new device, not the old one
+        self.assertEqual(set(new_dev.last("z1")), {(0, 0, 0)})
+        eng.stop()
+
     def test_reconnected_device_gets_full_resend(self):
         self.engine.tick()
         n = len(self.dev.writes)

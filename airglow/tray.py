@@ -17,6 +17,15 @@ def tray_tint(rgb):
     return [round(c * 170 / peak) for c in rgb] if peak < 170 else list(rgb)
 
 
+def curve_label(name, presets, trial=None):
+    """A fan curve as people know it: "Silent", a profile's own curve by the profile's name, or the one being tried."""
+    if name == "trial":
+        return f"{trial['name']}'s" if trial and trial.get("name") else "Trial"
+    if name.startswith("profile:"):
+        return next((p["name"] for p in presets if p["id"] == name[8:]), "Profile")
+    return name.capitalize()
+
+
 class Tray:
     def __init__(self, ctrl, store, show_window, quit_app, updater=None):
         self.ctrl, self.store, self.updater = ctrl, store, updater
@@ -57,7 +66,8 @@ class Tray:
             if len(pins) > 2:
                 lines.append("   ".join(f"{m.get('short', m['name'])} {sensors.fmt(m, m['value'], f)}" for m in pins[2:4]))
         if c.fan_duty is not None and c.hub:
-            lines.append(f"{c.effective_curve.capitalize()} fans at {c.fan_duty}%")
+            curve = curve_label(c.effective_curve, self.store.get_presets(), c.trial)
+            lines.append(f"{curve} fans at {c.fan_duty}%")
         if self.updater and self.updater.state == "ready":
             lines.insert(1, f"Update {self.updater.latest} ready, applied on restart")   # before the cut at 127
         return "\n".join(lines)[:127]   # Windows tooltip limit

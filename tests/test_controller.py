@@ -134,6 +134,28 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(self.ctrl.effective_scene["on"])
         self.assertGreaterEqual(self.manager.resets, 1)
 
+    def test_shutdown_lights_stay_dark_on_later_frames(self):
+        self.ctrl.set_scene({"effect": "rainbow"})
+        self.ctrl.engine.tick()
+        self.ctrl._on_shutdown()
+        self.ctrl.engine.tick()                               # the engine keeps running until the process ends
+        self.assertEqual(set(map(tuple, self.strip.last("z1"))), {(0, 0, 0)})
+        self.ctrl.engine._last = {k: (raw, sent - 10) for k, (raw, sent) in self.ctrl.engine._last.items()}
+        self.ctrl.engine.tick()                               # keep-alive re-send
+        self.assertEqual(set(map(tuple, self.strip.last("z1"))), {(0, 0, 0)})
+        self.assertTrue(self.ctrl.base_scene["on"])           # not saved as off
+
+    def test_cancelled_shutdown_brings_lights_back(self):
+        self.ctrl._on_shutdown()
+        self.assertFalse(self.ctrl.effective_scene["on"])
+        self.ctrl._on_shutdown_cancelled()
+        self.assertTrue(self.ctrl.effective_scene["on"])
+
+    def test_shutdown_leaves_lights_alone_when_setting_is_off(self):
+        self.store.update_settings({"lights_off_on_sleep": False})
+        self.ctrl._on_shutdown()
+        self.assertTrue(self.ctrl.effective_scene["on"])
+
     def test_lock_turns_lights_off_only_when_enabled(self):
         self.ctrl._on_lock(True)
         self.assertTrue(self.ctrl.effective_scene["on"])

@@ -29,7 +29,8 @@ class DeviceWriter:
         self._idle = threading.Event()
         self._idle.set()
         self._stopped = False
-        threading.Thread(target=self._run, name=f"write-{dev.id}", daemon=True).start()
+        self.thread = threading.Thread(target=self._run, name=f"write-{dev.id}", daemon=True)
+        self.thread.start()
 
     def submit(self, zone_id, colors):
         with self._lock:
@@ -77,7 +78,7 @@ class Engine:
         self.manager, self.store, self._sensors = manager, store, sensors
         self.async_writes = async_writes  # tests write synchronously so they can check results right away
         self._writers = {}               # device id -> DeviceWriter
-        self._online = {}                # device id -> was online last frame (to re-send after a reconnect)
+        self._online = {}                # device id -> the device object if it was online last frame (re-send on change)
         self.scene = dict(store.state["scene"])
         self.screen, self.audio = ScreenSampler(), AudioAnalyzer()
         self.frames = {}                 # zone key -> "rrggbb..." for the live preview
@@ -253,10 +254,11 @@ class Engine:
         frames = {}
         for dev in list(self.manager.all().values()):
             online = dev.online
-            if online and not self._online.get(dev.id):            # (re)connected: send every zone again
+            # (re)connected, or reloaded as a new object (OpenRGB's device list changed): send every zone again
+            if online and self._online.get(dev.id) is not dev:
                 for k in [k for k in self._last if k.startswith(dev.id + "/")]:
                     del self._last[k]
-            self._online[dev.id] = online
+            self._online[dev.id] = dev if online else None
             if not online:
                 continue
             wrote = False
@@ -290,6 +292,8 @@ class Engine:
                 if self.async_writes:
                     writer = self._writers.get(dev.id)
                     if writer is None or writer.dev is not dev:
+                        if writer:                     # OpenRGB reloaded the device as a new object
+                            writer.stop()
                         writer = self._writers[dev.id] = DeviceWriter(dev)
                     writer.submit(zone.id, [tuple(px) for px in ints.tolist()])
                     self._last[key] = (raw, now)
@@ -352,6 +356,8 @@ class Engine:
             if not dev.online:
                 continue
             writer = self._writers.get(dev.id)
+            if writer and writer.dev is not dev:       # a replaced device's writer: write this one directly
+                writer = None
             for zone in dev.zones:
                 zcfg = self.store.zones().get(f"{dev.id}/{zone.id}")
                 if zcfg and zcfg.get("enabled"):

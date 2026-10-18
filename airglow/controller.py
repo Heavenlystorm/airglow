@@ -44,7 +44,7 @@ class Controller:
         self.readings_history = SensorHistory(self.HISTORY)
         self.engine = Engine(self.manager, store, sensors=lambda: self.sensors, async_writes=async_writes)
         self.automations = automation.Automations(store, signals or system.snapshot, lambda: self.sensors)
-        self.sleeping = self.locked = False
+        self.sleeping = self.locked = self.shutting_down = False
         self.effective_scene = dict(self.base_scene)
         self.effective_curve = self.base_curve
         self.fan_temp = self.fan_target = self.fan_duty = None
@@ -61,7 +61,8 @@ class Controller:
         self._power = None
         if start_power_events:
             self._power = system.PowerEvents({"suspend": self._on_suspend, "resume": self._on_resume,
-                                              "shutdown": self._on_shutdown, "lock": lambda: self._on_lock(True),
+                                              "shutdown": self._on_shutdown,
+                                              "shutdown_cancelled": self._on_shutdown_cancelled, "lock": lambda: self._on_lock(True),
                                               "unlock": lambda: self._on_lock(False)})
         self.apply()
 
@@ -101,6 +102,8 @@ class Controller:
                                               "on": True})
 
         with self._lock:
+            if self.trial is not None:
+                self._leave_trial()                # picking a profile ends a trial: Discard won't take it back
             step("lighting", lighting)
             curve = self.preset_curve(preset)
             if curve:
@@ -154,15 +157,21 @@ class Controller:
         with self._lock:
             if self.trial is None:
                 return
-            before, self.trial = self.trial["before"], None
             if keep_preset:
+                self.trial = None
                 self.apply_preset(keep_preset)
                 return
-            for key, override in before["overrides"].items():
-                self._set_override(key, override)
+            before = self._leave_trial()
             self.base_scene, self.active_preset = before["scene"], before["preset"]
-            self.base_curve = before["curve"] if self.curve_points(before["curve"]) else "balanced"
             self._changed()
+
+    def _leave_trial(self):
+        """End the trial: zones get their own effects back and the fans their curve. Returns what it replaced."""
+        before, self.trial = self.trial["before"], None
+        for key, override in before["overrides"].items():
+            self._set_override(key, override)
+        self.base_curve = before["curve"] if self.curve_points(before["curve"]) else "balanced"
+        return before
 
     def _set_override(self, key, override):
         cfg = self.store.zones().get(key)
@@ -192,6 +201,11 @@ class Controller:
             self.apply()
 
     def _changed(self):
+        if self.trial is not None:
+            # changes while trying a profile adjust what's being tried and are never saved: a restart (or Discard)
+            # goes back to what you had, and "trial" is never written as your fan curve
+            self.apply()
+            return
         self.store.save_state(scene=self.base_scene, fan_curve=self.base_curve, active_preset=self.active_preset)
         self.apply()
 
@@ -220,7 +234,7 @@ class Controller:
                 elif t["type"] == "preset" and t["preset"] in presets and self.preset_curve(presets[t["preset"]]):
                     curve = self.preset_curve(presets[t["preset"]])
             settings = self.store.settings()
-            if self.sleeping or (self.locked and settings["lights_off_on_lock"]):
+            if self.sleeping or self.shutting_down or (self.locked and settings["lights_off_on_lock"]):
                 scene["on"] = False
             if not self.curve_points(curve):
                 curve = "balanced"
@@ -248,8 +262,17 @@ class Controller:
     def _on_shutdown(self):
         log.info("Windows is shutting down")
         if self.store.settings()["lights_off_on_sleep"]:
+            # keep them dark: the engine runs until the process ends, and its next frame would light them again
+            self.shutting_down = True
+            self.apply()
             self.engine.blackout()
         self.failsafe()
+
+    def _on_shutdown_cancelled(self):
+        log.info("Windows isn't shutting down after all")
+        if self.shutting_down:
+            self.shutting_down = False
+            self.apply()
 
     def _on_lock(self, locked):
         self.locked = locked
@@ -438,12 +461,13 @@ class Controller:
         a = self.automations
         rules = {r["id"]: r for r in self.store.get_rules()}
         devs = [d.info() for d in self.manager.all().values()]
+        trial = self.trial                        # read once: the API thread can end the trial meanwhile
         return {
             "scene": self.base_scene,
             "effective": self.effective_scene,
             "active_preset": self.active_preset,
-            "trial": {"name": self.trial["name"], "fans": bool(self.trial.get("fan_points")),
-                      "kind": self.trial.get("kind", "profile")} if self.trial else None,
+            "trial": {"name": trial["name"], "fans": bool(trial.get("fan_points")),
+                      "kind": trial.get("kind", "profile")} if trial else None,
             "override": {
                 "lighting": a.light_rule["id"] if a.light_rule else None,
                 "fans": a.fan_rule["id"] if a.fan_rule else None,
