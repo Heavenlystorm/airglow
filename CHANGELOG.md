@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.6
+- Fans driven through LibreHardwareMonitor: if a speed change didn't get through (LibreHardwareMonitor busy for a
+  moment), Airglow forgot that fan, so "Leave alone", quitting and the failsafe speed all skipped it and it stayed
+  at its last speed. It now keeps trying, and hands the fan back to its own curve even after a failed change.
+- A Studio effect edited and saved twice in quick succession, keeping the same file size, now plays the new version
+  on your lights instead of the old one.
+
 ## 1.6.5
 - Fan safety: "full speed at 90 °C" now watches the hottest part, whatever the curve follows. With the curve on the
   graphics card (or the new coolant reading), a processor at 95 °C used to leave the fans on the curve.

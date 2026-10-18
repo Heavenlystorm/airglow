@@ -105,6 +105,7 @@ class Library:
                     stem, n = f"me.{fxformat.slug(eff['name'])}-{n}", n + 1
                 path = mine / f"{stem}.html"
             _write(path, source)
+            self._cache.pop(path, None)   # a same-size edit inside one file-time tick keeps (mtime, size)
             self.rev += 1
             return self._read(path, "mine")
 
@@ -117,6 +118,7 @@ class Library:
             Path(eff["path"]).unlink(missing_ok=True)
             prev = Path(eff["path"] + ".prev")
             prev.unlink(missing_ok=True)
+            self._cache.pop(Path(eff["path"]), None)
             self.rev += 1
 
     # ------------------------------------------------------------ community
@@ -133,6 +135,7 @@ class Library:
             if path.exists():
                 os.replace(path, str(path) + ".prev")
             _write(path, source)
+            self._cache.pop(path, None)
             self.rev += 1
             return self._read(path, "community")
 
@@ -147,6 +150,7 @@ class Library:
                 hit = next((r for r in revoked if r["id"] == eff["id"] and (not r["sha256"] or eff["sha256"] in r["sha256"])), None)
                 if hit:
                     os.replace(eff["path"], eff["path"] + ".revoked")
+                    self._cache.pop(Path(eff["path"]), None)
                     log.warning("community effect %s revoked: %s", eff["id"], hit["reason"])
                     out.append({"fx_id": eff["fx_id"], "name": eff["name"], "reason": hit["reason"]})
             if out:
@@ -160,6 +164,7 @@ class Library:
             raise fxformat.FormatError("there's no earlier version to go back to")
         with self._lock:
             os.replace(prev, eff["path"])
+            self._cache.pop(Path(eff["path"]), None)
             self.rev += 1
             return self._read(Path(eff["path"]), eff["origin"])
 
