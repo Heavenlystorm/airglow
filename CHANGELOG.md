@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- Setting up the helper programs on a PC without the Visual C++ runtime stopped at its first step with "isn't signed
+  by Microsoft", so neither LibreHardwareMonitor nor OpenRGB was installed. The runtime is now checked and installed.
+- A PC without the Edge WebView2 runtime used to get an empty window and no explanation. The installer now adds the
+  runtime when it's missing, and Airglow tells you where to get it if it's started without it.
+
 ## 1.6.6
 - Fans driven through LibreHardwareMonitor: if a speed change didn't get through (LibreHardwareMonitor busy for a
   moment), Airglow forgot that fan, so "Leave alone", quitting and the failsafe speed all skipped it and it stayed
