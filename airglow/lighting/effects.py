@@ -289,11 +289,35 @@ def catalog():
 
 
 _HEX = re.compile(r"#[0-9a-fA-F]{6}")
+_FX_ID = re.compile(r"fx:[a-z0-9][a-z0-9.\-]{0,100}")
+
+
+def is_missing_studio(effect_id):
+    """A Studio effect that isn't on this PC right now: deleted, taken down from the gallery, or not installed yet.
+    Settings that use one are kept as they are, so profiles and zones survive and work again if it comes back; the
+    engine draws Solid meanwhile."""
+    return isinstance(effect_id, str) and bool(_FX_ID.fullmatch(effect_id)) and effect_id not in EFFECTS
+
+
+def _kept_values(params):
+    """A missing effect's values, kept without a schema to check them against: JSON scalars and short lists."""
+    def plain(v):
+        return (isinstance(v, (bool, int)) or isinstance(v, float) and math.isfinite(v)
+                or isinstance(v, str) and len(v) <= 200)
+    out = {}
+    for k, v in (params if isinstance(params, dict) else {}).items():
+        if len(out) >= 32 or not isinstance(k, str) or len(k) > 40:
+            continue
+        if plain(v) or isinstance(v, list) and len(v) <= 8 and all(plain(x) and not isinstance(x, list) for x in v):
+            out[k] = v
+    return out
 
 
 def clean_params(effect_id, params):
     """Validate effect parameters against the schema; missing values take defaults."""
     if effect_id not in EFFECTS:
+        if is_missing_studio(effect_id):
+            return _kept_values(params)
         raise ValueError(f"unknown effect '{effect_id}'")
     return clean_values(EFFECTS[effect_id].params, params)
 

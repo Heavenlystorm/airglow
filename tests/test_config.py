@@ -44,6 +44,15 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             config.validate_scene({"effect": "comet", "brightness": 140})
 
+    def test_a_studio_effect_that_is_gone_is_kept_with_its_values(self):
+        s = config.validate_scene({"effect": "fx:me.gone", "params": {"speed": 40, "tint": "#ff0000", "x": {"deep": 1}},
+                                   "areas": {"front": {"effect": "fx:jane.wave", "params": {}}}})
+        self.assertEqual(s["params"], {"speed": 40, "tint": "#ff0000"})       # plain values only
+        self.assertEqual(s["areas"]["front"]["effect"], "fx:jane.wave")
+        for bad in ("nope", "fx:", "fx:Bad Id", "fx:me/../x"):
+            with self.assertRaises(ValueError, msg=bad):
+                config.validate_scene({"effect": bad})
+
     def test_zone(self):
         z = config.validate_zone({"name": "Front fans", "layout": {"shape": "fans", "fans": 3, "leds_per_fan": 8,
                                                                    "x": 0.3, "y": 0.5}}, 40)
@@ -61,6 +70,14 @@ class StoreTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_profiles_using_a_deleted_studio_effect_survive_a_restart(self):
+        s = config.Store(self.dir)
+        s.set_presets(s.get_presets() + [{"id": "mine", "name": "My look", "effect": "fx:me.gone",
+                                          "params": {"speed": 7}, "brightness": 80}])
+        again = config.Store(self.dir)
+        mine = next(p for p in again.get_presets() if p["id"] == "mine")
+        self.assertEqual((mine["effect"], mine["params"]), ("fx:me.gone", {"speed": 7}))
 
     def test_defaults_when_empty(self):
         s = config.Store(self.dir)

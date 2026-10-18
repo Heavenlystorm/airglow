@@ -186,9 +186,17 @@ class OpenRGBClient:
                 self.sock = None
 
     # -- wire
+    def _socket(self):
+        """The open socket; another thread can close the connection at any moment (a reset after sleep)."""
+        sock = self.sock
+        if sock is None:
+            raise OpenRGBError("not connected to OpenRGB")
+        return sock
+
     def _send(self, dev_idx, pkt_id, payload=b""):
+        sock = self._socket()
         try:
-            self.sock.sendall(header(dev_idx, pkt_id, len(payload)) + payload)
+            sock.sendall(header(dev_idx, pkt_id, len(payload)) + payload)
         except OSError as e:
             self.close()
             raise OpenRGBError(f"OpenRGB connection lost ({e})") from e
@@ -196,7 +204,7 @@ class OpenRGBClient:
     def _recv_exact(self, n):
         buf = b""
         while len(buf) < n:
-            chunk = self.sock.recv(n - len(buf))
+            chunk = self._socket().recv(n - len(buf))
             if not chunk:
                 raise OpenRGBError("OpenRGB closed the connection")
             buf += chunk
@@ -213,9 +221,10 @@ class OpenRGBClient:
         self._send(dev_idx, pkt_id, payload)
         if not expect_reply:
             return None
-        old = self.sock.gettimeout()
+        sock = self._socket()
+        old = sock.gettimeout()
         if timeout is not None:
-            self.sock.settimeout(timeout)
+            sock.settimeout(timeout)
         try:
             while True:
                 _, rid, data = self._read_packet()
@@ -230,8 +239,8 @@ class OpenRGBClient:
             self.close()
             raise OpenRGBError(f"OpenRGB connection lost ({e})") from e
         finally:
-            if self.sock:
-                self.sock.settimeout(old)
+            if self.sock is sock:
+                sock.settimeout(old)
 
     # -- API
     def controllers(self):

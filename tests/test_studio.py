@@ -412,6 +412,26 @@ class StudioApiTests(unittest.TestCase):
         self.request("POST", "/api/scene", {"effect": "solid"})
         self.assertEqual(self.request("POST", "/api/studio/delete", {"fx_id": fx_id})[0], 200)
 
+    def test_delete_is_refused_while_a_profile_or_zone_uses_the_effect(self):
+        parts = {"name": "Kept Glow", "description": "Soft glow", "layers": [{"type": "solid"}]}
+        fx_id = self.request("POST", "/api/studio/save", parts)[1]["effect"]["fx_id"]
+        before = self.store.get_presets()
+        self.store.set_presets(before + [{"id": "kept", "name": "Kept", "effect": fx_id, "params": {}, "brightness": 50}])
+        status, r = self.request("POST", "/api/studio/delete", {"fx_id": fx_id})
+        self.assertEqual(status, 409)
+        self.assertIn("the profile “Kept”", r["error"])
+        self.store.set_presets(before)
+        self.ctrl.manager.maintain(True)
+        self.store.ensure_zones([d.info() for d in self.ctrl.manager.all().values()])
+        key = "strip/z1"
+        cfg = self.store.zones()[key]
+        self.store.set_zone(key, {**cfg, "override": {"effect": fx_id, "params": {}}}, 16)
+        status, r = self.request("POST", "/api/studio/delete", {"fx_id": fx_id})
+        self.assertEqual(status, 409)
+        self.assertIn("the zone", r["error"])
+        self.store.set_zone(key, {**self.store.zones()[key], "override": None}, 16)
+        self.assertEqual(self.request("POST", "/api/studio/delete", {"fx_id": fx_id})[0], 200)
+
     def test_draft_plays_as_a_studio_trial(self):
         src = builder()
         status, _ = self.request("POST", "/api/studio/draft", {"source": src, "lights": True})

@@ -40,6 +40,8 @@ class FormatTests(unittest.TestCase):
     def test_bad_profiles_are_refused(self):
         bad = [{"airglow_profile": 2}, {"id": "Bad Id"}, {"name": ""}, {"lighting": None},
                {"lighting": {"effect": "lasers"}}, {"areas": {"roof": {"effect": "solid"}}},
+               {"lighting": {"effect": "fx:jane.not-installed"}},              # a Studio effect this PC doesn't have
+               {"areas": {"front": {"effect": "fx:jane.not-installed"}}},
                {"fans": {"curve": [[40, 5], [80, 100]]}},                       # below the fan minimum
                {"automations": [{"when": {"type": "idle", "minutes": 5}, "then": {"type": "preset", "preset": "other"}}]},
                {"automations": [NEON["automations"][1]] * 11},

@@ -61,6 +61,10 @@ def validate_shared(data):
     if not isinstance(light, dict):
         raise ValueError("a profile needs its lighting")
     scene = config.validate_scene({**light, "areas": data.get("areas"), "on": True})
+    used = [scene["effect"], *(a["effect"] for a in (scene.get("areas") or {}).values())]
+    missing = next((e for e in used if effects.is_missing_studio(e)), None)
+    if missing:                                    # your own settings may keep one; a shared profile can't
+        raise ValueError(f"this profile uses a Studio effect that isn't on this PC ({missing})")
     out["lighting"] = {"effect": scene["effect"], "params": scene["params"], "brightness": scene["brightness"]}
     if scene.get("areas"):
         out["areas"] = scene["areas"]
