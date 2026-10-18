@@ -102,6 +102,8 @@ class Controller:
                                               "on": True})
 
         with self._lock:
+            if self.trial is not None:
+                self._leave_trial()                # picking a profile ends a trial: Discard won't take it back
             step("lighting", lighting)
             curve = self.preset_curve(preset)
             if curve:
@@ -155,15 +157,21 @@ class Controller:
         with self._lock:
             if self.trial is None:
                 return
-            before, self.trial = self.trial["before"], None
             if keep_preset:
+                self.trial = None
                 self.apply_preset(keep_preset)
                 return
-            for key, override in before["overrides"].items():
-                self._set_override(key, override)
+            before = self._leave_trial()
             self.base_scene, self.active_preset = before["scene"], before["preset"]
-            self.base_curve = before["curve"] if self.curve_points(before["curve"]) else "balanced"
             self._changed()
+
+    def _leave_trial(self):
+        """End the trial: zones get their own effects back and the fans their curve. Returns what it replaced."""
+        before, self.trial = self.trial["before"], None
+        for key, override in before["overrides"].items():
+            self._set_override(key, override)
+        self.base_curve = before["curve"] if self.curve_points(before["curve"]) else "balanced"
+        return before
 
     def _set_override(self, key, override):
         cfg = self.store.zones().get(key)
