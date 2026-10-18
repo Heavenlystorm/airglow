@@ -163,7 +163,7 @@ function unavailable(id) {
 function source(meta) {
   if (!meta) return "";
   const s = meta.source || (meta.group !== "Quick picks" && meta.group !== "Windows" ? meta.group : "");
-  return (s || "").replace(/^AMD |^Intel\(R\) Core\(TM\) |^NVIDIA GeForce |^NVIDIA |\(TM\)|\(R\)/g, "").trim();
+  return (s || "").replace(/^AMD |^Intel\(R\) Core\(TM\) |^NVIDIA GeForce |^NVIDIA |\(TM\)|\(R\)| \d+-Core Processor$/g, "").trim();
 }
 
 function updateSensor(el, t) {
@@ -172,11 +172,12 @@ function updateSensor(el, t) {
   setHTML(el.querySelector(".tile-name"), esc(name));
   const src = el.querySelector(".tile-src"), srcText = t.style === "graph" ? "" : source(meta);
   setHTML(src, esc(srcText));
-  // the title wins: when both don't fit, the source moves to the title's tooltip
+  // the title wins: the source is shortened first, and when too little of it is left it moves to the title's tooltip
   const nameEl = el.querySelector(".tile-name");
   src.hidden = false;
-  src.hidden = !!srcText && nameEl.scrollWidth > nameEl.clientWidth;
+  src.hidden = !!srcText && (nameEl.scrollWidth > nameEl.clientWidth || src.clientWidth < 64);
   nameEl.title = src.hidden ? `${name} · ${srcText}` : "";
+  src.title = !src.hidden && src.scrollWidth > src.clientWidth ? srcText : "";
   const missing = v == null && t.style !== "graph";
   el.classList.toggle("missing", missing);
   let note = el.querySelector(".tile-note");
