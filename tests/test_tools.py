@@ -144,6 +144,17 @@ class FileTests(unittest.TestCase):
         self.assertEqual(v["authenticationPassword"], "ab" * 32)
         self.assertEqual(v["startMinMenuItem"], "true")
 
+    def test_lhm_config_reads_only_what_airglow_uses(self):
+        v = {a.get("key"): a.get("value") for a in ET.fromstring(tools.lhm_config("ab" * 32)).iter("add")}
+        for group in ("nicMenuItem", "psuMenuItem", "batteryMenuItem"):
+            self.assertEqual(v[group], "false")
+        for kept in ("mainboardMenuItem", "cpuMenuItem", "gpuMenuItem", "ramMenuItem", "hddMenuItem",
+                     "fanControllerMenuItem"):                       # fans, temperatures, RAM and SSD tiles
+            self.assertNotIn(kept, v)                                # LHM's default: on
+        self.assertEqual(v["updateIntervalMenuItem"], "3")          # the 2 s entry, as often as Airglow asks
+        self.assertEqual(v["throttleAtaUpdateMenuItem"], "true")
+        self.assertEqual(v["sensorValuesTimeWindow"], "0")          # 30 s of history, not 12 h
+
     def test_task_runs_as_the_user_with_their_highest_rights(self):
         xml = tools.task_xml("S-1-5-21-1", r"C:\Program Files\Airglow Tools\OpenRGB\OpenRGB.exe",
                              '--server --name "a<b&c"', r"C:\Program Files\Airglow Tools\OpenRGB", "test")

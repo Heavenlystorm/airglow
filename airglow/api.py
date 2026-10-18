@@ -106,6 +106,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._stream(urllib.parse.parse_qs(parsed.query))
             if method == "GET" and path == "/api/fx/host/stream":
                 return self._host_stream(urllib.parse.parse_qs(parsed.query))
+            if (method == "POST" and path == "/api/fx/host/frames"
+                    and self.headers.get("Content-Type") == "application/octet-stream"):
+                return self._send(200, self._host_frames())
             if path.startswith("/api/"):
                 body = self._body() if method == "POST" else None
                 return self._send(200, route(self.server, method, path, body, urllib.parse.parse_qs(parsed.query)))
@@ -182,6 +185,16 @@ class Handler(BaseHTTPRequestHandler):
             pass                                  # the host page went away
         except Exception:
             log.exception("effect host stream failed")
+
+    def _host_frames(self):
+        """The effect host's colours for one frame, packed (web/js/fxhost.js): 30 of these a second, so no JSON."""
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > MAX_BODY:
+            raise ApiError(413, "request too large")
+        body = self.rfile.read(n)
+        if not studio.HOST.check_token(self.headers.get("X-Airglow-Token")):
+            raise ApiError(403, "forbidden")
+        return studio.HOST.packed_frames(body)
 
     def _static(self, path):
         rel = "index.html" if path in ("", "/") else urllib.parse.unquote(path).lstrip("/")

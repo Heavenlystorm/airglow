@@ -229,11 +229,19 @@ def extract(zip_path, dest, strip=""):
 
 
 def lhm_config(password_sha256, port=LHM_PORT):
-    """LibreHardwareMonitor.config: web server on, this PC only, password required, starts quietly in the tray."""
+    """LibreHardwareMonitor.config: web server on, this PC only, password required, starts quietly in the tray. It
+    also reads less than LHM does by default, since Airglow asks for readings every 2 s: no network adapters, power
+    supplies or batteries (Airglow takes network and disk throughput from Windows), every 2 s rather than every
+    second, drive SMART data every 30 s (enough for the SSD temperature) and 30 s of history kept in memory instead
+    of 12 hours. Key names and values as LHM 0.9.6 reads them (UI/MainForm.cs, Utilities/PersistentSettings.cs)."""
     values = {"runWebServerMenuItem": "true", "listenerIp": "127.0.0.1", "listenerPort": str(port),
               "authenticationEnabled": "true", "authenticationUserName": LHM_USER,
               "authenticationPassword": password_sha256,
-              "startMinMenuItem": "true", "minTrayMenuItem": "true", "minCloseMenuItem": "true"}
+              "startMinMenuItem": "true", "minTrayMenuItem": "true", "minCloseMenuItem": "true",
+              "nicMenuItem": "false", "psuMenuItem": "false", "batteryMenuItem": "false",
+              "updateIntervalMenuItem": "3",          # 250 ms, 500 ms, 1 s, 2 s, 5 s, 10 s
+              "throttleAtaUpdateMenuItem": "true",
+              "sensorValuesTimeWindow": "0"}          # 30 s, 1 min, ... 24 h
     quote = {'"': "&quot;"}
     rows = "".join(f'    <add key="{k}" value="{escape(v, quote)}" />\n' for k, v in values.items())
     return f'<?xml version="1.0" encoding="utf-8"?>\n<configuration>\n  <appSettings>\n{rows}  </appSettings>\n</configuration>\n'

@@ -201,7 +201,7 @@ class DeviceWriteTests(unittest.TestCase):
 
     def test_graphics_cards_and_memory_on_i2c_are_slow_devices(self):
         gpu, _ = self.device("I2C: NVIDIA GPU, address 0x71")
-        self.assertEqual((gpu.max_fps, gpu.min_change, gpu.keepalive), (10, 3, False))
+        self.assertEqual((gpu.max_fps, gpu.min_change, gpu.keepalive), (5, 3, False))
         hub, _ = self.device("HID: \\\\?\\hid#vid_1e71")
         self.assertEqual((hub.max_fps, hub.min_change, hub.keepalive), (None, 0, False))
 
