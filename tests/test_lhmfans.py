@@ -124,6 +124,39 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(self.rec.calls, [(BOARD, 40)])
         self.assertNotIn(BOARD, self.drv.errors)
 
+    def test_a_failed_send_still_hands_the_fan_back(self):
+        """Regression (1.6.5): a speed change that failed made Airglow forget the fan, so "Leave alone", quitting
+        and the failsafe all skipped it, leaving it at the last speed that got through."""
+        self.drv.apply({BOARD: 40})
+        self.rec.fail = "LibreHardwareMonitor didn't answer (timed out)"
+        self.drv.apply({BOARD: 55})
+        self.rec.fail = None
+        self.drv.apply({})                                            # switched back to "Leave alone"
+        self.assertEqual(self.rec.calls[-1], (BOARD, None))
+        self.assertEqual(self.drv.sent, {})
+
+    def test_a_failed_send_is_in_the_failsafe_and_released_on_quit(self):
+        self.drv.apply({BOARD: 40})
+        self.rec.fail = "timed out"
+        self.drv.apply({BOARD: 55})
+        self.rec.fail = None
+        self.assertEqual(self.drv.failsafe(60), 1)
+        self.assertEqual(self.rec.calls[-1], (BOARD, 60))
+        self.drv.release_all()
+        self.assertEqual(self.rec.calls[-1], (BOARD, None))
+
+    def test_a_failed_hand_back_is_tried_again(self):
+        self.drv.apply({BOARD: 40})
+        self.rec.fail = "timed out"
+        with self.assertLogs("airglow.lhmfans", "WARNING") as logs:
+            self.drv.apply({})
+            self.drv.apply({})                                        # tried again, logged once
+        self.assertEqual(len(logs.records), 1)
+        self.rec.fail = None
+        self.drv.apply({})
+        self.assertEqual(self.rec.calls[-1], (BOARD, None))
+        self.assertEqual((self.drv.sent, self.drv.errors), ({}, {}))
+
 
 class FakeLhm:
     """LHM's web server, as far as POST /Sensor goes (HttpServer.cs in LHM 0.9.6)."""
