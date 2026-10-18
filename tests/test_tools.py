@@ -46,10 +46,11 @@ class Commands:
     """Stands in for subprocess.run and records what would have run."""
 
     def __init__(self, code=0):
-        self.calls, self.code = [], code
+        self.calls, self.kwargs, self.code = [], [], code
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
+        self.kwargs.append(kw)
         return SimpleNamespace(returncode=self.code, stdout="", stderr="")
 
     def named(self, *words):
@@ -170,16 +171,33 @@ class SignatureCheckTests(unittest.TestCase):
     def test_a_failing_check_says_no(self):
         self.assertFalse(tools._microsoft_signed("vc_redist.x64.exe", Commands(code=1)))
 
+    def test_powershell_7_module_path_is_not_passed_on(self):
+        run = Commands()
+        with mock.patch.dict(os.environ, {"PSModulePath": r"C:\Program Files\PowerShell\7\Modules"}):
+            tools._microsoft_signed("vc_redist.x64.exe", run)
+        self.assertNotIn("PSModulePath", run.kwargs[0]["env"])
+
     @unittest.skipUnless(sys.platform == "win32", "needs Windows PowerShell")
     def test_real_powershell_accepts_microsoft_files_and_refuses_others(self):
-        self.assertTrue(tools._microsoft_signed(Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe", subprocess.run))
+        results = []
+
+        def run(cmd, **kw):                                 # the real thing, keeping what PowerShell said
+            results.append(subprocess.run(cmd, **kw))
+            return results[-1]
+
+        def said():
+            r = results[-1]
+            return f"exit {r.returncode}; stdout {r.stdout!r}; stderr {r.stderr!r}"
+
+        cmd_exe = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+        self.assertTrue(tools._microsoft_signed(cmd_exe, run), said())
         with tempfile.TemporaryDirectory() as d:
             unsigned = Path(d) / "not signed.exe"
             unsigned.write_bytes(b"MZ not really")
-            self.assertFalse(tools._microsoft_signed(unsigned, subprocess.run))
+            self.assertFalse(tools._microsoft_signed(unsigned, run), said())
         defender = Path(os.environ.get("ProgramFiles", "")) / "Windows Defender" / "MpCmdRun.exe"
         if defender.exists():                               # a path with a space in it
-            self.assertTrue(tools._microsoft_signed(defender, subprocess.run))
+            self.assertTrue(tools._microsoft_signed(defender, run), said())
 
 
 class InstallTests(unittest.TestCase):

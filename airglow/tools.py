@@ -290,7 +290,11 @@ def _microsoft_signed(path, run):
     # "Program Files"). The script is the last argument, so there is nothing to glue.
     ps = (f"$s = Get-AuthenticodeSignature -LiteralPath {_ps_literal(path)}; "
           "if ($s.Status -eq 'Valid' -and $s.SignerCertificate.Subject -like '*O=Microsoft Corporation*') { exit 0 } exit 1")
-    return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], run).returncode == 0
+    # Started from PowerShell 7 (a terminal, CI), PSModulePath lists PowerShell 7's own modules, and Windows PowerShell
+    # then can't load the one Get-AuthenticodeSignature lives in. Without it, Windows PowerShell uses its own defaults.
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+    return _run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                run, env=env).returncode == 0
 
 
 def install(job, root=None, run=subprocess.run):
