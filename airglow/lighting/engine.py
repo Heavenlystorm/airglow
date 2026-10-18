@@ -60,6 +60,9 @@ class DeviceWriter:
                     log.warning("%s: %s", self.dev.name, e)
                     self.dev.error = str(e)
                     self.dev.close()                   # the device manager reconnects it in the background
+                except Exception as e:                 # a bug in a device's code must not end this thread for good
+                    log.exception("%s: writing failed", self.dev.name)
+                    self.dev.error = str(e) or type(e).__name__
             with self._lock:
                 if not self._pending:
                     self._idle.set()
@@ -91,6 +94,9 @@ class Engine:
         self.preview_frames = {}
         self._last = {}                  # zone key -> (bytes, time sent)
         self._geom = {}                  # zone key -> (layout snapshot, namespace)
+        self._missing = set()            # effects not on this PC (drawn as Solid), logged once each
+        self._failing = set()            # effects whose render raised, logged once until they work again
+        self._solid = effects.clean_params("solid", {})
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread = None
@@ -224,12 +230,22 @@ class Engine:
             area = scene["areas"].get(lightsetup.zone_spot(zcfg))
             if area:
                 eff_id, params = area["effect"], area["params"]
-        eff = effects.EFFECTS.get(eff_id) or effects.EFFECTS["solid"]
+        eff = effects.EFFECTS.get(eff_id)
+        if eff is None:                                # a Studio effect that isn't on this PC any more
+            if eff_id not in self._missing:
+                self._missing.add(eff_id)
+                log.warning("effect %s isn't on this PC any more; showing Solid instead", eff_id)
+            eff, params = effects.EFFECTS["solid"], self._solid
+        else:
+            self._missing.discard(eff_id)
         ctx = self._context(eff.needs, params)
         try:
             rgb = eff.render(z, t, params, ctx)
+            self._failing.discard(eff_id)
         except Exception:
-            log.exception("effect %s failed", eff_id)
+            if eff_id not in self._failing:            # once, not 30 times a second per zone
+                self._failing.add(eff_id)
+                log.exception("effect %s failed (logged again only after it has worked)", eff_id)
             rgb = np.zeros((z.n, 3))
         return rgb, scene.get("brightness", 100)
 

@@ -103,6 +103,48 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(set(self.dev.last("z1")), {(0, 0, 0)})
         eng.stop()
 
+    def test_writer_survives_an_unexpected_error_from_a_device(self):
+        from airglow.lighting.engine import DeviceWriter
+        original, calls = self.dev.write_zone, []
+
+        def flaky(zone_id, colors):
+            calls.append(zone_id)
+            if len(calls) == 1:
+                raise AttributeError("a bug in the device's code")
+            original(zone_id, colors)
+
+        self.dev.write_zone = flaky
+        w = DeviceWriter(self.dev)
+        with self.assertLogs("airglow.lighting.engine", "ERROR"):
+            w.submit("z1", [(1, 2, 3)] * 6)
+            w.wait_idle(2)
+        w.submit("z1", [(4, 5, 6)] * 6)
+        w.wait_idle(2)
+        self.assertTrue(w.thread.is_alive())
+        self.assertEqual(self.dev.last("z1"), [(4, 5, 6)] * 6)
+        w.stop()
+
+    def test_missing_studio_effect_shows_solid_and_logs_once(self):
+        self.engine.set_scene({"effect": "fx:me.gone", "params": {"speed": 3}, "brightness": 100, "on": True})
+        with self.assertLogs("airglow.lighting.engine", "WARNING") as logs:
+            for _ in range(30):
+                self.engine.tick()
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(self.dev.last("z1"), [(0, 155, 222)] * 6)          # Solid's own colour, not black
+
+    def test_an_effect_that_raises_is_logged_once(self):
+        from airglow.lighting import effects
+        solid = effects.EFFECTS["solid"]
+        original = solid.render
+        solid.render = lambda *a: 1 / 0
+        try:
+            with self.assertLogs("airglow.lighting.engine", "ERROR") as logs:
+                for _ in range(30):
+                    self.engine.tick()
+            self.assertEqual(len(logs.records), 1)
+        finally:
+            solid.render = original
+
     def test_replaced_device_stops_its_old_writer(self):
         eng = Engine(self.manager, self.store, async_writes=True)
         eng.tick()
