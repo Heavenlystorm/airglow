@@ -9,3 +9,6 @@ contact_links:
   - name: Question or open-ended idea
     url: https://github.com/Heavenlystorm/airglow/discussions
     about: Ask how something works or float an idea before filing an issue.
+  - name: Chat with other Airglow users on r/AirglowRGB
+    url: https://www.reddit.com/r/AirglowRGB/
+    about: Share your setup and effects, or get help from the community.
