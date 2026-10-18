@@ -84,7 +84,8 @@ and helper programs. From 1.6 on, Airglow can update itself: it asks once whethe
 say no it only looks when you press "Check for updates" in Settings, About. winget and Scoop packages are planned.
 
 You need Windows 10 (1809 or newer) or Windows 11. Windows 11 already has the WebView2 runtime Airglow uses; on
-Windows 10 it usually comes with Edge.
+Windows 10 it usually comes with Edge. If your PC doesn't have it, the installer adds it, and if you start Airglow
+without it (from the portable zip, say) it tells you where to get it.
 
 <details>
 <summary>Setting up the helper programs yourself, or motherboard fans</summary>
