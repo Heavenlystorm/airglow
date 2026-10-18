@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 
 from airglow import config
@@ -233,3 +234,61 @@ class EngineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdleRateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = config.Store(self.tmp.name)
+        self.dev = FakeLightDevice("d", "Dev", zones=(("z1", 6), ("z2", 4)))
+        self.manager = FakeManager(self.dev)
+        self.manager.maintain(True)
+        self.store.ensure_zones([self.dev.info()])
+        self.store.set_zone("d/z2", dict(self.store.zones()["d/z2"], enabled=True), 4)
+        self.engine = Engine(self.manager, self.store, async_writes=False)
+        self.engine.set_scene({"effect": "solid", "params": {"color": "#ff8000"}, "brightness": 50, "on": True})
+
+    def tearDown(self):
+        self.engine.stop()
+        self.tmp.cleanup()
+
+    def test_a_still_scene_is_idle_and_anything_moving_is_not(self):
+        self.engine.tick()
+        self.assertTrue(self.engine.idle)
+        self.engine.set_scene({"effect": "off", "params": {}, "brightness": 100, "on": True})
+        self.engine.tick()
+        self.assertTrue(self.engine.idle)
+        self.engine.set_scene({"effect": "breathing", "params": {}, "brightness": 100, "on": True})
+        self.engine.tick()
+        self.assertFalse(self.engine.idle)
+
+    def test_one_animated_zone_or_an_identify_keeps_full_rate(self):
+        z2 = self.store.zones()["d/z2"]
+        self.store.set_zone("d/z2", dict(z2, override={"effect": "breathing", "params": {}}), 4)
+        self.engine.tick()
+        self.assertFalse(self.engine.idle)
+        self.store.set_zone("d/z2", dict(z2, override=None), 4)
+        self.engine.tick()
+        self.assertTrue(self.engine.idle)
+        self.engine.identify("d/z1")
+        self.engine.tick()
+        self.assertFalse(self.engine.idle)
+        self.engine._identify = {}
+        self.engine.probe("d/z1", "blink")
+        self.engine.tick()
+        self.assertFalse(self.engine.idle)
+
+    def test_the_loop_slows_down_for_a_still_scene_and_speeds_up_on_a_change(self):
+        self.engine.start()
+        start = self.engine.frame_id
+        time.sleep(1.0)
+        still = self.engine.frame_id - start
+        self.assertLessEqual(still, Engine.IDLE_FPS + 2)
+        self.engine.set_scene({"effect": "breathing", "params": {}, "brightness": 100, "on": True})
+        changed = time.monotonic()
+        while self.engine.frame_id - start == still and time.monotonic() - changed < 1.0:
+            time.sleep(0.005)
+        self.assertLess(time.monotonic() - changed, 0.1)        # the next frame comes right away
+        start = self.engine.frame_id
+        time.sleep(0.5)
+        self.assertGreater(self.engine.frame_id - start, 8)
