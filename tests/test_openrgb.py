@@ -223,6 +223,14 @@ class ClientTests(unittest.TestCase):
         self.assertTrue(done.wait(5), "client hung while handling a dropped connection")
         self.assertFalse(c.connected)
 
+    def test_writing_after_another_thread_closed_is_an_openrgb_error(self):
+        """Regression: the device thread closes the connection on a reset after sleep while the lights are mid-frame;
+        that raised AttributeError, which the writer thread doesn't expect."""
+        c = openrgb.OpenRGBClient()
+        for call in (lambda: c.update_zone(0, 0, [(1, 2, 3)]), lambda: c.set_custom_mode(0), lambda: c.controllers()):
+            with self.assertRaises(openrgb.OpenRGBError):
+                call()
+
     def test_connection_refused(self):
         c = openrgb.OpenRGBClient(port=1, timeout=0.3)
         with self.assertRaises(OSError):
