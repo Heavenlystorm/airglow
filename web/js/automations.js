@@ -13,7 +13,9 @@ function daysText(days) {
   return " on " + days.map((d) => DAYS[d]).join(", ");
 }
 
-const tempTxt = (c) => `${unitF() ? Math.round(c * 9 / 5 + 32) : c}°${unitF() ? "F" : "C"}`;
+const tempIn = (c) => (unitF() ? Math.round(c * 9 / 5 + 32) : c);      // rules keep whole °C; the box shows your unit
+const tempOut = (v) => Math.min(100, Math.max(30, Math.round(unitF() ? (v - 32) * 5 / 9 : v)));
+const tempTxt = (c) => `${tempIn(c)}°${unitF() ? "F" : "C"}`;
 
 // names: extra profile names by id (a shared profile's automations call it "self")
 export function sentence(r, html = true, names = {}) {
@@ -34,7 +36,8 @@ export function sentence(r, html = true, names = {}) {
     dim: () => `dim the lights to ${b(`${t.brightness}%`)}`,
     fan_curve: () => `switch the fans to ${b(curveLabel(t.curve))}`,
   }[t.type]();
-  return `${when}, ${then}.`;
+  // a chip right before a comma or full stop keeps less room on its right, so the stop doesn't look spaced off
+  return `${when}, ${then}.`.replace(/<b>([^<]*)<\/b>(?=[,.])/g, '<b class="end">$1</b>');
 }
 
 const STARTERS = [
@@ -43,7 +46,7 @@ const STARTERS = [
   { title: "Game mode", text: "While your game runs, use the Gaming profile.", rule: { when: { type: "app_running", exe: "" }, then: { type: "preset", preset: "gaming" } }, needsInput: true },
   { title: "Quiet when idle", text: "After 15 idle minutes, the fans go Silent.", rule: { when: { type: "idle", minutes: 15 }, then: { type: "fan_curve", curve: "silent" } } },
   { title: "Dark while locked", text: "Lights off whenever you lock the PC.", rule: { when: { type: "locked" }, then: { type: "lights_off" } } },
-  { title: "Cool down under load", text: "Above 80 °C, the fans switch to Performance.", rule: { when: { type: "temp_above", temp: 80, source: "max" }, then: { type: "fan_curve", curve: "performance" } } },
+  { title: "Cool down under load", text: () => `Above ${tempTxt(80)}, the fans switch to Performance.`, rule: { when: { type: "temp_above", temp: 80, source: "max" }, then: { type: "fan_curve", curve: "performance" } } },
 ];
 
 const newId = () => "rule-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
@@ -101,7 +104,7 @@ export function renderAutomations() {
   const used = new Set(S.rules.map((r) => JSON.stringify([r.when.type, r.then.type])));
   const starters = STARTERS.filter((s) => !used.has(JSON.stringify([s.rule.when.type, s.rule.then.type])));
   setHTML($("#starters"), starters.length ? `<h2>${S.rules.length ? "More ideas" : "Start with one of these"}</h2>
-    <div class="starter-grid">${starters.map((s) => `<button class="starter" data-starter="${STARTERS.indexOf(s)}"><strong>${esc(s.title)}</strong>${esc(s.text)}</button>`).join("")}</div>` : "");
+    <div class="starter-grid">${starters.map((s) => `<button class="starter" data-starter="${STARTERS.indexOf(s)}"><strong>${esc(s.title)}</strong>${esc(typeof s.text === "function" ? s.text() : s.text)}</button>`).join("")}</div>` : "");
 }
 
 // ------------------------------------------------------------ builder
@@ -119,7 +122,7 @@ async function openBuilder(rule, isNew) {
         <div class="days">${DAYS.map((d, i) => `<button type="button" data-day="${i}" aria-pressed="${(w.days ?? [0, 1, 2, 3, 4, 5, 6]).includes(i)}">${d}</button>`).join("")}</div>`,
       locked: () => "",
       temp_above: () => `<select class="select" data-w="source" style="width:auto">${[["max", "Hotter part"], ["cpu", "Processor"], ["gpu", "Graphics card"]].map(([v, l]) => `<option value="${v}"${(w.source ?? "max") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
-        <span>above</span><input class="text" type="number" min="30" max="100" data-w="temp" value="${w.temp ?? 80}" style="width:80px"><span>°C</span>`,
+        <span>above</span><input class="text" type="number" min="${tempIn(30)}" max="${tempIn(100)}" data-w="temp" value="${tempIn(w.temp ?? 80)}" style="width:80px"><span>°${unitF() ? "F" : "C"}</span>`,
     }[w.type]();
     const thenFields = {
       preset: () => `<select class="select" data-t="preset" style="width:auto">${S.presets.map((p) => `<option value="${esc(p.id)}"${p.id === t.preset ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select>`,
@@ -145,7 +148,10 @@ async function openBuilder(rule, isNew) {
     const form = $("#rb-form");
     form.querySelector("#rb-when").addEventListener("change", (e) => { r.when = { type: e.target.value }; render(); });
     form.querySelector("#rb-then").addEventListener("change", (e) => { r.then = { type: e.target.value, ...(e.target.value === "preset" ? { preset: S.presets[0]?.id } : e.target.value === "fan_curve" ? { curve: "silent" } : {}) }; render(); });
-    form.querySelectorAll("[data-w]").forEach((el) => el.addEventListener("change", () => { const v = el.type === "number" ? +el.value : el.value; r.when[el.dataset.w] = v; render(); }));
+    form.querySelectorAll("[data-w]").forEach((el) => el.addEventListener("change", () => {
+      const v = el.type === "number" ? +el.value : el.value;
+      r.when[el.dataset.w] = el.dataset.w === "temp" ? tempOut(v) : v; render();
+    }));
     form.querySelectorAll("[data-t]").forEach((el) => el.addEventListener("change", () => { r.then[el.dataset.t] = el.type === "number" ? +el.value : el.value; render(); }));
     form.querySelector("[data-app-pick]")?.addEventListener("change", (e) => { if (e.target.value) { r.when.exe = e.target.value; render(); } });
     form.querySelectorAll("[data-day]").forEach((b) => b.addEventListener("click", () => {
