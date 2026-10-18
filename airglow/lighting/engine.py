@@ -93,6 +93,7 @@ class Engine:
         self._preview = None             # (scene, deadline): a profile drawn for the gallery, never sent to devices
         self.preview_frames = {}
         self._last = {}                  # zone key -> (bytes, time sent)
+        self._dev_sent = {}              # device id -> time a frame was last sent to it (for Device.max_fps)
         self._geom = {}                  # zone key -> (layout snapshot, namespace)
         self._missing = set()            # effects not on this PC (drawn as Solid), logged once each
         self._failing = set()            # effects whose render raised, logged once until they work again
@@ -254,6 +255,16 @@ class Engine:
         vals = np.clip(rgb * (brightness / 100.0), 0, 1)
         return (vals * 255 + 0.5).astype(np.uint8)
 
+    @staticmethod
+    def _small_change(old, new, limit):
+        """True when frame `new` is within `limit` of the last one sent on every channel. A channel going dark
+        always counts, so a fade never stops a few steps short of off."""
+        if len(old) != len(new):
+            return False
+        a = np.frombuffer(old, np.uint8).astype(np.int16)
+        b = np.frombuffer(new, np.uint8).astype(np.int16)
+        return int(np.abs(a - b).max(initial=0)) <= limit and not np.any((b == 0) & (a != 0))
+
     def tick(self):
         now = time.monotonic()
         wall = time.time()
@@ -277,6 +288,13 @@ class Engine:
             self._online[dev.id] = dev if online else None
             if not online:
                 continue
+            # a slow device is sent at most max_fps frames a second (half an engine frame of slack, so timer
+            # jitter doesn't turn 10 fps into 7.5); its zones are still rendered for the live preview
+            max_fps = getattr(dev, "max_fps", None)
+            sent = self._dev_sent.get(dev.id)
+            throttled = bool(max_fps) and sent is not None and now - sent < 1.0 / max_fps - 0.5 / self.FPS
+            min_change = getattr(dev, "min_change", 0)
+            keepalive = getattr(dev, "keepalive", True)
             wrote = False
             for zone in dev.zones:
                 key = f"{dev.id}/{zone.id}"
@@ -301,10 +319,17 @@ class Engine:
                 frames[key] = rgb_ints.tobytes().hex()                      # preview shows true colours
                 order = zcfg.get("order", "RGB") if zcfg else "RGB"
                 ints = rgb_ints[:, list(ORDERS[order])] if order != "RGB" else rgb_ints
+                if throttled:
+                    if ended:                          # the dark frame after a probe goes out next time
+                        with self._lock:
+                            self._probe_done.add(key)
+                    continue
                 raw = ints.tobytes()
                 prev = self._last.get(key)
-                if prev and prev[0] == raw and now - prev[1] < self.KEEPALIVE:
+                if prev and (not keepalive or now - prev[1] < self.KEEPALIVE) and (
+                        prev[0] == raw or (min_change and self._small_change(prev[0], raw, min_change))):
                     continue
+                self._dev_sent[dev.id] = now
                 if self.async_writes:
                     writer = self._writers.get(dev.id)
                     if writer is None or writer.dev is not dev:
