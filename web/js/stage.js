@@ -5,6 +5,7 @@ import { $, S, clamp, emit, esc, fail, get, on, post } from "./core.js";
 
 const U = 1000;                       // canvas units -> viewBox units
 const VB_W = 1600, VB_H = 1000;
+const VB_M = 48;                      // room around the case: a zone at its very edge still shows whole, glow and all
 
 const st = { selected: null, arranging: false, drag: null, view: { s: 1, ox: 0, oy: 0 }, frames: {} };
 
@@ -30,7 +31,7 @@ function fanCentres(z) {
 
 function computeView() {
   const c = canvas(), r = c.getBoundingClientRect();
-  const s = Math.min(r.width / VB_W, r.height / VB_H);
+  const s = Math.min(r.width / (VB_W + VB_M * 2), r.height / (VB_H + VB_M * 2));
   st.view = { s, ox: (r.width - VB_W * s) / 2, oy: (r.height - VB_H * s) / 2, w: r.width, h: r.height };
   const dpr = window.devicePixelRatio || 1;
   c.width = Math.round(r.width * dpr);
@@ -51,22 +52,40 @@ function svgPoint(e) {
 
 // ------------------------------------------------------------ SVG overlay (zones, labels, handles)
 // Zones packed close together (a graphics card's four LEDs) would print their names on top of each other: a label
-// that would overlap an earlier one waits until you point at or select its zone. Needs the stage on screen and the
-// font loaded to measure, so it runs again when either happens.
+// that would overlap an earlier one waits until you point at or select its zone. A label that would sit on another
+// zone (fans stacked above each other) goes below its own zone when there's room there. Needs the stage on screen
+// and the font loaded to measure, so it runs again when either happens.
+const overlaps = (b, o) => b.x < o.x + o.width && o.x < b.x + b.width && b.y < o.y + o.height && o.y < b.y + b.height;
+
 function declutter() {
+  const groups = [...svg().querySelectorAll("g.zone")];
+  const shapes = groups.map((g) => [...g.querySelectorAll(".ring, .hit:not(circle)")].map((e) => {
+    const b = e.getBBox();
+    return { x: b.x - 14, y: b.y - 14, width: b.width + 28, height: b.height + 28 };   // the LEDs and their strokes
+  }));
   const placed = [];
-  for (const t of svg().querySelectorAll("text.label")) {
+  groups.forEach((g, i) => {
+    const t = g.querySelector("text.label");
     t.classList.remove("clash");
-    const b = t.getBBox();
-    if (!b.width) continue;
-    if (placed.some((o) => b.x < o.x + o.width && o.x < b.x + b.width && b.y < o.y + o.height && o.y < b.y + b.height)) t.classList.add("clash");
+    t.setAttribute("y", t.dataset.y);
+    let b = t.getBBox();
+    if (!b.width) return;
+    const onZone = (b) => shapes.some((list, j) => j !== i && list.some((o) => overlaps(b, o)));
+    const onLabel = (b) => placed.some((o) => overlaps(b, o));
+    if (onZone(b) && t.dataset.below) {
+      t.setAttribute("y", t.dataset.below);
+      const below = t.getBBox();
+      if (below.y + below.height <= VB_H + VB_M && !onZone(below) && !onLabel(below)) { placed.push(below); return; }
+      t.setAttribute("y", t.dataset.y);
+    }
+    if (onLabel(b)) t.classList.add("clash");
     else placed.push(b);
-  }
+  });
 }
 
 export function renderOverlay() {
   const s = svg();
-  s.setAttribute("viewBox", `0 0 ${VB_W} ${VB_H}`);
+  s.setAttribute("viewBox", `${-VB_M} ${-VB_M} ${VB_W + VB_M * 2} ${VB_H + VB_M * 2}`);
   const zones = S.zones?.zones || [];
   const visible = zones.filter((z) => z.device.online && (z.config.enabled || st.arranging));
   $("#stage-empty").hidden = zones.some((z) => z.device.online && z.config.enabled) || st.arranging;
@@ -74,7 +93,7 @@ export function renderOverlay() {
   for (const z of visible) {
     const L = z.config.layout, on = z.config.enabled && z.positions.length;
     const sel = st.selected === z.key;
-    let hit = "", deco = "", lx, ly;
+    let hit = "", deco = "", lx, ly, below;
     if (L.shape === "fans") {
       const r = L.size * U / 2;
       for (const [cx, cy] of fanCentres(z)) {
@@ -83,17 +102,17 @@ export function renderOverlay() {
         deco += `<circle class="hub-dot" cx="${cx}" cy="${cy}" r="${r * 0.32}"/>`;
       }
       const c = fanCentres(z);
-      lx = c[0][0] - r; ly = Math.min(...c.map((p) => p[1])) - r - 22;
+      lx = c[0][0] - r; ly = Math.min(...c.map((p) => p[1])) - r - 22; below = Math.max(...c.map((p) => p[1])) + r + 40;
     } else if (L.shape === "matrix") {
       const a = L.angle * Math.PI / 180, w = L.length * U / 2, h = w * L.rows / L.cols, ca = Math.cos(a), sa = Math.sin(a);
       const pts = [[-w, -h], [w, -h], [w, h], [-w, h]].map(([ox, oy]) => [L.x * U + ca * ox - sa * oy, L.y * U + sa * ox + ca * oy]);
       hit = `<polygon class="hit" points="${pts.map((p) => p.join(",")).join(" ")}" stroke-width="2" style="fill:${sel ? "rgba(236,235,230,.06)" : "transparent"}"/>`;
-      lx = Math.min(...pts.map((p) => p[0])); ly = Math.min(...pts.map((p) => p[1])) - 18;
+      lx = Math.min(...pts.map((p) => p[0])); ly = Math.min(...pts.map((p) => p[1])) - 18; below = Math.max(...pts.map((p) => p[1])) + 36;
     } else {
       const a = L.angle * Math.PI / 180, h = L.length * U / 2;
       const x1 = L.x * U - Math.cos(a) * h, y1 = L.y * U - Math.sin(a) * h, x2 = L.x * U + Math.cos(a) * h, y2 = L.y * U + Math.sin(a) * h;
       hit = `<line class="hit" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke-width="34" stroke-linecap="round" style="stroke:${sel ? "rgba(236,235,230,.12)" : "transparent"}"/>`;
-      lx = Math.min(x1, x2); ly = Math.min(y1, y2) - 24;
+      lx = Math.min(x1, x2); ly = Math.min(y1, y2) - 24; below = Math.max(y1, y2) + 42;
     }
     let handle = "";
     if (sel && st.arranging) {
@@ -104,7 +123,7 @@ export function renderOverlay() {
     }
     const placingThis = !!st.placing?.includes(z.key);
     html += `<g class="zone${on ? "" : " off"}${sel || placingThis ? " selected" : ""}${placingThis ? " placing" : ""}" data-key="${esc(z.key)}">${deco}${hit}
-      <text class="label" x="${lx}" y="${ly}">${esc(z.config.name)}${on ? "" : " (off)"}</text></g>${handle}`;
+      <text class="label" x="${lx}" y="${ly}" data-y="${ly}" data-below="${below}">${esc(z.config.name)}${on ? "" : " (off)"}</text></g>${handle}`;
   }
   s.innerHTML = html;
   declutter();
