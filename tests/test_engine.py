@@ -27,6 +27,16 @@ class EngineTests(unittest.TestCase):
         self.assertIsNone(self.dev.last("z2"))                    # 0 LEDs -> disabled by default
         self.assertEqual(self.engine.frames["d/z1"], "804000" * 6)
 
+    def test_preview_hex_is_made_only_when_read_and_once_per_frame(self):
+        self.engine.tick()
+        self.assertIsNone(self.engine._frames[1])                  # nobody asked: no hex strings this frame
+        first = self.engine.frames
+        self.assertEqual(first["d/z1"], "804000" * 6)
+        self.assertIs(self.engine.frames, first)                    # the same frame isn't converted twice
+        self.engine.set_scene({"effect": "solid", "params": {"color": "#0000ff"}, "brightness": 100, "on": True})
+        self.engine.tick()
+        self.assertEqual(self.engine.frames["d/z1"], "0000ff" * 6)
+
     def test_unchanged_frames_are_not_resent(self):
         self.engine.tick(); self.engine.tick(); self.engine.tick()
         self.assertEqual(len([w for w in self.dev.writes if w[0] == "z1"]), 1)
