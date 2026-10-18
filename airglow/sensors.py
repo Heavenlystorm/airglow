@@ -8,7 +8,9 @@ right sensor on any PC, which is what the default Overview uses.
 """
 
 import json
+import logging
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -324,6 +326,47 @@ def read_tree(base_url, timeout=1.5, headers=None):
             return json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError):
         return None
+
+
+class LhmPoller:
+    """Reads LHM's sensor tree on its own thread, so a slow or missing LHM never holds up automations and fans: a
+    connect to a closed port takes up to the whole timeout. While LHM is offline it is tried only every
+    OFFLINE_RETRY seconds; wake() tries again now (a new address, or helper setup just started it)."""
+
+    INTERVAL = 2.0
+    OFFLINE_RETRY = 12.0
+
+    def __init__(self, url, headers=lambda: None, read=None):
+        self._url, self._headers, self._read = url, headers, read or read_tree
+        self.tree = None                     # the latest tree, or None while LHM isn't answering
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def poll(self):
+        try:
+            self.tree = self._read(self._url(), headers=self._headers())
+        except Exception:                    # a bad address or a bug here must not end the thread
+            logging.getLogger(__name__).exception("reading LibreHardwareMonitor failed")
+            self.tree = None
+        return self.tree
+
+    def wake(self):
+        self._wake.set()
+
+    def _run(self):
+        while not self._stop.is_set():
+            tree = self.poll()
+            self._wake.wait(self.INTERVAL if tree is not None else self.OFFLINE_RETRY)
+            self._wake.clear()
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, name="sensors", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        self._wake.set()
 
 
 def read(base_url, timeout=1.5):

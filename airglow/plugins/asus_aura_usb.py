@@ -21,12 +21,13 @@ PARAMETERS = [
     p_toggle("board_leds", "Light the board's own LEDs", True),
 ]
 
+_DETECTOR = "ASUS Aura Motherboard"
 PRODUCTS = [
-    Product(0x0B05, 0x19AF, "ASUS Aura", interface=2),
-    Product(0x0B05, 0x18F3, "ASUS Aura", experimental=True),
-    Product(0x0B05, 0x1939, "ASUS Aura", experimental=True),
-    Product(0x0B05, 0x1AA6, "ASUS Aura", experimental=True),
-    Product(0x0B05, 0x1BED, "ASUS Aura", experimental=True),
+    Product(0x0B05, 0x19AF, "ASUS Aura", interface=2, openrgb_detector=_DETECTOR),
+    Product(0x0B05, 0x18F3, "ASUS Aura", experimental=True, openrgb_detector=_DETECTOR),
+    Product(0x0B05, 0x1939, "ASUS Aura", experimental=True, openrgb_detector=_DETECTOR),
+    Product(0x0B05, 0x1AA6, "ASUS Aura", experimental=True, openrgb_detector=_DETECTOR),
+    Product(0x0B05, 0x1BED, "ASUS Aura", experimental=True, openrgb_detector=_DETECTOR),
 ]
 
 

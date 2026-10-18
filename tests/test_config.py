@@ -22,7 +22,8 @@ class ValidationTests(unittest.TestCase):
 
     def test_settings(self):
         self.assertEqual(config.validate_settings({"fan_failsafe_duty": "70"}), {"fan_failsafe_duty": 70})
-        self.assertEqual(config.validate_settings({"lhm_url": "http://localhost:8085/"}), {"lhm_url": "http://localhost:8085"})
+        self.assertEqual(config.validate_settings({"lhm_url": "http://localhost:8085/"}), {"lhm_url": "http://127.0.0.1:8085"})
+        self.assertEqual(config.validate_settings({"lhm_url": "http://localhost.lan:8085"}), {"lhm_url": "http://localhost.lan:8085"})
         self.assertEqual(config.validate_settings({"openrgb_port": "6742"}), {"openrgb_port": 6742})
         for bad in ({"fan_failsafe_duty": 10}, {"temp_unit": "K"}, {"nope": 1}, {"lhm_url": "file:///c:/"},
                     {"openrgb_host": "bad host!"}):
@@ -78,6 +79,12 @@ class StoreTests(unittest.TestCase):
         again = config.Store(self.dir)
         mine = next(p for p in again.get_presets() if p["id"] == "mine")
         self.assertEqual((mine["effect"], mine["params"]), ("fx:me.gone", {"speed": 7}))
+
+    def test_a_saved_localhost_sensor_address_becomes_127_0_0_1(self):
+        self.dir.mkdir(parents=True)
+        (self.dir / "config.json").write_text(json.dumps({"lhm_url": "http://localhost:8085"}), encoding="utf-8")
+        self.assertEqual(config.Store(self.dir).settings()["lhm_url"], "http://127.0.0.1:8085")
+        self.assertEqual(config.DEFAULT_CONFIG["lhm_url"], "http://127.0.0.1:8085")
 
     def test_defaults_when_empty(self):
         s = config.Store(self.dir)
@@ -183,6 +190,29 @@ class StoreTests(unittest.TestCase):
         dev[0]["zones"][0].update(provisional=False, default_leds=24, shape="fans")
         self.assertTrue(s.ensure_zones(dev))
         self.assertGreater(s.zones_rev, rev)
+
+    def test_unreported_fallback_does_not_rewrite_saved_zones(self):
+        # A start where the hub's accessory report was lost used to flip empty channels to enabled 40-LED strips
+        s = config.Store(self.dir)
+        zone = {"id": "ch3", "name": "Channel 3", "default_leds": 0, "shape": "strip", "fans": 1}
+        dev = [{"id": "nzxt-hub", "kind": "native", "type": "Fan and lighting hub", "name": "NZXT", "zones": [zone]}]
+        self.assertTrue(s.ensure_zones(dev))
+        saved = s.zones()["nzxt-hub/ch3"]
+        self.assertFalse(saved["enabled"])
+        zone.update(default_leds=40, guessed=True)                   # this start: no report, 40-LED fallback
+        self.assertFalse(s.ensure_zones(dev))
+        self.assertEqual(s.zones()["nzxt-hub/ch3"], saved)
+        zone.update(default_leds=24, shape="fans", guessed=False)    # something really was plugged in
+        self.assertTrue(s.ensure_zones(dev))
+        self.assertTrue(s.zones()["nzxt-hub/ch3"]["enabled"])
+
+    def test_unreported_fallback_still_places_new_zones(self):
+        s = config.Store(self.dir)
+        dev = [{"id": "nzxt-hub", "kind": "native", "type": "Fan and lighting hub", "name": "NZXT",
+                "zones": [{"id": "ch1", "name": "Channel 1", "default_leds": 40, "shape": "strip", "fans": 1,
+                           "guessed": True}]}]
+        self.assertTrue(s.ensure_zones(dev))
+        self.assertIn("nzxt-hub/ch1", s.zones())
 
     def test_corrupt_files_fall_back(self):
         self.dir.mkdir(parents=True)

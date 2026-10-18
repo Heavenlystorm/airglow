@@ -41,6 +41,36 @@ class NzxtZoneTests(unittest.TestCase):
         nz._opened_at -= nz.REPORT_GRACE + 1
         self.assertFalse(any(z.provisional for z in nz.zones))
 
+    def test_lost_led_info_reply_is_asked_for_again(self):
+        dev = FakeHidDevice(reads=[])                               # the reply was pushed out by colour acks
+        hub = devices.NzxtControlHub(backend=FakeHidBackend(device=dev))
+        hub.open()
+        asks = lambda: sum(1 for w in dev.writes if w[:2] == [0x20, 0x03])
+        self.assertEqual(asks(), 1)
+        hub.poll()
+        self.assertEqual(asks(), 1)                                 # not before INFO_WAIT has passed
+        for n in range(hub.INFO_RETRIES):
+            hub._info_asked -= hub.INFO_WAIT + 1
+            hub.poll()
+            self.assertEqual(asks(), 2 + n)
+        hub._info_asked -= hub.INFO_WAIT + 1
+        with self.assertLogs("airglow.devices", "WARNING"):
+            hub.poll()                                              # gives up, once
+        hub._info_asked -= hub.INFO_WAIT + 1
+        hub.poll()
+        self.assertEqual(asks(), 1 + hub.INFO_RETRIES)
+        dev.reads.append(list(NZXT_LED_INFO))                       # a retry's reply gets through
+        hub.poll()
+        self.assertEqual(hub.accessories, [[0x1F], [0x1F], [], [], [0x19]])
+
+    def test_fallback_after_grace_is_marked_guessed(self):
+        nz = NzxtDevice(devices.NzxtControlHub(backend=FakeHidBackend(device=FakeHidDevice())))
+        nz.open()
+        nz._opened_at -= nz.REPORT_GRACE + 1
+        self.assertTrue(all(z.guessed and z.default_leds == 40 for z in nz.zones))
+        nz.hub._handle(list(NZXT_LED_INFO))
+        self.assertFalse(any(z.guessed for z in nz.zones))
+
     def test_stream_packets_count_matches_leds(self):
         packets = devices.nzxt_stream_packets([(255, 0, 0)] * 24, 1)
         self.assertEqual(len(packets), 3)                          # 20 + 4 LEDs, then commit

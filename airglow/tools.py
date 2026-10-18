@@ -297,6 +297,43 @@ def _microsoft_signed(path, run):
                 run, env=env).returncode == 0
 
 
+def openrgb_settings_file():
+    return paths._appdata() / "OpenRGB" / "OpenRGB.json"
+
+
+def disable_openrgb_detectors(names, path=None):
+    """Switch off OpenRGB's detectors for controllers Airglow lights itself, so OpenRGB never opens them. Merges into
+    an existing OpenRGB.json (everything else in it stays); one that can't be read is left alone. Returns whether
+    the file now has them off."""
+    path = Path(path or openrgb_settings_file())
+    if not names:
+        return True
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError) as e:
+        log.warning("left %s alone: couldn't read it (%s)", path, e)
+        return False
+    section = data.get("Detectors") if isinstance(data, dict) else None
+    detectors = section.get("detectors") if isinstance(section, dict) else {} if section is None else None
+    if not isinstance(data, dict) or not isinstance(detectors, dict):
+        log.warning("left %s alone: its detector list isn't in the expected format", path)
+        return False
+    if all(detectors.get(n) is False for n in names):
+        return True
+    data["Detectors"] = {**(section or {}), "detectors": {**detectors, **{n: False for n in names}}}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".airglow-tmp")
+        tmp.write_text(json.dumps(data, indent=4), encoding="utf-8")
+        tmp.replace(path)
+    except OSError as e:
+        log.warning("couldn't update %s: %s", path, e)
+        return False
+    log.info("OpenRGB won't open what Airglow lights: switched off its %s detector%s", ", ".join(names),
+             "" if len(names) == 1 else "s")
+    return True
+
+
 def install(job, root=None, run=subprocess.run):
     """The elevated part of setup. Returns the list of steps done; raises SetupError on the first failure."""
     s, root = spec(), Path(root or tools_dir())
@@ -538,6 +575,11 @@ def start_setup(ctrl, store, ids=None):
             password = secrets.token_urlsafe(24)
             job_file["lhm_password_sha256"] = hashlib.sha256(password.encode()).hexdigest()
         job.update(progress=1.0)
+        if "openrgb" in wanted:
+            # before OpenRGB first starts, and here rather than in the elevated step: an administrator's
+            # elevation can run as another account, with another %APPDATA%
+            from .hw import openrgb_detectors_to_disable
+            disable_openrgb_detectors(openrgb_detectors_to_disable(ctrl.manager.natives.values()))
         path = dl / "setup-job.json"
         path.write_text(json.dumps(job_file), encoding="utf-8")
         try:
@@ -550,6 +592,8 @@ def start_setup(ctrl, store, ids=None):
         if password:
             auth_file().write_text(json.dumps({"user": LHM_USER, "password": password}), encoding="utf-8")
             store.update_settings({"lhm_url": LHM_URL})
+        if "lhm" in wanted and hasattr(ctrl, "lhm"):
+            ctrl.lhm.wake()                                     # read it as soon as it answers, not in 12 s
         if "openrgb" in wanted:
             store.update_settings({"openrgb_enabled": True})
             ctrl.manager.bridge._last_try = 0.0                 # connect as soon as OpenRGB's server is up
