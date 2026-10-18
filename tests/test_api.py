@@ -300,6 +300,21 @@ class ApiTests(unittest.TestCase):
         self.assertIn(r["id"], [p["id"] for p in r["presets"]])
         self.store.set_presets([p for p in self.store.get_presets() if p["id"] != r["id"]])
 
+    def test_saving_the_same_name_twice_gives_two_profiles(self):
+        ids = [self.request("POST", "/api/presets/from-current", {"name": "Twice"})[1]["id"] for _ in range(2)]
+        self.assertEqual(ids, ["twice", "twice-2"])
+        self.store.set_presets([p for p in self.store.get_presets() if p["id"] not in ids])
+
+    def test_saving_past_24_profiles_says_why(self):
+        before = self.store.get_presets()
+        self.store.set_presets(before + [{"id": f"p{n}", "name": f"P{n}"} for n in range(24 - len(before))])
+        try:
+            status, r = self.request("POST", "/api/presets/from-current", {"name": "One more"})
+            self.assertEqual(status, 400)
+            self.assertIn("24 profiles", r["error"])
+        finally:
+            self.store.set_presets(before)
+
     def test_automations(self):
         rules = [{"id": "night", "when": {"type": "time", "start": "23:00", "end": "07:00"}, "then": {"type": "lights_off"}}]
         status, saved = self.request("POST", "/api/automations", {"rules": rules})

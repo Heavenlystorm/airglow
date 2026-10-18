@@ -358,6 +358,14 @@ def remove(root=None, run=subprocess.run):
         raise SetupError(f"couldn't delete {root} completely")
 
 
+RESULT_FILES = {"--setup-tools": "setup-result.json", "--remove-tools": "remove-result.json"}
+
+
+def result_file(job_path, command):
+    """Where the elevated copy reports back: a fixed name next to the job file, never a path the job file names."""
+    return Path(job_path).with_name(RESULT_FILES[command])
+
+
 def elevated_main(argv):
     """Entry for "Airglow.exe --setup-tools <job>" and "--remove-tools [<job>]", started through the admin prompt."""
     handler = logging.FileHandler(paths.log_dir() / "tools-setup.log", encoding="utf-8")
@@ -376,8 +384,8 @@ def elevated_main(argv):
     except (SetupError, OSError, KeyError, ValueError) as e:
         log.exception("helper setup failed")
         result["error"] = str(e)
-    if job.get("result"):
-        Path(job["result"]).write_text(json.dumps(result), encoding="utf-8")
+    if job_path:
+        result_file(job_path, argv[0]).write_text(json.dumps(result), encoding="utf-8")
     return 0 if result["ok"] else 1
 
 
@@ -505,7 +513,7 @@ def start_setup(ctrl, store, ids=None):
             files[tid] = str(download(t["url"], dl / f"{tid}.zip", t["size"], t["sha256"],
                                       lambda f, n=n: job.update(progress=(n + f) / len(steps))))
         job_file = {"tools": wanted, "files": files, "user_sid": current_user_sid(),
-                    "openrgb_port": store.settings()["openrgb_port"], "result": str(dl / "setup-result.json")}
+                    "openrgb_port": store.settings()["openrgb_port"]}
         if need_pawnio:
             p = s["pawnio"]
             job.update(step="Downloading the PawnIO driver")
@@ -521,7 +529,7 @@ def start_setup(ctrl, store, ids=None):
         path = dl / "setup-job.json"
         path.write_text(json.dumps(job_file), encoding="utf-8")
         try:
-            r = _elevate(job, ["--setup-tools", str(path)], dl / "setup-result.json")
+            r = _elevate(job, ["--setup-tools", str(path)], result_file(path, "--setup-tools"))
         finally:
             path.unlink(missing_ok=True)
         if r is None:
@@ -545,9 +553,9 @@ def start_remove(ctrl):
     def work(job):
         dl = downloads_dir()
         path = dl / "remove-job.json"
-        path.write_text(json.dumps({"result": str(dl / "remove-result.json")}), encoding="utf-8")
+        path.write_text(json.dumps({}), encoding="utf-8")
         try:
-            r = _elevate(job, ["--remove-tools", str(path)], dl / "remove-result.json")
+            r = _elevate(job, ["--remove-tools", str(path)], result_file(path, "--remove-tools"))
         finally:
             path.unlink(missing_ok=True)
         if r is None:
