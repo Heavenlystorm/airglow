@@ -311,6 +311,21 @@ class ApiTests(unittest.TestCase):
         self.request("POST", "/api/automations/pause", {"minutes": 0})
         self.request("POST", "/api/automations", {"rules": []})
 
+    def test_malformed_automations_are_refused_not_crashes(self):
+        before = self.store.get_rules()
+        lights_off = {"type": "lights_off"}
+        for when, then in [({"type": "idle", "minutes": None}, lights_off),
+                           ({"type": "temp_above", "temp": [80]}, lights_off),
+                           ({"type": "locked"}, {"type": "dim", "brightness": {}}),
+                           ({"type": "locked"}, {"type": "preset", "preset": ["gaming"]}),
+                           ({"type": "locked"}, {"type": "fan_curve", "curve": {"x": 1}}),
+                           ("locked", lights_off)]:
+            status, r = self.request("POST", "/api/automations", {"rules": [{"id": "x", "when": when, "then": then}]})
+            self.assertEqual(status, 400, (when, then, r))
+        for minutes in (None, "soon", [5], True):
+            self.assertEqual(self.request("POST", "/api/automations/pause", {"minutes": minutes})[0], 400, minutes)
+        self.assertEqual(self.store.get_rules(), before)
+
     def test_settings_update(self):
         status, s = self.request("POST", "/api/settings", {"temp_unit": "F", "lights_off_on_lock": True})
         self.assertEqual((status, s["settings"]["temp_unit"], s["settings"]["lights_off_on_lock"]), (200, "F", True))

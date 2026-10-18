@@ -204,6 +204,22 @@ class TrialTests(unittest.TestCase):
         self.assertEqual(self.ctrl.fan_target, 50)
         self.assertEqual(self.store.state["fan_curve"], "profile:neon")   # remembered across restarts
 
+    def test_changes_while_trying_are_never_saved(self):
+        self.ctrl.set_scene({"effect": "solid", "params": {"color": "#123456"}})
+        self.ctrl.set_fan_curve("silent")
+        self.ctrl.try_profile(profiles.scene_of(self.shared), "Neon", fan_points=self.shared["fans"]["curve"])
+        self.ctrl.set_scene({"brightness": 40})                 # the Overview slider or the tray, while trying
+        self.assertEqual(self.ctrl.base_scene["brightness"], 40)
+        self.assertEqual(self.store.state["scene"]["effect"], "solid")
+        self.assertEqual(self.store.state["fan_curve"], "silent")
+        # a restart while trying comes back with what you had
+        again = Controller(config.Store(self.tmp.name), manager=FakeManager(), signals=lambda: signals(),
+                           read_sensors=lambda: {}, async_writes=False)
+        self.assertEqual(again.base_scene["params"]["color"], "#123456")
+        self.assertEqual(again.base_curve, "silent")
+        self.ctrl.end_trial()
+        self.assertEqual(self.store.state["scene"]["params"]["color"], "#123456")
+
     def test_automation_using_a_profile_brings_its_areas_and_curve(self):
         preset = config.validate_preset(profiles.to_preset(self.shared, "neon"), set(self.store.curves()))
         self.store.set_presets(self.store.get_presets() + [preset])

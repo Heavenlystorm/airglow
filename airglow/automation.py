@@ -16,6 +16,16 @@ _HHMM = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 TEMP_HYSTERESIS = 3        # °C: a "temperature above" rule stays on until it has cooled this far below the mark
 
 
+def whole_number(value, message):
+    """An int from a number or numeric text; ValueError (not TypeError) for anything else, so the API answers 400."""
+    if isinstance(value, bool):
+        raise ValueError(message)
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(message) from None
+
+
 def validate_rule(r, preset_ids=None, curve_names=None):
     if not isinstance(r, dict):
         raise ValueError("an automation must be an object")
@@ -23,6 +33,8 @@ def validate_rule(r, preset_ids=None, curve_names=None):
     if not re.fullmatch(r"[a-z0-9\-]{1,64}", rid):
         raise ValueError("automation id must be lowercase letters, digits and dashes")
     w, t = r.get("when") or {}, r.get("then") or {}
+    if not isinstance(w, dict) or not isinstance(t, dict):
+        raise ValueError("an automation needs a when and a then")
     wt, tt = w.get("type"), t.get("type")
     if wt not in WHEN_TYPES:
         raise ValueError("pick what should start this automation")
@@ -35,7 +47,7 @@ def validate_rule(r, preset_ids=None, curve_names=None):
             raise ValueError("enter the program's file name, like Cyberpunk2077.exe")
         when["exe"] = exe
     elif wt == "idle":
-        m = int(w.get("minutes", 10))
+        m = whole_number(w.get("minutes", 10), "idle time must be 1 to 240 minutes")
         if not 1 <= m <= 240:
             raise ValueError("idle time must be 1 to 240 minutes")
         when["minutes"] = m
@@ -48,7 +60,7 @@ def validate_rule(r, preset_ids=None, curve_names=None):
             raise ValueError("pick at least one day")
         when.update(start=start, end=end, days=sorted(set(days)))
     elif wt == "temp_above":
-        temp = int(w.get("temp", 80))
+        temp = whole_number(w.get("temp", 80), "temperature must be between 30 and 100 °C")
         if not 30 <= temp <= 100:
             raise ValueError("temperature must be between 30 and 100 °C")
         src = w.get("source", "max")
@@ -58,17 +70,17 @@ def validate_rule(r, preset_ids=None, curve_names=None):
     then = {"type": tt}
     if tt == "preset":
         pid = t.get("preset")
-        if preset_ids is not None and pid not in preset_ids:
+        if not isinstance(pid, str) or preset_ids is not None and pid not in preset_ids:
             raise ValueError("pick a preset that exists")
         then["preset"] = pid
     elif tt == "dim":
-        b = int(t.get("brightness", 20))
+        b = whole_number(t.get("brightness", 20), "brightness must be between 0 and 100")
         if not 0 <= b <= 100:
             raise ValueError("brightness must be between 0 and 100")
         then["brightness"] = b
     elif tt == "fan_curve":
         c = t.get("curve")
-        if curve_names is not None and c not in curve_names:
+        if not isinstance(c, str) or curve_names is not None and c not in curve_names:
             raise ValueError("pick a fan curve")
         then["curve"] = c
     return {"id": rid, "enabled": bool(r.get("enabled", True)), "when": when, "then": then}

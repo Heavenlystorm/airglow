@@ -1,6 +1,6 @@
 // Lighting screen: effect deck, inspector (scene or a selected zone), profiles.
 
-import { $, $$, QUICK, S, coalesce, curveLabel, effectName, emit, esc, fail, get, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
+import { $, $$, QUICK, S, coalesce, curveLabel, effectName, emit, esc, fail, fmtTemp, get, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
 import { select } from "./stage.js";
 import { openSheet, closeSheet } from "./sheet.js";
 import { editProfilesSheet, openGallery, saveProfileSheet } from "./profiles.js";
@@ -117,7 +117,7 @@ function overrideBanner() {
 export function describeShort(rule) {
   const w = rule.when;
   return { app_running: `${w.exe} is running`, app_focused: `${w.exe} is in front`, idle: `idle ${w.minutes} min`,
-           time: `${w.start} to ${w.end}`, locked: "PC locked", temp_above: `above ${w.temp}°` }[w.type] || "rule";
+           time: `${w.start} to ${w.end}`, locked: "PC locked", temp_above: `above ${fmtTemp(w.temp)}` }[w.type] || "rule";
 }
 
 function presetsHTML() {
