@@ -3,7 +3,7 @@
 # Airglow
 
 [![Latest release](https://img.shields.io/github/v/release/Heavenlystorm/airglow)](https://github.com/Heavenlystorm/airglow/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/Heavenlystorm/airglow/total)](https://github.com/Heavenlystorm/airglow/releases)
+[![Downloads](https://img.shields.io/github/downloads/Heavenlystorm/airglow/total?cachebust=2)](https://github.com/Heavenlystorm/airglow/releases)
 [![Tests](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml/badge.svg)](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml)
 ![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4)
 [![MIT licence](https://img.shields.io/github/license/Heavenlystorm/airglow)](LICENSE)
