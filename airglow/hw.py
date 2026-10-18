@@ -6,6 +6,7 @@ Supporting another controller family is one new plugin module; another model of 
 line in that plugin.
 """
 
+import collections
 import logging
 import re
 import threading
@@ -236,24 +237,34 @@ class OpenRGBBridge:
 
 # ---------------------------------------------------------------- manager
 
-def detect_natives(hid_list, plugins=None, backend=None):
+def _hid_key(product, info):
+    return product.vid, product.pid, info.get("serial_number") or ""
+
+
+def detect_natives(hid_list, plugins=None, backend=None, known=()):
     """Native devices for every controller in an hid.enumerate() list that a plugin claims. Ids are the plugin's
     ID_PREFIX for the first of a family ("nzxt-hub", "asus-aura"), so saved zone settings keep working, then "-2",
-    "-3"."""
+    "-3". known: devices found earlier; controllers they already stand for are left out and their ids stay taken."""
     from . import plugins as plugin_mod
     plugins = plugin_mod.load() if plugins is None else plugins
-    found, counts = [], {}
+    taken = {d.id for d in known}
+    have = collections.Counter(getattr(d, "hid_key", None) for d in known)
+    found = []
     for plugin, product, info in plugin_mod.match(plugins, hid_list):
-        counts[plugin.ID_PREFIX] = counts.get(plugin.ID_PREFIX, 0) + 1
-        n = counts[plugin.ID_PREFIX]
-        dev_id = plugin.ID_PREFIX + ("" if n == 1 else f"-{n}")
+        key = _hid_key(product, info)
+        if have[key]:
+            have[key] -= 1
+            continue
+        n = 1
+        while (dev_id := plugin.ID_PREFIX + ("" if n == 1 else f"-{n}")) in taken:
+            n += 1
         try:
             dev = plugin.create(info, product, dev_id, backend)
         except Exception as e:  # one broken plugin must not cost the user every other device
             log.error("%s: could not set up %s: %s", plugin.NAME, product.name, e)
-            counts[plugin.ID_PREFIX] -= 1
             continue
-        dev.plugin_module, dev.product = plugin, product
+        taken.add(dev_id)
+        dev.plugin_module, dev.product, dev.hid_key = plugin, product, key
         found.append(dev)
         log.info("found %s (%04x:%04x) via %s%s", product.name, product.vid, product.pid, plugin.NAME,
                  ", experimental support" if product.experimental else "")
@@ -273,26 +284,15 @@ def openrgb_detectors_to_disable(natives):
 
 class DeviceManager:
     RECONNECT = 5.0
+    RESCAN = 15.0            # look for controllers plugged in (or ready) after Airglow started
     RESET_DEBOUNCE = 5.0     # Windows sends two resume broadcasts, and the engine and controller notice the gap too
 
     def __init__(self, hid_backend=None, natives=None, bridge=None, plugins=None):
-        if natives is None:
-            try:
-                import hid
-                natives = detect_natives((hid_backend or hid).enumerate(), plugins, hid_backend)
-            except Exception as e:  # no USB access must never stop OpenRGB devices from working
-                log.warning("USB device scan failed: %s", e)
-                natives = []
-        self.natives = {d.id: d for d in natives}
-        # leave out of OpenRGB whatever a plugin already lights, but only for families that are actually here: a
-        # fans-only controller leaves its lighting to OpenRGB, and a board plugin only claims motherboard devices,
-        # not the same brand's graphics cards, memory or keyboards
-        present = {id(m): m for m in (getattr(d, "plugin_module", None) for d in natives if d.lighting)
-                   if m is not None}
-        skip = [(name, tuple(getattr(m, "OPENRGB_SKIP_TYPES", ())) or None)
-                for m in sorted(present.values(), key=lambda m: m.ID_PREFIX)
-                for name in getattr(m, "OPENRGB_SKIP", [])]
-        self.bridge = bridge or OpenRGBBridge(skip=tuple(skip))
+        # natives passed in (tests) are fixed; otherwise USB is scanned now and again every RESCAN seconds
+        self._scan = None if natives is not None else (hid_backend, plugins)
+        self.natives = {d.id: d for d in (natives if natives is not None else self._enumerate([]))}
+        self._last_scan = time.monotonic()
+        self.bridge = bridge or OpenRGBBridge(skip=self._openrgb_skip())
         from .dynlight import DynamicLightingBridge
         self.dynamic = DynamicLightingBridge()
         self.dynamic_enabled = lambda: False      # the controller connects this to the setting
@@ -303,6 +303,43 @@ class DeviceManager:
         # _lock (all()) every frame.
         self._maintain_lock = threading.RLock()
         self._reset_wanted = threading.Event()
+
+    def _enumerate(self, known):
+        backend, plugins = self._scan
+        try:
+            import hid
+            return detect_natives((backend or hid).enumerate(), plugins, backend, known)
+        except Exception as e:  # no USB access must never stop OpenRGB devices from working
+            log.warning("USB device scan failed: %s", e)
+            return []
+
+    def _openrgb_skip(self):
+        """Leave out of OpenRGB whatever a plugin already lights, but only for families that are actually here: a
+        fans-only controller leaves its lighting to OpenRGB, and a board plugin only claims motherboard devices,
+        not the same brand's graphics cards, memory or keyboards."""
+        present = {id(m): m for m in (getattr(d, "plugin_module", None) for d in self.natives.values() if d.lighting)
+                   if m is not None}
+        return tuple((name, tuple(getattr(m, "OPENRGB_SKIP_TYPES", ())) or None)
+                     for m in sorted(present.values(), key=lambda m: m.ID_PREFIX)
+                     for name in getattr(m, "OPENRGB_SKIP", []))
+
+    def rescan(self):
+        """Add controllers that weren't there (or weren't ready) at start. Devices that went away stay, offline,
+        and reconnect when they come back."""
+        self._last_scan = time.monotonic()
+        new = self._enumerate(list(self.natives.values()))
+        if not new:
+            return []
+        with self._lock:
+            self.natives = {**self.natives, **{d.id: d for d in new}}
+        for d in new:
+            log.info("%s plugged in", d.name)
+        skip = self._openrgb_skip()
+        if skip != self.bridge.skip:
+            self.bridge.skip = skip
+            if self.bridge.client.connected:
+                self.bridge._load()                 # hide what Airglow lights now
+        return new
 
     def all(self):
         with self._lock:
@@ -320,6 +357,8 @@ class DeviceManager:
             self._maintain(openrgb_enabled, force)
 
     def _maintain(self, openrgb_enabled, force):
+        if self._scan and time.monotonic() - self._last_scan >= self.RESCAN:
+            self.rescan()
         if force or time.monotonic() - self._last_reconnect >= self.RECONNECT:
             self._last_reconnect = time.monotonic()
             for d in self.natives.values():
