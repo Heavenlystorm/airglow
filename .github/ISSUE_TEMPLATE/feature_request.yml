@@ -1,0 +1,38 @@
+name: Suggest a feature
+description: An idea for a new effect, device support, fan control option or anything else.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. For open-ended ideas or questions, [Discussions](https://github.com/Heavenlystorm/airglow/discussions) may be a better fit. If your idea is about a device OpenRGB can't drive, it belongs in the [OpenRGB tracker](https://gitlab.com/CalcProgrammer1/OpenRGB/-/issues).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The problem or use case, rather than the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like Airglow to do
+      description: Describe the change you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've tried
+      description: Workarounds, other apps, or other approaches you considered.
+  - type: input
+    id: version
+    attributes:
+      label: Airglow version
+      description: Shown in Settings, About.
+      placeholder: "1.2.0"
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware involved
+      description: If the idea relates to specific devices or fans.

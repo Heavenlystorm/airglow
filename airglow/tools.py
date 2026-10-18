@@ -279,10 +279,22 @@ def _stop(t, root, run):
                 pass
 
 
+def _ps_literal(text):
+    """text as a PowerShell single-quoted string."""
+    return "'" + str(text).replace("'", "''") + "'"
+
+
 def _microsoft_signed(path, run):
-    ps = ("$s = Get-AuthenticodeSignature -LiteralPath $args[0]; "
+    # The path goes into the script itself. Arguments after "-Command" don't reach $args: PowerShell glues them onto the
+    # end of the script text, which made this check fail for every file (and would split a path with spaces, like
+    # "Program Files"). The script is the last argument, so there is nothing to glue.
+    ps = (f"$s = Get-AuthenticodeSignature -LiteralPath {_ps_literal(path)}; "
           "if ($s.Status -eq 'Valid' -and $s.SignerCertificate.Subject -like '*O=Microsoft Corporation*') { exit 0 } exit 1")
-    return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps, str(path)], run).returncode == 0
+    # Started from PowerShell 7 (a terminal, CI), PSModulePath lists PowerShell 7's own modules, and Windows PowerShell
+    # then can't load the one Get-AuthenticodeSignature lives in. Without it, Windows PowerShell uses its own defaults.
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+    return _run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                run, env=env).returncode == 0
 
 
 def openrgb_settings_file():

@@ -3,14 +3,17 @@
 # Airglow
 
 [![Latest release](https://img.shields.io/github/v/release/Heavenlystorm/airglow)](https://github.com/Heavenlystorm/airglow/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/Heavenlystorm/airglow/total)](https://github.com/Heavenlystorm/airglow/releases)
+[![Downloads](https://img.shields.io/github/downloads/Heavenlystorm/airglow/total?cachebust=3)](https://github.com/Heavenlystorm/airglow/releases)
 [![Tests](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml/badge.svg)](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml)
 ![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4)
 [![MIT licence](https://img.shields.io/github/license/Heavenlystorm/airglow)](LICENSE)
+[![r/AirglowRGB on Reddit](https://img.shields.io/badge/Reddit-r%2FAirglowRGB-ff4500?logo=reddit&logoColor=white)](https://www.reddit.com/r/AirglowRGB/)
 
 Airglow runs the RGB lighting, the fans and the temperature readouts of a Windows PC from one app. If you've ended up
 with NZXT CAM, Armoury Crate and an RGB program all running at once and fighting over the same LEDs, this replaces
 them. It's free and open source, there's no account, and it doesn't collect anything.
+
+**Show off your setup, ask questions and share effects on [r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/).**
 
 ![The Overview: your lights, temperatures, load, power and fans on one screen](docs/screenshots/overview.png)
 
@@ -81,7 +84,8 @@ and helper programs. From 1.6 on, Airglow can update itself: it asks once whethe
 say no it only looks when you press "Check for updates" in Settings, About. winget and Scoop packages are planned.
 
 You need Windows 10 (1809 or newer) or Windows 11. Windows 11 already has the WebView2 runtime Airglow uses; on
-Windows 10 it usually comes with Edge.
+Windows 10 it usually comes with Edge. If your PC doesn't have it, the installer adds it, and if you start Airglow
+without it (from the portable zip, say) it tells you where to get it.
 
 <details>
 <summary>Setting up the helper programs yourself, or motherboard fans</summary>

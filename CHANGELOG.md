@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.6.7
+## 1.6.8
 - **Much less processor time with OpenRGB.** Graphics cards and memory sit on a slow bus, and an animated effect
   sent them 30 updates a second: one RTX 5080 kept OpenRGB busy on a whole core. They now get at most 10 a second,
   only when the colour really changes, and each device gets one update per frame instead of one per zone. With an
@@ -21,6 +21,12 @@
   plugged in" about 0.6 seconds after it's asked, and Airglow only waited 0.5; once lighting started, the answer
   could get lost. Airglow now waits for it, asks again if it doesn't come, and a channel the hub never reported
   keeps the setup you saved.
+
+## 1.6.7
+- Setting up the helper programs on a PC without the Visual C++ runtime stopped at its first step with "isn't signed
+  by Microsoft", so neither LibreHardwareMonitor nor OpenRGB was installed. The runtime is now checked and installed.
+- A PC without the Edge WebView2 runtime used to get an empty window and no explanation. The installer now adds the
+  runtime when it's missing, and Airglow tells you where to get it if it's started without it.
 
 ## 1.6.6
 - Fans driven through LibreHardwareMonitor: if a speed change didn't get through (LibreHardwareMonitor busy for a

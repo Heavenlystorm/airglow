@@ -6,3 +6,9 @@ contact_links:
   - name: A device works in OpenRGB but not in Airglow, or not at all
     url: https://openrgb.org/devices.html
     about: Check OpenRGB's device list first. If OpenRGB can't drive it either, the fix belongs there.
+  - name: Question or open-ended idea
+    url: https://github.com/Heavenlystorm/airglow/discussions
+    about: Ask how something works or float an idea before filing an issue.
+  - name: Chat with other Airglow users on r/AirglowRGB
+    url: https://www.reddit.com/r/AirglowRGB/
+    about: Share your setup and effects, or get help from the community.
