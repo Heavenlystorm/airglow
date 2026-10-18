@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.6.7
+- **Much less processor time with OpenRGB.** Graphics cards and memory sit on a slow bus, and an animated effect
+  sent them 30 updates a second: one RTX 5080 kept OpenRGB busy on a whole core. They now get at most 10 a second,
+  only when the colour really changes, and each device gets one update per frame instead of one per zone. With an
+  animated effect, Airglow, OpenRGB and the effect together went from about a full core to about a sixth of one.
+- A still scene (Solid or Off) is drawn 4 times a second instead of 30. Airglow then uses almost no processor time.
+  Anything that moves, an identify flash or the setup guide gets the full 30 again right away.
+- Without LibreHardwareMonitor, every temperature check held up automations and fans for 3 seconds. Temperatures
+  are now read on their own, every 12 seconds until LibreHardwareMonitor answers, and the default address is
+  `http://127.0.0.1:8085` (a saved "localhost" changes to it).
+- When Airglow sets up OpenRGB, OpenRGB leaves alone the controllers Airglow drives itself (the ASUS Aura board and
+  the NZXT hub), so the two programs no longer both open them.
+- A hub or board controller plugged in after Airglow started, or one that wasn't ready at sign-in, is found within
+  15 seconds instead of only after a restart.
+- A running GNU C compiler (gcc.exe) is no longer taken for Gigabyte Control Center, so "Close it" can't end it.
+  For RGB programs that run as Windows services, Airglow now says to stop them in Services instead of offering to
+  close them.
+
 ## 1.6.6
 - Fans driven through LibreHardwareMonitor: if a speed change didn't get through (LibreHardwareMonitor busy for a
   moment), Airglow forgot that fan, so "Leave alone", quitting and the failsafe speed all skipped it and it stayed
