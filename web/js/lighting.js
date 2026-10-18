@@ -74,16 +74,27 @@ export function wireFields(root, effect, params, onChange) {
 }
 
 // ------------------------------------------------------------ deck
+// A name with one word longer than its card ("Temperature" in a narrow column) gets a smaller size instead of losing
+// its last letters.
+function fitNames() {
+  for (const n of $("#deck").querySelectorAll(".name")) {
+    n.style.fontSize = "";
+    for (let px = 11.5; px >= 9 && n.scrollWidth > n.clientWidth; px -= 0.5) n.style.fontSize = `${px}px`;
+  }
+}
+
 function renderDeck() {
   const scene = S.state.scene;
   const c = sceneColor(scene);
-  setHTML($("#deck"), S.effects.map((e) => {
+  const deck = $("#deck"), before = deck._html;
+  setHTML(deck, S.effects.map((e) => {
     const extra = e.id === "spectrum" ? Array.from({ length: 7 }, (_, i) => `<i style="--i:${i}"></i>`).join("") : "";
     const tint = ["solid", "breathing", "pulse"].includes(e.id) ? ` style="--c:${scene.effect === e.id ? c : { solid: "#009bde", breathing: "#ff5a1f", pulse: "#8a3dff" }[e.id]}"` : "";
     const thumb = e.studio ? `t-studio${e.studio.permissions.includes("audio") ? " t-music" : ""}` : `t-${e.id}`;
     return `<button class="fx" role="radio" aria-checked="${scene.effect === e.id}" data-effect="${esc(e.id)}" title="${esc(e.description || "Made in the Studio")}">
       <span class="thumb ${thumb}"${tint}>${extra}</span><span class="name">${esc(e.name)}</span></button>`;
   }).join("") + `<a class="fx fx-new" href="#studio/new" title="Make your own effect in the Studio"><span class="thumb t-new" aria-hidden="true">+</span><span class="name">Create your own</span></a>`);
+  if (deck._html !== before) fitNames();
 }
 
 $("#deck").addEventListener("click", async (e) => {
@@ -248,6 +259,8 @@ export function renderLighting() {
 }
 
 export function initLighting() {
+  new ResizeObserver(fitNames).observe($("#deck"));
+  document.fonts?.ready.then(fitNames);
   on("select-zone", (key) => { selectedZone = key; lastKey = ""; renderInspector(true); });
   on("state", renderLighting);
 }
