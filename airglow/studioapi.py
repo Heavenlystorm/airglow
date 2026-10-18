@@ -53,6 +53,24 @@ def _source(body):
     return fxformat.to_html(_parts(body))
 
 
+def _used_by(ctrl, fx_id):
+    """Where an effect is still in use besides the lights themselves, as text ("the profile “Night” and 2 zones"),
+    or "" when nowhere. Deleting it there would leave those showing Solid."""
+    def uses(look):
+        return look.get("effect") == fx_id or any(a.get("effect") == fx_id for a in (look.get("areas") or {}).values())
+    store = ctrl.store
+    presets = [p["name"] for p in store.get_presets() if uses(p)]
+    zones = [c["name"] for c in store.zones().values() if (c.get("override") or {}).get("effect") == fx_id]
+    out = []
+    if uses(ctrl.base_scene):
+        out.append("one area of your lights")
+    if presets:
+        out.append(f"the profile “{presets[0]}”" if len(presets) == 1 else f"{len(presets)} profiles")
+    if zones:
+        out.append(f"the zone “{zones[0]}”" if len(zones) == 1 else f"{len(zones)} zones")
+    return " and ".join(out)
+
+
 def _documents():
     """The user's Documents folder (it can be moved, e.g. to OneDrive)."""
     import ctypes
@@ -129,6 +147,9 @@ def _route(ctrl, hooks, method, path, body, query):
         fx_id = str(body.get("fx_id"))
         if ctrl.base_scene.get("effect") == fx_id:
             raise StudioError(409, "That effect is on your lights right now. Pick another one first.")
+        used = _used_by(ctrl, fx_id)
+        if used:
+            raise StudioError(409, f"That effect is still used by {used}. Pick another effect there first.")
         lib.delete(fx_id)
         return {"ok": True}
     if path == "/api/studio/use":
