@@ -662,8 +662,9 @@ class Store:
             cfg = existing.get(key)
             if not cfg:
                 continue
-            if cfg.get("auto") and (geometry.total_leds(cfg["layout"]) != _expected_leds(z)
-                                    or cfg["layout"]["shape"] != z["shape"]):
+            # a fallback layout (the device never reported) only places new zones, never rewrites saved ones
+            if cfg.get("auto") and not z.get("guessed") and (geometry.total_leds(cfg["layout"]) != _expected_leds(z)
+                                                             or cfg["layout"]["shape"] != z["shape"]):
                 stale.add(key)
             else:
                 role = _role(d, z)

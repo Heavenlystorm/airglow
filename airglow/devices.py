@@ -157,6 +157,8 @@ class NzxtControlHub(HidDevice):
     write_len = 64
     LEDS_PER_CHANNEL = 40
     FAN_PORTS = 5
+    INFO_WAIT = 1.5           # seconds to wait for the LED info reply before asking again
+    INFO_RETRIES = 3
 
     def __init__(self, backend=None, pid=0x2022, name="NZXT Control Hub", led_channels=5, fan_ports=5, path=None):
         super().__init__(backend, path)
@@ -165,35 +167,57 @@ class NzxtControlHub(HidDevice):
         self.FAN_PORTS = fan_ports
         self.channels = led_channels
         self.accessories = None          # per channel: list of accessory ids, filled by the LED info report
+        self._info_asked = 0.0           # when the LED info report was last requested
+        self._info_tries = 0
         self.fans = [{"rpm": 0, "duty": 0} for _ in range(self.FAN_PORTS)]
 
     def open(self):
         super().open()
         with self._lock:
             if self.led_channels:
-                self.write([0x20, 0x03])                              # LED info -> channel count + accessories
+                self._info_tries = 0
+                self._ask_led_info()
             else:
                 self.accessories = []                                 # fans-only model
             if self.FAN_PORTS:
                 self.write([0x60, 0x03])                              # fan report config
                 self.write([0x60, 0x02, 0x01, 0xE8, 3, 0x01, 0xE8, 3])   # fan report every second
-            # The LED info reply arrives a few ms later; wait for it so zones start with the real LED counts.
-            deadline = time.monotonic() + 0.5
+            # The LED info reply takes 0.55-0.75 s on a real hub; wait for it so zones start with the real LED counts.
+            deadline = time.monotonic() + self.INFO_WAIT
             while self.accessories is None and time.monotonic() < deadline:
                 p = self.read(64, 50)
                 if p:
                     self._handle(p)
         self.poll()
 
+    def _ask_led_info(self):
+        self.write([0x20, 0x03])                                      # LED info -> channel count + accessories
+        self._info_asked = time.monotonic()
+        self._info_tries += 1
+
     def _handle(self, p):
         if p[0] == 0x21 and p[1] == 0x03 and p[14]:
             self.channels = min(p[14], self.led_channels)
-            self.accessories = nzxt_parse_accessories(p, self.channels)
+            accessories = nzxt_parse_accessories(p, self.channels)
+            if accessories != self.accessories:
+                log.info("%s accessories: %s (report %s)", self.name,
+                         ", ".join(f"ch{ch + 1} " + (" ".join(f"{a:02x}" for a in acc) or "-")
+                                   for ch, acc in enumerate(accessories)),
+                         bytes(p[14:15 + self.channels * 6]).hex(" "))
+            self.accessories = accessories
         elif p[0] == 0x67 and p[1] == 0x02:
             self.fans = nzxt_parse_fans(p, self.FAN_PORTS)
 
     def poll(self):
         with self._lock:
+            # The reply can still be lost: the hub acknowledges every colour packet, and once lighting streams those
+            # acknowledgements can push it out of the input buffer before it's read. Ask again a few times.
+            if self.accessories is None and self.led_channels and time.monotonic() - self._info_asked > self.INFO_WAIT:
+                if self._info_tries <= self.INFO_RETRIES:
+                    self._ask_led_info()
+                elif self._info_tries == self.INFO_RETRIES + 1:
+                    self._info_tries += 1
+                    log.warning("%s didn't report its accessories; channels use 40 LEDs until it does", self.name)
             for _ in range(64):
                 p = self.read(64)
                 if not p:
