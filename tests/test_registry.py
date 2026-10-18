@@ -106,6 +106,52 @@ class PluginTests(unittest.TestCase):
         self.assertTrue(both.bridge.skipped(self._orgb("NZXT Control Hub", "LED strip", vendor="NZXT")))
 
 
+class HotPlugTests(unittest.TestCase):
+    class Backend(FakeHidBackend):
+        def __init__(self, *entries):
+            super().__init__()
+            self.entries = list(entries)
+
+        def enumerate(self, vid=0, pid=0):
+            return list(self.entries)
+
+    def test_a_hub_plugged_in_later_is_found_and_hidden_from_openrgb(self):
+        usb = self.Backend(hid_entry(0x0B05, 0x19AF, interface=2))
+        manager = hw.DeviceManager(hid_backend=usb)
+        self.assertEqual(list(manager.natives), ["asus-aura"])
+        hub = {"vendor": "NZXT", "name": "NZXT RGB & Fan Controller", "type_name": "LED strip"}
+        self.assertFalse(manager.bridge.skipped(hub))
+        self.assertEqual(manager.rescan(), [])                              # nothing new: nothing changes
+        aura = manager.natives["asus-aura"]
+        usb.entries.append(hid_entry(0x1E71, 0x2022))
+        with self.assertLogs("airglow.hw", "INFO"):
+            self.assertEqual([d.id for d in manager.rescan()], ["nzxt-hub"])
+        self.assertIs(manager.natives["asus-aura"], aura)                  # what was there is kept as it is
+        self.assertTrue(manager.bridge.skipped(hub))
+        self.assertEqual(manager.rescan(), [])
+
+    def test_a_second_identical_hub_gets_the_next_id_and_an_unplugged_one_stays(self):
+        usb = self.Backend(hid_entry(0x1E71, 0x2022, serial="A"))
+        manager = hw.DeviceManager(hid_backend=usb)
+        usb.entries = [hid_entry(0x1E71, 0x2022, serial="B")]                # A unplugged, B plugged in
+        self.assertEqual([d.id for d in manager.rescan()], ["nzxt-hub-2"])
+        self.assertEqual(sorted(manager.natives), ["nzxt-hub", "nzxt-hub-2"])
+
+    def test_housekeeping_rescans_on_a_slow_timer(self):
+        usb = self.Backend()
+        manager = hw.DeviceManager(hid_backend=usb)
+        usb.entries.append(hid_entry(0x1E71, 0x2022))
+        manager.maintain(False)
+        self.assertEqual(manager.natives, {})                               # not yet: RESCAN hasn't passed
+        manager._last_scan -= hw.DeviceManager.RESCAN
+        manager.maintain(False)
+        self.assertEqual(list(manager.natives), ["nzxt-hub"])
+        fixed = hw.DeviceManager(natives=[], bridge=manager.bridge)          # devices passed in are never rescanned
+        fixed._last_scan -= hw.DeviceManager.RESCAN
+        fixed.maintain(False)
+        self.assertEqual(fixed.natives, {})
+
+
 class DeviceParameterTests(unittest.TestCase):
     def test_brightness_limit_scales_what_the_hub_is_sent(self):
         class Hub:
