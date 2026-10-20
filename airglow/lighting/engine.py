@@ -72,6 +72,7 @@ class DeviceWriter:
 class Engine:
     FPS = 30
     IDLE_FPS = 4             # while every zone shows a still effect; any command brings back FPS at once
+    STILL_AFTER = 0.5        # an animated effect whose colours haven't changed for this long is still, for now
     KEEPALIVE = 5.0          # re-send unchanged frames this often (some controllers forget)
     RESUME_GAP = 10.0        # a frame gap this long means the PC slept
     IDENTIFY_SECONDS = 6.0
@@ -108,6 +109,7 @@ class Engine:
         self.last_frame = None           # monotonic time of the last finished frame (for the health check)
         self.idle = False                # the last frame had nothing moving: render at IDLE_FPS
         self._moving = False             # set by render_zone when an animated effect was drawn this frame
+        self._changed_at = 0.0           # when a zone's colours last changed (an animated effect can be still too)
         self._kick = threading.Event()   # a command arrived: render the next frame now
 
     @property
@@ -347,13 +349,15 @@ class Engine:
                 frames[key] = rgb_ints                                      # preview shows true colours
                 order = zcfg.get("order", "RGB") if zcfg else "RGB"
                 ints = rgb_ints[:, list(ORDERS[order])] if order != "RGB" else rgb_ints
+                raw = ints.tobytes()
+                prev = self._last.get(key)
+                if prev is None or prev[0] != raw:
+                    self._changed_at = now              # colours moved: even a static-looking scene isn't still
                 if throttled:
                     if ended:                          # the dark frame after a probe goes out next time
                         with self._lock:
                             self._probe_done.add(key)
                     continue
-                raw = ints.tobytes()
-                prev = self._last.get(key)
                 if prev and (not keepalive or now - prev[1] < self.KEEPALIVE) and (
                         prev[0] == raw or (min_change and self._small_change(prev[0], raw, min_change))):
                     continue
@@ -391,7 +395,10 @@ class Engine:
         self._identify = {k: d for k, d in self._identify.items() if d > now}
         with self._lock:
             busy = self._probe or self._probe_done or self._preview
-        self.idle = not (self._moving or self._identify or busy or self.screen.active or self.audio.active)
+        # An animated effect only needs full rate while it's actually changing: "Temperature" is animated but still
+        # whenever the PC's temperature is, so it drops to IDLE_FPS like a static colour does.
+        moving = self._moving and now - self._changed_at < self.STILL_AFTER
+        self.idle = not (moving or self._identify or busy or self.screen.active or self.audio.active)
 
     # ------------------------------------------------------------ lifecycle
     def _loop(self):

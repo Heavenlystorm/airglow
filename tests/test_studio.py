@@ -327,6 +327,38 @@ class HostTests(unittest.TestCase):
             self.host.tick(5.0)
         self.assertEqual(len(self.spawned), 2)
 
+    def test_a_crashed_host_waits_a_moment_before_starting_again(self):
+        # Restarting three milliseconds after the old process died hit WebView2's profile lock and fail-fast crashed
+        # the new host straight away: three starts in 78 ms, then the effect was turned off.
+        self.host.render(self.eff, self.zone("a"), 0, {})
+        other = studio.JsEffect(self.lib.save_mine(builder().replace("Aurora Wave", "Ember")))
+        self.host.render(other, self.zone("b"), 0, {})
+        self.host.tick(0.0)
+        self.assertEqual(len(self.spawned), 1)
+        self.host.proc.poll.return_value = 3221226091                 # 0xC0000409: a fail-fast crash
+        self.host.tick(0.1)
+        self.assertEqual(len(self.spawned), 1)                        # not straight away
+        self.assertEqual(len(self.host.instances), 2)                 # two effects: neither is blamed for it
+        self.now += studio.RESTART_GAP + 0.1
+        self.host.tick(0.2)
+        self.assertEqual(len(self.spawned), 2)                        # once the old one has gone, a new one
+
+    def test_an_effect_that_crashes_the_host_before_its_first_frame_is_turned_off(self):
+        self.host.render(self.eff, self.zone("a"), 0, {})
+        self.host.tick(0.0)                                           # loaded, but not one frame came back
+        self.host.proc.poll.return_value = 3221226091
+        self.host.tick(0.1)
+        self.assertEqual(self.host.instances, {})                     # only the effect that was loading is dropped
+        self.assertEqual(self.host.problems[self.eff.fx_id]["reason"], "crashed")
+
+    def test_closing_never_starts_another_host(self):
+        self.host.render(self.eff, self.zone("a"), 0, {})
+        self.host.close()
+        self.assertEqual(self.host.proc, None)
+        self.host.render(self.eff, self.zone("a"), 1, {})             # the lighting thread can still draw one frame
+        self.host.tick(1.0)
+        self.assertEqual(len(self.spawned), 1)
+
     def test_stream_sends_loads_then_ticks(self):
         self.host.render(self.eff, self.zone("a"), 0, {})
         self.host.tick(0.5, None)

@@ -242,7 +242,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.sent()["/hid/nzxt-kraken/0/control/0"], 100)
 
     def test_lost_temperatures_raise_a_slow_pump_to_the_failsafe(self):
-        self.store.set_fan_channel("/hid/nzxt-kraken/0/control/0", {"mode": "steady", "duty": 40})
+        self.store.set_fan_channel("/hid/nzxt-kraken/0/control/0", {"mode": "steady", "duty": 20})
         self.ctrl._temp_seen = True
         self.temps = {"online": False, "cpu_temp": None, "gpu_temp": None}
         self.ctrl.tick()
