@@ -63,8 +63,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "vpk upload failed" }
 
       # winget and Scoop get stable releases only. Each step waits for its secret: see docs/RELEASING.md.
+      # winget is allowed to fail on its own: a package that isn't in winget-pkgs yet, or a token GitHub no longer
+      # accepts, must not fail the release run or skip the Scoop update after it.
       - name: winget
         if: steps.v.outputs.channel == 'stable' && env.HAS_WINGET == 'true'
+        continue-on-error: true
         uses: vedantmgoyal9/winget-releaser@v2
         with:
           identifier: Heavenlystorm.Airglow
