@@ -63,8 +63,33 @@ def installed(tid):
     return bool(_installed_cache[1].get(tid))
 
 
-def launch(tid, **subs):
-    """Start a helper program Airglow set up, with the settings its sign-in task uses (OpenRGB's SDK server, say)."""
+def _start_task(name, run=subprocess.run):
+    """Start a sign-in task now. Windows gives it the rights the task was registered with, without asking."""
+    try:
+        done = run(["schtasks", "/Run", "/TN", name], capture_output=True, creationflags=CREATE_NO_WINDOW)
+    except OSError:
+        return False
+    return getattr(done, "returncode", 1) == 0
+
+
+def _run_elevated(exe, args):
+    """Start a program with administrator rights, and don't wait for it. True when Windows started it."""
+    try:
+        started = ctypes.windll.shell32.ShellExecuteW(None, "runas", str(exe), subprocess.list2cmdline(args),
+                                                      str(Path(exe).parent), 1)
+    except (AttributeError, OSError):
+        return False
+    return started > 32                    # ShellExecuteW returns an error code up to 32
+
+
+def launch(tid, run=subprocess.run, elevate=_run_elevated, **subs):
+    """Start a helper program Airglow set up (OpenRGB, usually).
+
+    The rights matter: OpenRGB reaches graphics card, memory and onboard RGB over I2C/SMBus, which goes through the
+    PawnIO driver and therefore needs administrator rights. Started normally it shows "one or more I2C/SMBus interfaces
+    failed to initialize" and those devices are missing. Its sign-in task already runs with highest rights, so it's
+    started through the task; without one (a copy someone installed themselves) Windows is asked once.
+    """
     t = spec()["tools"].get(tid)
     if not t:
         raise SetupError(f"unknown helper program {tid}")
@@ -73,9 +98,14 @@ def launch(tid, **subs):
         raise SetupError(f"{t['name']} isn't set up on this PC; set it up in Settings, Helper programs")
     if _processes(t["exe"]):
         raise SetupError(f"{t['name']} is already running, but Airglow can't reach it; close it and let Airglow start it")
+    if t.get("task") and _start_task(t["task"], run=run):
+        log.info("started %s through its sign-in task", t["name"])
+        return True
     args = t.get("args", "").format(**subs).split() if t.get("args") else []
-    subprocess.Popen([str(exe), *args], cwd=str(exe.parent), creationflags=CREATE_NO_WINDOW)
-    log.info("started %s", exe)
+    if not elevate(exe, args):
+        raise SetupError(f"{t['name']} needs administrator rights to drive graphics card and memory lighting, and "
+                         f"Windows didn't give them")
+    log.info("started %s with administrator rights", exe)
     return True
 
 

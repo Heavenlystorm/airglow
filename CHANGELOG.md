@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.1
+- **"Start OpenRGB" starts OpenRGB with the rights it needs.** Graphics cards, memory and onboard RGB are reached over
+  I2C/SMBus, which goes through the PawnIO driver and therefore needs administrator rights: a copy started normally
+  shows "One or more I2C/SMBus interfaces failed to initialize" and shows none of those devices. The button now starts
+  it through the same sign-in task Airglow registers (which already runs with highest rights, so nothing is asked);
+  without that task — a copy someone installed themselves — Windows is asked for permission once instead of starting
+  a copy that can't see half its devices.
+- **A winget problem no longer holds up the Scoop manifest.** The winget step is allowed to fail on its own, so a
+  missing winget package (or a token GitHub no longer accepts) doesn't skip the Scoop update and doesn't fail an
+  otherwise good release.
+
 ## 1.7.0
 - **The effect host is restarted properly.** It used to be started again a few milliseconds after the old process was
   killed, while WebView2 still held its profile: the new host could fail-fast crash on start (three starts in 78 ms,
