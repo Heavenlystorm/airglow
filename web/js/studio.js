@@ -16,11 +16,64 @@ const remember = (k, v) => { try { if (v === undefined) return localStorage.getI
 
 const H = { lib: null, gallery: null, info: null, view: "home", search: "", tag: "" };   // home and community
 const E = { doc: null, runner: null, slices: [], sel: "effect", lights: false, beat: false, raf: 0, t0: 0, last: 0,
-            backdrop: null, frames: {}, ms: 0, fps: 0, frameCount: 0, fpsAt: 0, problem: null, cm: null, logs: [],
-            layersCopy: null, watch: null, gen: 0 };
+            backdrop: null, frames: {}, ms: 0, fps: 0, frameCount: 0, framesSeen: 0, painted: -1, fpsAt: 0,
+            problem: null, cm: null, logs: [], layersCopy: null, watch: null, gen: 0 };
 
 const box = () => $("#studio");
 let pending = null;            // something Lighting asked the Studio to open ("Remix in the Studio", "Edit in ...")
+
+// ------------------------------------------------------------ unsaved work
+// Switching tabs or closing the window used to throw away an effect you hadn't saved. Edits are kept here (in the
+// window's own storage) and offered back on the Studio's home page, so nothing is lost and no dialog interrupts you.
+const DRAFT_KEY = "airglow.studio.unsaved.v1";
+let draftTimer = 0;
+
+function rememberDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    try {
+      if (E.doc?.dirty) localStorage.setItem(DRAFT_KEY, JSON.stringify({ doc: E.doc, at: Date.now() }));
+      else localStorage.removeItem(DRAFT_KEY);
+    } catch { /* storage off or full: the draft is a safety net, not the only copy */ }
+  }, 700);
+}
+
+function readDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
+    if (!d?.doc || !d.doc.name || Date.now() - (d.at || 0) > 7 * 864e5) return null;
+    return d.doc;
+  } catch { return null; }
+}
+
+function forgetDraft() {
+  clearTimeout(draftTimer);
+  try { localStorage.removeItem(DRAFT_KEY); } catch { /* nothing to forget */ }
+}
+
+function saveDraftNow() {                 // leaving the editor before the debounce fired
+  clearTimeout(draftTimer);
+  try {
+    if (E.doc?.dirty) localStorage.setItem(DRAFT_KEY, JSON.stringify({ doc: E.doc, at: Date.now() }));
+  } catch { /* storage off or full */ }
+}
+
+function draftBanner() {
+  const d = readDraft();
+  if (!d) return "";
+  return `<div class="banner" id="st-draft"><span>You have unsaved changes to <b>${esc(d.name)}</b>.</span>
+    <div class="btn-row"><button class="btn" data-draft="resume">Resume</button><button class="btn quiet" data-draft="discard">Discard</button></div></div>`;
+}
+
+function wireDraft() {
+  const d = readDraft();
+  if (!d) return;
+  box().querySelector('[data-draft="resume"]')?.addEventListener("click", () => {
+    openEditor(d);                    // E.doc is set straight away
+    saveDraftNow();                   // keep the safety net until it's actually saved
+  });
+  box().querySelector('[data-draft="discard"]')?.addEventListener("click", () => { forgetDraft(); renderHome(false); });
+}
 
 // ------------------------------------------------------------ entry points
 export function initStudio() {
@@ -28,6 +81,14 @@ export function initStudio() {
   box().addEventListener("keydown", (e) => {          // layer rows are list items: Enter or Space picks one
     if ((e.key === "Enter" || e.key === " ") && e.target.matches("li[data-sel]")) { e.preventDefault(); e.target.click(); }
   });
+  // Ctrl+S saves what's being edited, like every other editor.
+  document.addEventListener("keydown", (e) => {
+    if (!E.doc || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    if (e.key.toLowerCase() !== "s") return;
+    e.preventDefault();
+    save();
+  });
+  window.addEventListener("resize", () => { E.painted = -1; });      // the preview canvas changed size: repaint it
   on("state", () => { followLights(); if (!box().closest(".view").hidden) paintProblems(); });
   on("zones", () => { if (E.runner) restartRunner(); });
   on("studio:open", (req) => { pending = req; if (location.hash === "#studio/edit") renderStudio("edit"); else location.hash = "#studio/edit"; });
@@ -148,6 +209,7 @@ function renderHome(pickStart) {
     <div class="page-head"><div><h1>Studio</h1>
       <p class="lede">Make your own effects by stacking layers, or write one in code. It plays on your own case while you build it, and Share sends it to everyone's gallery.</p></div>
       <div class="btn-row"><a class="btn" href="#studio/community">Community effects</a><button class="btn primary" data-st="new">New effect</button></div></div>
+    ${draftBanner()}
     ${rig ? "" : `<div class="banner"><span>No lights are set up yet, so previews have nothing to light. Set them up in Devices first.</span></div>`}
     <section class="st-sec${pickStart ? " flash" : ""}" id="st-start"><h2 class="st-h">Start from</h2>
       <div class="st-grid">${LAYER_TEMPLATES.map((t) => `<button class="st-card st-tpl" data-tpl="${t.id}"><canvas class="st-live" aria-hidden="true"></canvas>
@@ -166,6 +228,7 @@ function renderHome(pickStart) {
         <button class="icon-btn" data-more="${esc(e.fx_id)}" aria-label="More for ${esc(e.name)}"><svg><use href="#i-more"/></svg></button>`)).join("")}</div></section>` : ""}
   </div>`);
   if (pickStart) $("#st-start")?.scrollIntoView({ block: "start" });
+  wireDraft();
   queueStills([...LAYER_TEMPLATES.map((t) => ({ key: t.id, eff: { kind: "layers", layers: t.layers, params: {} } })),
                ...effects.map((e) => ({ key: e.fx_id, eff: effectRunnable(e) }))]);
 }
@@ -279,7 +342,8 @@ function paintCommunity() {
   $("#st-search")?.addEventListener("input", (e) => { H.search = e.target.value; clearTimeout(H.t); H.t = setTimeout(() => { paintCommunity(); $("#st-search").focus(); }, 250); });
   // stills need each effect's file: fetched as cards come into view
   queueStills([]);
-  const io = new IntersectionObserver(async (entries) => {
+  H.io?.disconnect();                 // every repaint (a search keystroke) used to leave an observer watching old cards
+  const io = (H.io = new IntersectionObserver(async (entries) => {
     for (const en of entries) {
       if (!en.isIntersecting) continue;
       io.unobserve(en.target);
@@ -289,7 +353,7 @@ function paintCommunity() {
         addStill({ key: id, eff: effectRunnable(effect) });
       } catch { /* the card stays dark */ }
     }
-  });
+  }));
   $$(".st-card", box()).forEach((c) => io.observe(c));
 }
 
@@ -310,6 +374,7 @@ async function openEditor(doc) {
 }
 
 function closeEditor(keepHash) {
+  saveDraftNow();
   cancelAnimationFrame(E.raf);
   E.runner?.destroy();
   E.runner = null;
@@ -523,6 +588,7 @@ function changed(visual) {
   E.doc.dirty = true;
   const s = $("#st-saved"); if (s) s.textContent = "Not saved";
   if (visual && E.doc.mode === "layers") pushLayers();
+  rememberDraft();
   syncLights();
 }
 
@@ -555,6 +621,7 @@ async function setLights(on) {
 async function restartRunner() {
   E.runner?.destroy();
   E.backdrop = null;
+  E.painted = -1;                  // a new runner: draw its first frame even if the counter happens to match
   const d = E.doc;
   if (!d) return;
   const { points, slices } = ledPoints(litZones());
@@ -563,7 +630,7 @@ async function restartRunner() {
   E.runner = new EffectRunner({
     onFrame: (colors, ms) => {
       if (gen !== E.gen) return;
-      E.frames = zoneFrames(colors, E.slices); E.ms = E.ms * 0.9 + ms * 0.1; E.frameCount++;
+      E.frames = zoneFrames(colors, E.slices); E.ms = E.ms * 0.9 + ms * 0.1; E.frameCount++; E.framesSeen++;
     },
     onBackdrop: (bmp) => { if (gen === E.gen) { E.backdrop?.close?.(); E.backdrop = bmp; } else bmp.close?.(); },
     onLog: (t) => { E.logs.push({ t }); E.logs = E.logs.slice(-40); paintConsole(); },
@@ -583,9 +650,14 @@ function loop(now) {
   const t = (now - E.t0) / 1000, dt = Math.min(0.25, (now - E.last) / 1000);
   E.last = now;
   const audio = E.beat ? testAudio(t) : null;
-  E.runner?.tick(t, dt, audio, E.frameCount % 2 === 0);
-  const c = $("#st-canvas");
-  if (c) paintRig(c, E.frames, { fit: "stage", backdrop: E.backdrop, pad: 26, maxScale: 4 });
+  E.runner?.tick(t, dt, audio, E.framesSeen % 2 === 0);
+  // Repaint only when the effect sent a new frame: the canvas is expensive (one glow per LED), and a still effect
+  // was being drawn 60 times a second on top of that.
+  if (E.painted !== E.framesSeen) {
+    const c = $("#st-canvas");
+    if (c) paintRig(c, E.frames, { fit: "stage", backdrop: E.backdrop, pad: 26, maxScale: 4 });
+    E.painted = E.framesSeen;
+  }
   if (now - E.fpsAt > 1000) {
     E.fps = E.frameCount; E.frameCount = 0; E.fpsAt = now;
     const m = $("#st-meter");
@@ -702,6 +774,7 @@ async function save() {
   try {
     const r = await post("/api/studio/save", { ...payload(d), fx_id: d.fx_id });
     d.fx_id = r.effect.fx_id; d.dirty = false;
+    forgetDraft();
     $("#st-saved").textContent = "Saved";
     S.effects = await get("/api/effects");
     emit("refresh");

@@ -2,6 +2,8 @@
 the tooltip shows the readings pinned on the Overview."""
 
 import logging
+import os
+import subprocess
 import threading
 
 import pystray
@@ -85,6 +87,33 @@ class Tray:
                 self.ctrl.set_fan_curve(name)
             return act
 
+        def effect_action(eid):
+            def act(icon, item):
+                self.ctrl.set_scene({"effect": eid})
+            return act
+
+        def effect_items():
+            """Every effect there is, built in and made in the Studio (listed when the menu is opened)."""
+            try:
+                from .lighting import effects
+                found = [e for e in effects.catalog() if e["id"] != "off"]
+            except Exception:
+                log.exception("could not list the effects")
+                return [pystray.MenuItem("Effects unavailable", None, enabled=False)]
+            if not found:
+                return [pystray.MenuItem("No effects yet", None, enabled=False)]
+            return [pystray.MenuItem(e["name"], effect_action(e["id"]),
+                                     checked=lambda item, eid=e["id"]: self.ctrl.base_scene.get("effect") == eid,
+                                     radio=True) for e in found]
+
+        def restart(icon, item):
+            """Quit and start again: the quickest way back from a stuck lighting engine."""
+            from . import tools
+            exe, args = tools.self_command([])
+            env = {**os.environ, "AIRGLOW_RESTARTING": "1"}     # the new copy waits for this one to let go
+            subprocess.Popen([exe, *args], creationflags=0x08000000, env=env)
+            self.quit_app()
+
         def preset_items():
             presets = self.store.get_presets()
             if not presets:
@@ -124,11 +153,13 @@ class Tray:
             pystray.MenuItem("Open Airglow", lambda icon, item: self.show_window(), default=True),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Presets", pystray.Menu(preset_items)),
+            pystray.MenuItem("Effect", pystray.Menu(effect_items)),
             pystray.MenuItem("Fan curve", pystray.Menu(curve_items)),
             pystray.MenuItem(lights_text, toggle_lights, checked=lambda item: self.ctrl.base_scene.get("on", True)),
             pystray.MenuItem(lambda item: "Automations paused" if self.ctrl.automations.paused else "Pause automations",
                              pause_menu, visible=lambda item: bool(self.store.get_rules())),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Restart Airglow", restart),
             pystray.MenuItem("Quit Airglow", lambda icon, item: self.quit_app()),
         )
 

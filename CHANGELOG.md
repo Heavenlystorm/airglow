@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.7.0
+- **The effect host is restarted properly.** It used to be started again a few milliseconds after the old process was
+  killed, while WebView2 still held its profile: the new host could fail-fast crash on start (three starts in 78 ms,
+  then the effect was turned off for the rest of the session). Airglow now waits for the old process to go, then backs
+  off (1.5 s, 3 s, 6 s, 12 s) before trying again. An effect that kills the host before it has drawn a single frame is
+  turned off on its own, so the other Studio effects keep running.
+- **Quitting doesn't start an effect host.** The lighting thread drew one more frame after the Studio host had been
+  stopped, which started a fresh host that found Airglow already gone. The host is now closed before the engine stops.
+- **Fan failsafe speed defaults to 30% instead of 60%** (and can be set from 30%). Windows' shutdown notification and
+  the shutdown itself both reached the fan code, so the failsafe speed was written twice a few hundred milliseconds
+  apart; it's written once now.
+- **A still scene runs at 4 frames a second.** "Temperature" is an animated effect but its colours only change when a
+  temperature does, so the engine used to redraw it 30 times a second for nothing. Any change brings the full rate back
+  on the next frame.
+- **Less work in the window.** LED glows reuse one gradient per colour instead of building one per LED per frame (150
+  on the Overview, 15 times a second); the Studio preview only repaints when the effect sent a new frame; the Fans
+  graph is only rebuilt when something it shows changes (and keeps the focus on a curve point); the Overview measures
+  tile titles only when their text or the window changes.
+- **The effect host stops piling up requests.** If Airglow falls behind, it skips a frame instead of queueing another
+  POST (up to four are in flight), and effects that draw on a 2D canvas are read back directly instead of through a
+  second canvas.
+- **A launch during a quit starts Airglow.** It used to find the single-instance mutex taken, fail to reach the copy
+  that was already shutting down, and exit without a window. It now waits for that copy to let go and takes over. The
+  tray's new Restart Airglow uses the same path.
+- **Unsaved Studio work is kept.** Leaving the editor (or closing the window) with "Not saved" no longer throws the
+  effect away: a draft is kept and offered on the Studio's home page, and Ctrl+S saves.
+- **OpenRGB isn't silent any more.** When it's enabled but not reachable, a notice at the top says which lights are
+  dark and offers Start OpenRGB (Airglow's own copy). Settings can start it too.
+- **Other fixes:** no temperature readings means a one-off notice that the fans are at the failsafe speed; a stalled
+  state stream is noticed after 12 seconds instead of showing old readings for ever; API calls give up after 8 seconds;
+  the Studio's community grid no longer leaves an observer behind on every search; the music thumbnail used the wrong
+  animation (two keyframes had the same name).
+- **New:** Reset settings in Settings (zones, presets, curves and the overview are kept), an Effect submenu in the
+  tray, "Use for all" for the motherboard/cooler fan rows, and Ctrl+S in the Studio.
+
 ## 1.6.9
 - **Studio effects take less than half the processor time.** With an animated Studio effect and the window in the
   tray, Airglow, its effect host and their WebView2 processes went from about a fifth of a core to under a

@@ -56,6 +56,7 @@ class Controller:
         self.fan_temp = self.fan_target = self.fan_duty = None
         self._started = time.monotonic()
         self._temp_seen = False
+        self._failsafe_at = 0.0            # shutdown, quitting and a failing tick can all ask within a moment
         self.history = collections.deque(maxlen=self.HISTORY)
         self.rev = 0
         self._ticks = 0
@@ -367,7 +368,13 @@ class Controller:
                               "steady": (chosen.get(ch["id"]) or {}).get("duty"), "target": targets.get(ch["id"]),
                               "error": errors.get(ch["id"])} for ch in found]
 
-    def failsafe(self):
+    def failsafe(self, force=False):
+        # Windows' shutdown notification, the shutdown itself and quitting all reach this within a second or two;
+        # sending the same speeds again only costs USB traffic while the session is going down.
+        now = time.monotonic()
+        if not force and now - self._failsafe_at < 2.0:
+            return
+        self._failsafe_at = now
         duty = self.store.settings()["fan_failsafe_duty"]
         for dev, hub in self._fan_devices():
             try:
@@ -545,13 +552,19 @@ class Controller:
             },
             "fans": {"curve": self.effective_curve, "base_curve": self.base_curve, "temp": self.fan_temp,
                      "target": self.fan_target, "duty": self.fan_duty,
+                     # no reading at all after the start-up grace: these are the failsafe speeds, not the curve's
+                     "failsafe": self.fan_temp is None and time.monotonic() - self._started >= self.STARTUP_GRACE,
                      "ports": [{"port": i + 1, "device": d.name, **h.fans[i]}
                                for d, h in fan_devs for i in h.connected_fans()],
                      "hub_online": bool(fan_devs),
                      "channels": self.fan_channels},
             "sensors": self.sensors,
             "devices": devs,
-            "openrgb": {"enabled": self.store.openrgb_enabled(), "status": self.manager.bridge.status},
+            "openrgb": {"enabled": self.store.openrgb_enabled(), "status": self.manager.bridge.status,
+                        "connected": bool(self.manager.bridge.client.connected),
+                        "installed": tools.installed("openrgb"),
+                        # lights from OpenRGB are set up: worth a notice when it isn't there
+                        "used": self.store.has_openrgb_zones()},
             "dynamic_lighting": {"enabled": self.store.settings()["dynamic_lighting_enabled"],
                                  "status": getattr(getattr(self.manager, "dynamic", None), "status", "Off")},
             "inputs": {"screen": {"active": self.engine.screen.active, "error": self.engine.screen.error},

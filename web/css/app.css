@@ -362,12 +362,12 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .fx:focus-visible .thumb, .fx:focus-visible .thumb::before, .fx:focus-visible .thumb::after, .fx:focus-visible .thumb i { animation-play-state: running; }
 .t-solid { background: var(--c, #009bde); }
 .t-studio::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 25% 60%, #8a3dff, transparent 55%), radial-gradient(circle at 70% 35%, #00e0c8, transparent 50%), radial-gradient(circle at 85% 80%, #ff2fb4, transparent 45%); animation: drift 6s ease-in-out infinite alternate; }
-.t-music::after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, rgba(255, 255, 255, .5), transparent 60%); animation: beat .5s ease-out infinite; }
+.t-music::after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, rgba(255, 255, 255, .5), transparent 60%); animation: beat-fade .5s ease-out infinite; }
 .t-new { display: grid; place-items: center; background: var(--well); color: var(--ink-3); font: 300 26px var(--display); }
 .fx-new { text-decoration: none; }
 .fx-new:hover .t-new { color: var(--brass-hi); }
 @keyframes drift { to { transform: translateX(-14%) scale(1.15); } }
-@keyframes beat { from { opacity: .7; } to { opacity: 0; } }
+@keyframes beat-fade { from { opacity: .7; } to { opacity: 0; } }
 .t-breathing::before { content: ""; position: absolute; inset: -30%; background: radial-gradient(circle, var(--c, #009bde) 0, transparent 60%); animation: breathe 3.2s -1.6s ease-in-out infinite; }   /* starts at full: the frame shown while paused */
 .t-cycle { background: #ff2a2a; animation: hue 6s linear infinite; }
 .t-rainbow::before, .t-gradient::before { content: ""; position: absolute; top: 0; bottom: 0; left: -100%; width: 200%; }

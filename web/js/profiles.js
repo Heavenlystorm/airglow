@@ -157,6 +157,7 @@ async function startPreview(profile) {
   G.timer = setInterval(async () => {
     const c = $("#gl-stage");
     if (!c) { stopPreview(); return; }
+    if (document.visibilityState === "hidden") return;      // closed to the tray: nothing to draw, nothing to fetch
     try { paintMini(c, (await get("/api/preview/frames")).zones); } catch { /* next frame */ }
   }, 90);
 }

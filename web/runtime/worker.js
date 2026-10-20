@@ -42,6 +42,12 @@ function setPoints(list) {
 function ensureCanvas() {
   if (R.canvas) return;
   R.canvas = new OffscreenCanvas(W, H);
+  // Remember what the effect draws with. Asking for "2d" here instead would lock the canvas to 2D before an effect
+  // that wants WebGL has had its first frame.
+  try {
+    const get = R.canvas.getContext.bind(R.canvas);
+    R.canvas.getContext = (type, ...rest) => { R.drawing = type; return get(type, ...rest); };
+  } catch { /* can't watch it: the colour read-back goes the long way round, which still works */ }
   R.ctx = { canvas: R.canvas, width: W, height: H, params: R.ctx?.params || {}, log };
 }
 
@@ -57,14 +63,21 @@ function start(params, points) {
 }
 
 // colours at the LEDs: from the canvas (render) or asked per LED (point)
+const READ = { direct: undefined };    // the effect canvas's own 2D context, when that's what it draws with
 function sample(frame) {
   const out = new Uint8Array(R.n * 3);
   if (R.def.render) {
     R.def.render(R.ctx, frame);
-    if (!R.sampler) R.sampler = new OffscreenCanvas(W, H).getContext("2d", { willReadFrequently: true });
-    R.sampler.clearRect(0, 0, W, H);
-    R.sampler.drawImage(R.canvas, 0, 0);                            // works for 2d and webgl2 canvases alike
-    const img = R.sampler.getImageData(0, 0, W, H).data;
+    if (READ.direct === undefined) READ.direct = R.drawing === "2d" ? R.canvas.getContext("2d") : null;
+    let img;
+    if (READ.direct) {
+      img = READ.direct.getImageData(0, 0, W, H).data;                // no copy through another canvas
+    } else {
+      if (!R.sampler) R.sampler = new OffscreenCanvas(W, H).getContext("2d", { willReadFrequently: true });
+      R.sampler.clearRect(0, 0, W, H);
+      R.sampler.drawImage(R.canvas, 0, 0);                          // works for 2d and webgl2 canvases alike
+      img = R.sampler.getImageData(0, 0, W, H).data;
+    }
     for (let i = 0; i < R.n; i++) {                                 // a 3 x 3 average: smoother on thin details
       const p = R.points[i], cx = Math.round(p.px), cy = Math.round(p.py);
       let r = 0, g = 0, b = 0, k = 0;

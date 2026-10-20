@@ -30,7 +30,7 @@ DEFAULT_CONFIG = {
     "lhm_url": "http://127.0.0.1:8085",
     "temp_source": "max",
     "temp_unit": "C",
-    "fan_failsafe_duty": 60,
+    "fan_failsafe_duty": 30,
     "fan_max_step": 5,
     "fancontrol_exe": "",
     "fancontrol_configs_dir": "",
@@ -90,6 +90,13 @@ DEFAULT_STATE = {"scene": DEFAULT_SCENE, "fan_curve": "balanced", "active_preset
 # (single-colour presets and state), 1 = effects with typed parameters.
 SCHEMA_VERSION = 1
 
+# What "Reset settings" puts back: the per-PC settings, but not the layout and presets someone built up, and not the
+# port (Airglow is listening on it).
+RESETTABLE_SETTINGS = ("lhm_url", "temp_source", "temp_unit", "fan_failsafe_duty", "fan_max_step", "fancontrol_exe",
+                       "fancontrol_configs_dir", "openrgb_enabled", "openrgb_host", "openrgb_port",
+                       "lights_off_on_sleep", "lights_off_on_lock", "dynamic_lighting_enabled", "online_checks",
+                       "update_channel")
+
 
 # ---------------------------------------------------------------- validation
 
@@ -144,7 +151,7 @@ def validate_settings(patch):
                 raise ValueError("temperature unit must be C or F")
             out[key] = value
         elif key == "fan_failsafe_duty":
-            out[key] = _int_in(value, 40, 100, "Failsafe speed")
+            out[key] = _int_in(value, 30, 100, "Failsafe speed")
         elif key == "fan_max_step":
             out[key] = _int_in(value, 1, 25, "Ramp speed")
         elif key == "lhm_url":
@@ -577,8 +584,22 @@ class Store:
             self._write("config.json", self.config)
         return clean
 
+    def reset_settings(self):
+        """Put the settings back to their defaults. Everything someone built up stays: zones, presets, fan curves,
+        the overview and the automations. The port is left alone too (it would need a restart to change)."""
+        with self._lock:
+            for key in RESETTABLE_SETTINGS:
+                self.config[key] = copy.deepcopy(DEFAULT_CONFIG[key])
+            self._write("config.json", self.config)
+        return self.settings()
+
     def openrgb_enabled(self):
         return self.config["openrgb_enabled"]
+
+    def has_openrgb_zones(self):
+        """True when lights from OpenRGB are set up, so an OpenRGB that isn't running is worth saying out loud."""
+        with self._lock:
+            return any(key.startswith("openrgb:") for key in self.config["zones"])
 
     def curves(self):
         with self._lock:

@@ -84,7 +84,7 @@ export function renderSettings() {
         <option value="cpu"${s.temp_source === "cpu" ? " selected" : ""}>Processor</option>
         <option value="gpu"${s.temp_source === "gpu" ? " selected" : ""}>Graphics card</option>
         <option value="liquid"${s.temp_source === "liquid" ? " selected" : ""}>Coolant (liquid cooler)</option></select>`)}
-      ${row("Failsafe speed", "Used when temperatures can't be read, and left on the fans when Airglow quits.", `<input type="range" id="s-failsafe" min="40" max="100" step="5" value="${s.fan_failsafe_duty}"><output id="s-failsafe-v">${s.fan_failsafe_duty}%</output>`)}
+      ${row("Failsafe speed", "Used when temperatures can't be read, and left on the fans when Airglow quits.", `<input type="range" id="s-failsafe" min="30" max="100" step="5" value="${s.fan_failsafe_duty}"><output id="s-failsafe-v">${s.fan_failsafe_duty}%</output>`)}
       ${row("Ramp speed", "How much fan speed may change every 2 seconds. Lower is calmer.", `<input type="range" id="s-step" min="1" max="25" value="${s.fan_max_step}"><output id="s-step-v">${s.fan_max_step}%</output>`)}
       ${row("Motherboard and cooler fans", `Airglow can drive the board's fan headers and the pumps and fans of many coolers through LibreHardwareMonitor: pick them on the <a href="#fans">Fans</a> tab. Until you do, they keep your BIOS or cooler curve. ${v.fancontrol_installed
         ? (v.fan_profiles.length ? `FanControl has ${v.fan_profiles.length} saved profile${v.fan_profiles.length > 1 ? "s" : ""}, which profiles can switch between too.` : "FanControl is installed but has no saved profiles yet.")
@@ -98,7 +98,8 @@ export function renderSettings() {
       ${row("LibreHardwareMonitor address", sensorsOk ? "Connected. Temperatures and power are coming through." : "Not responding. Open LibreHardwareMonitor and turn on Options, Remote Web Server, Run.", `<input class="text" id="s-lhm" value="${esc(s.lhm_url)}" spellcheck="false">`)}
     </section>
     <section class="set-group"><h2>More devices</h2>
-      ${row("Use OpenRGB for other devices", esc(S.state?.openrgb?.status || ""), sw("s-orgb", s.openrgb_enabled))}
+      ${row("Use OpenRGB for other devices", esc(S.state?.openrgb?.status || ""),
+        `${S.state?.openrgb?.enabled && !S.state?.openrgb?.connected && S.state?.openrgb?.installed ? `<button class="btn" id="s-orgb-start">Start OpenRGB</button>` : ""}${sw("s-orgb", s.openrgb_enabled)}`)}
       ${row("OpenRGB address", "Only change this if OpenRGB runs on another port or another PC.", `<input class="text" id="s-orgb-host" value="${esc(s.openrgb_host)}" style="width:150px" spellcheck="false"><input class="text" id="s-orgb-port" type="number" value="${s.openrgb_port}" style="width:90px">`)}
       ${row("Windows Dynamic Lighting devices <span class=\"tag\">Experimental</span>", `Keyboards, mice and accessories that Windows controls in Settings, Personalization, Dynamic Lighting. Windows only lets Airglow light them while its window is in front. ${s.dynamic_lighting_enabled ? esc(S.state?.dynamic_lighting?.status || "") : ""}`, sw("s-dyn", s.dynamic_lighting_enabled))}
     </section>
@@ -107,14 +108,19 @@ export function renderSettings() {
       ${row("Diagnostics report", "For a bug report: what Airglow found, its settings, a sensor list and the logs, in one zip. Your user name, PC name and device serial numbers are taken out. Nothing is sent; you attach it yourself.", `<button class="btn" id="s-diag">Save a report</button>`)}
       ${updateRows(v)}
       ${row("Welcome guide", "Shows what Airglow found on this PC and what to check.", `<button class="btn quiet" id="s-welcome">Show it again</button>`)}
+      ${row("Reset settings", "Puts the settings on this page back to how they start on a new PC. Your zones, presets, fan curves and overview tiles are kept.", `<button class="btn quiet" id="s-reset">Reset</button>`)}
     </section>`);
   $$("#settings input[type=range]").forEach(rangeFill);
   paintTools();
 }
 
 async function save(patch, label = "Saved") {
+  // Rebuilding the page is what the server's answer is; putting the focus back keeps a keyboard or a slider where
+  // it was instead of dropping it on the body after every change.
+  const focused = document.activeElement?.id;
   try { S.settings = await post("/api/settings", patch); renderSettings(); toast(label); emit("refresh"); }
   catch (e) { fail(e); renderSettings(); }
+  if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
 }
 
 export function initSettings() {
@@ -151,6 +157,13 @@ export function initSettings() {
       post("/api/updates/check").then((u) => { S.state.update = u; paintUpdate(); emit("refresh"); }).catch(fail);
     }
     if (e.target.closest("#s-restart")) restartToUpdate();
+    if (e.target.closest("#s-orgb-start")) {
+      post("/api/openrgb/start").then(() => toast("Starting OpenRGB")).catch(fail);
+    }
+    if (e.target.closest("#s-reset")) {
+      if (!confirm("Put the settings back to how they start on a new PC?\n\nZones, presets, fan curves and overview tiles are kept.")) return;
+      post("/api/settings/reset", {}).then((v) => { S.settings = v; renderSettings(); toast("Settings reset"); emit("refresh"); }).catch(fail);
+    }
   });
   on("state", paintUpdate);
 }

@@ -93,6 +93,22 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(s.state["scene"]["effect"], "solid")
         self.assertFalse(s.state["onboarded"])
 
+    def test_reset_settings_keeps_zones_presets_and_curves(self):
+        s = config.Store(self.dir)
+        s.update_settings({"fan_failsafe_duty": 70, "temp_unit": "F", "online_checks": True})
+        s.set_curve("balanced", [[40, 35], [80, 90]])
+        s.set_presets(s.get_presets() + [{"id": "mine", "name": "Mine", "effect": "solid", "params": {"color": "#123456"}}])
+        s.reset_settings()
+        settings = s.settings()
+        self.assertEqual(settings["fan_failsafe_duty"], 30)
+        self.assertEqual(settings["temp_unit"], "C")
+        self.assertFalse(settings["online_checks"])
+        self.assertEqual(settings["port"], 8787)                       # the port Airglow is listening on stays
+        self.assertEqual(s.curves()["balanced"], [[40, 35], [80, 90]])  # what was built stays too
+        self.assertIn("mine", [p["id"] for p in s.get_presets()])
+        again = config.Store(self.dir)
+        self.assertEqual(again.settings()["fan_failsafe_duty"], 30)    # and it survived the save
+
     def test_round_trip(self):
         s = config.Store(self.dir)
         s.update_settings({"temp_unit": "F"})
@@ -219,7 +235,7 @@ class StoreTests(unittest.TestCase):
         (self.dir / "config.json").write_text("{not json", encoding="utf-8")
         (self.dir / "presets.json").write_text(json.dumps([{"id": "ok", "name": "Ok"}, {"name": ""}]), encoding="utf-8")
         s = config.Store(self.dir)
-        self.assertEqual(s.settings()["fan_failsafe_duty"], 60)
+        self.assertEqual(s.settings()["fan_failsafe_duty"], 30)
         self.assertEqual([p["id"] for p in s.get_presets()], ["ok"])
 
     def test_duplicate_preset_ids_rejected(self):

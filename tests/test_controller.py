@@ -87,10 +87,10 @@ class ControllerTests(unittest.TestCase):
 
     def test_start_without_temperatures_runs_fans_quietly(self):
         # LibreHardwareMonitor not answering yet at sign-in: bottom of the curve, not the failsafe speed
-        self.ctrl.set_fan_curve("balanced")
+        self.ctrl.set_fan_curve("silent")
         self.temps = {"online": False, "cpu_temp": None, "gpu_temp": None}
         self.ctrl.tick()
-        lowest = self.store.curves()["balanced"][0][1]
+        lowest = self.store.curves()["silent"][0][1]
         self.assertEqual(self.ctrl.fan_duty, lowest)
         self.assertLess(lowest, self.store.settings()["fan_failsafe_duty"])
         self.assertEqual(set(self.nzxt.hub.duties[-1].values()), {lowest})

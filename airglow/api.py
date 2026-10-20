@@ -547,6 +547,24 @@ def route(server, method, path, body, query=None):
                 ctrl.manager.bridge._last_try = 0.0           # try the new address now, not after the retry wait
             ctrl.apply()
         return _settings_view(store, server.updater)
+    if path == "/api/settings/reset":
+        store.reset_settings()
+        bridge = ctrl.manager.bridge
+        bridge.client.host = store.settings()["openrgb_host"]
+        bridge.client.port = store.settings()["openrgb_port"]
+        bridge.client.close()
+        bridge._last_try = 0.0
+        if server.updater:
+            server.updater.settings_changed()
+        ctrl.apply()
+        return _settings_view(store, server.updater)
+    if path == "/api/openrgb/start":
+        try:
+            tools.launch("openrgb", openrgb_port=store.settings()["openrgb_port"])
+        except tools.SetupError as e:
+            raise ApiError(409, str(e)) from None
+        ctrl.manager.bridge._last_try = 0.0         # connect on the next housekeeping pass, not after the retry wait
+        return {"ok": True}
     if path == "/api/automations":
         presets = {p["id"] for p in store.get_presets()}
         rules = store.set_rules(body.get("rules"), lambda r: validate_rule(r, presets, set(store.curves())))

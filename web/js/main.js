@@ -25,6 +25,9 @@ let deviceKey = "";
 let setupDismissed = 0;          // "Not now" on the new-lights notice: quiet until even more new lights appear
 let updateDismissed = null;      // "Later" on the update notice, for that version
 let bootFailed = false;          // "Couldn't reach Airglow" is said once, not on every retry
+let lastStateAt = 0;             // when the last state arrived: a stream can die without ever reporting an error
+let probing = false;             // one watchdog fetch at a time
+let failsafeSeen = false;        // the fans' failsafe speed is mentioned once while readings are missing
 
 // ------------------------------------------------------------ routing
 function route() {
@@ -113,6 +116,13 @@ function renderBar() {
     n.hidden = false;
     setHTML(n, c.map((x) => `<span><b>${esc(x.name)}</b> is running and also controls ${esc(x.conflicts_with)}, so lights may flicker.</span>
       <button class="btn" data-close-app="${esc(x.name)}">Close ${esc(x.name)}</button>`).join("") + `<span class="spacer"></span>`);
+  } else if (S.state.openrgb?.enabled && !S.state.openrgb.connected
+             && (S.state.openrgb.installed || S.state.openrgb.used)) {
+    const o = S.state.openrgb;
+    n.hidden = false;
+    setHTML(n, `<span><b>OpenRGB</b> isn't running, so the graphics card and other lights it drives stay dark.</span>
+      ${o.installed ? `<button class="btn" data-openrgb-start>Start OpenRGB</button>` : `<a class="btn" href="#settings">Set it up</a>`}
+      <a class="btn quiet" href="#settings">Settings</a><span class="spacer"></span>`);
   } else if (S.state.onboarded && S.state.setup_pending > setupDismissed) {
     const k = S.state.setup_pending;
     n.hidden = false;
@@ -145,6 +155,9 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("#setup-later")) { setupDismissed = S.state.setup_pending; renderBar(); }
   if (e.target.closest("#update-later")) { updateDismissed = S.state.update?.latest; renderBar(); }
   if (e.target.closest("#update-restart")) restartToUpdate();
+  if (e.target.closest("[data-openrgb-start]")) {
+    post("/api/openrgb/start").then(() => toast("Starting OpenRGB")).catch(fail);
+  }
   const fx = e.target.closest("[data-fx-retry]");
   if (fx) post("/api/studio/retry", { fx_id: fx.dataset.fxRetry }).then(() => emit("refresh")).catch(fail);
 });
@@ -171,7 +184,11 @@ function pushSample() {
 // A state update, from the live stream or an explicit refresh after a change.
 async function applyState(state) {
   S.state = state;
+  lastStateAt = Date.now();
   if (!connected) { connected = true; toast("Reconnected"); }
+  const fs = !!S.state.fans?.failsafe;
+  if (fs && !failsafeSeen) toast("No temperature readings, so the fans are at the failsafe speed. Check LibreHardwareMonitor.", true);
+  failsafeSeen = fs;
   pushSample();
   pushReadings(S.state.readings);
   // device list or connection changed: reload zones so the stage and Devices stay accurate
@@ -232,6 +249,18 @@ async function boot() {
       || (!$('[data-view="overview"]').hidden && !!document.querySelector(".tile-lighting")),
   });
   setInterval(() => loadCatalog().catch(() => {}), 60000);     // new hardware, LHM started later
+  // The stream normally reports errors, but a silent one (a server that stops sending without closing) would leave
+  // old readings on screen with no hint. No update for 12 s while the window is showing means it died.
+  setInterval(() => {
+    if (document.visibilityState === "hidden" || !connected || probing) return;
+    if (Date.now() - lastStateAt < 12000) return;
+    lost();
+    probing = true;
+    refresh().finally(() => { probing = false; });
+  }, 4000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") lastStateAt = Date.now();   // the stream reopens: give it a moment
+  });
 }
 
 boot();

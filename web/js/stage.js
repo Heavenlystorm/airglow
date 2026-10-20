@@ -134,6 +134,27 @@ export function renderOverlay() {
 }
 
 // ------------------------------------------------------------ canvas (LEDs)
+// A glow is a radial gradient of one colour at one radius, and those repeat: most scenes show a handful of colours
+// across every LED. Built at (0, 0) they're position-independent, so they can be reused from LED to LED and frame to
+// frame instead of allocating one per LED (150+ of them, 15 times a second, on the Overview alone).
+const glows = new WeakMap();             // canvas context -> Map(key -> CanvasGradient)
+const GLOW_MAX = 400;                    // a rainbow at high zoom can fill this: then start again
+function glowFor(ctx, hex, r, peak = 0.55, spread = 4.2) {
+  let cache = glows.get(ctx);
+  if (!cache) glows.set(ctx, (cache = new Map()));
+  const key = `${hex}|${Math.round(r * 2)}|${peak}|${spread}`;
+  let g = cache.get(key);
+  if (g) return g;
+  const R = parseInt(hex.slice(0, 2), 16), G = parseInt(hex.slice(2, 4), 16), B = parseInt(hex.slice(4, 6), 16);
+  g = ctx.createRadialGradient(0, 0, 0, 0, 0, r * spread);
+  g.addColorStop(0, `rgba(${R},${G},${B},${peak})`);   // the LED's own brightness is the globalAlpha
+  g.addColorStop(0.35, `rgba(${R},${G},${B},${peak * 0.29})`);
+  g.addColorStop(1, `rgba(${R},${G},${B},0)`);
+  if (cache.size >= GLOW_MAX) cache.clear();
+  cache.set(key, g);
+  return g;
+}
+
 function draw() {
   const c = canvas();
   const ctx = c.getContext("2d");
@@ -169,15 +190,16 @@ function draw() {
           continue;
         }
         if (!hex || !z.config.enabled) continue;
-        const R = parseInt(hex.substr(i * 6, 2), 16), G = parseInt(hex.substr(i * 6 + 2, 2), 16), B = parseInt(hex.substr(i * 6 + 4, 2), 16);
+        const col = hex.substr(i * 6, 6);
+        const R = parseInt(col.slice(0, 2), 16), G = parseInt(col.slice(2, 4), 16), B = parseInt(col.slice(4, 6), 16);
         const k = Math.max(R, G, B) / 255;
-        if (k < 0.02) continue;
-        const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 4.2);
-        glow.addColorStop(0, `rgba(${R},${G},${B},${0.55 * k})`);
-        glow.addColorStop(0.35, `rgba(${R},${G},${B},${0.16 * k})`);
-        glow.addColorStop(1, `rgba(${R},${G},${B},0)`);
-        ctx.fillStyle = glow;
-        ctx.beginPath(); ctx.arc(x, y, r * 4.2, 0, Math.PI * 2); ctx.fill();
+        if (!(k >= 0.02)) continue;                     // NaN (a frame from before a zone changed size) is skipped too
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.globalAlpha = k;
+        ctx.fillStyle = glowFor(ctx, col, r);
+        ctx.beginPath(); ctx.arc(0, 0, r * 4.2, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
         // a hotter core: the LED itself, lifted toward white so bright LEDs read as light, not paint
         const lift = 0.35 * k;
         ctx.fillStyle = `rgb(${R + (255 - R) * lift},${G + (255 - G) * lift},${B + (255 - B) * lift})`;
@@ -233,15 +255,16 @@ export function paintRig(c, frames, { fit = "zones", backdrop = null, pad = 22, 
         const x = ox + z.positions[i][0] * U * s, y = oy + z.positions[i][1] * U * s;
         if (!pass) { ctx.fillStyle = "#1e1e20"; ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill(); continue; }
         if (!hex) continue;
-        const R = parseInt(hex.substr(i * 6, 2), 16), G = parseInt(hex.substr(i * 6 + 2, 2), 16), B = parseInt(hex.substr(i * 6 + 4, 2), 16);
+        const col = hex.substr(i * 6, 6);
+        const R = parseInt(col.slice(0, 2), 16), G = parseInt(col.slice(2, 4), 16), B = parseInt(col.slice(4, 6), 16);
         const k = Math.max(R, G, B) / 255;
-        if (k < 0.02) continue;
-        const glow = ctx.createRadialGradient(x, y, 0, x, y, rad * 4.5);
-        glow.addColorStop(0, `rgba(${R},${G},${B},${0.5 * k})`);
-        glow.addColorStop(0.35, `rgba(${R},${G},${B},${0.14 * k})`);
-        glow.addColorStop(1, `rgba(${R},${G},${B},0)`);
-        ctx.fillStyle = glow;
-        ctx.beginPath(); ctx.arc(x, y, rad * 4.5, 0, Math.PI * 2); ctx.fill();
+        if (!(k >= 0.02)) continue;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.globalAlpha = k;
+        ctx.fillStyle = glowFor(ctx, col, rad, 0.5, 4.5);
+        ctx.beginPath(); ctx.arc(0, 0, rad * 4.5, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
         const lift = 0.35 * k;
         ctx.fillStyle = `rgb(${R + (255 - R) * lift},${G + (255 - G) * lift},${B + (255 - B) * lift})`;
         ctx.beginPath(); ctx.arc(x, y, rad * 0.9, 0, Math.PI * 2); ctx.fill();

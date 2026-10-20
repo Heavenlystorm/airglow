@@ -49,6 +49,36 @@ def tools_dir():
     return Path(os.environ.get("ProgramW6432") or os.environ.get("ProgramFiles") or r"C:\Program Files") / "Airglow Tools"
 
 
+_installed_cache = (0.0, {})
+
+
+def installed(tid):
+    """True when Airglow's own copy of a helper program is set up. Asked for by the state every two seconds, so the
+    check is cached for a few seconds."""
+    global _installed_cache
+    now = time.monotonic()
+    if now - _installed_cache[0] > 5.0:
+        root = tools_dir()
+        _installed_cache = (now, {k: (root / t["folder"] / t["exe"]).is_file() for k, t in spec()["tools"].items()})
+    return bool(_installed_cache[1].get(tid))
+
+
+def launch(tid, **subs):
+    """Start a helper program Airglow set up, with the settings its sign-in task uses (OpenRGB's SDK server, say)."""
+    t = spec()["tools"].get(tid)
+    if not t:
+        raise SetupError(f"unknown helper program {tid}")
+    exe = tools_dir() / t["folder"] / t["exe"]
+    if not exe.is_file():
+        raise SetupError(f"{t['name']} isn't set up on this PC; set it up in Settings, Helper programs")
+    if _processes(t["exe"]):
+        raise SetupError(f"{t['name']} is already running, but Airglow can't reach it; close it and let Airglow start it")
+    args = t.get("args", "").format(**subs).split() if t.get("args") else []
+    subprocess.Popen([str(exe), *args], cwd=str(exe.parent), creationflags=CREATE_NO_WINDOW)
+    log.info("started %s", exe)
+    return True
+
+
 def downloads_dir():
     d = paths.data_dir() / "downloads"
     d.mkdir(parents=True, exist_ok=True)

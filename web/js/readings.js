@@ -55,7 +55,7 @@ export function fmt(meta, v, compact = false) {
   }
   if (u === "RPM") return { num: Math.round(v).toLocaleString(), unit: compact ? "rpm" : "rpm" };
   if (u === "V") return { num: v.toFixed(3), unit: "V" };
-  if (u === "GB" || u === "L/h" || u === "A") return { num: v.toFixed(1), unit: u };
+  if (u === "L/h" || u === "A") return { num: v.toFixed(1), unit: u };   // GB is handled above
   return { num: Math.abs(v) >= 100 ? String(Math.round(v)) : String(+v.toFixed(1)), unit: u || "" };
 }
 export const fmtText = (meta, v) => { const f = fmt(meta, v); return f.num === "–" ? "–" : `${f.num}${f.unit.startsWith("°") || f.unit === "%" ? "" : " "}${f.unit}`; };
