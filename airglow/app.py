@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import urllib.request
 import webbrowser
 
@@ -32,10 +33,21 @@ def setup_logging():
 
 def single_instance():
     global _mutex
+    close_mutex()
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.CreateMutexW.restype = ctypes.c_void_p
     _mutex = k32.CreateMutexW(None, False, MUTEX_NAME)
     return ctypes.get_last_error() != 183          # ERROR_ALREADY_EXISTS
+
+
+def close_mutex():
+    """Let go of the mutex before asking again: holding it ourselves would keep it alive after the owning copy quits."""
+    global _mutex
+    if _mutex:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        k32.CloseHandle(_mutex)
+        _mutex = None
 
 
 PORT_TRIES = 20               # if the saved port is taken by another program, try the next ones
@@ -70,14 +82,39 @@ def start_server(port, ctrl, store, hooks, updater=None, tries=PORT_TRIES):
     return None
 
 
-def ask_running_instance_to_show(port):
+def ask_running_instance_to_show(port, timeout=1.5):
+    """Ask the copy that owns the mutex to show its window. True when it answered: this launch is done."""
     ctypes.windll.user32.AllowSetForegroundWindow(-1)   # ASFW_ANY: let the running copy take focus
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/window/show", data=b"{}", method="POST",
                                  headers={"X-Airglow": "1", "Content-Type": "application/json"})
     try:
-        urllib.request.urlopen(req, timeout=3).close()
+        urllib.request.urlopen(req, timeout=timeout).close()
+        return True
     except OSError as e:
         log.warning("could not reach the running instance: %s", e)
+        return False
+
+
+def claim_single_instance(port, wait=5.0, background=False):
+    """True when this process is (or just became) the one running copy.
+
+    A launch that lands in the last second of a quit or an update used to find the mutex taken, fail to reach the
+    API that was already shutting down, and exit without doing anything. Now it waits for the old copy to let go and
+    takes over, instead of needing a second click."""
+    if single_instance():
+        return True
+    # The tray's "Restart Airglow" starts this copy while the old one is still quitting, and asking that one to show
+    # its window would just flash it on screen before it goes: wait for it instead (see Tray._menu).
+    handoff = bool(os.environ.get("AIRGLOW_RESTARTING"))
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        if not background and not handoff and ask_running_instance_to_show(port):
+            return False                   # it's alive and showed itself
+        time.sleep(0.25)
+        if single_instance():
+            log.info("took over from a copy that was quitting")
+            return True
+    return False
 
 
 def message_box(text):
@@ -126,9 +163,7 @@ def main(argv=None):
     store = Store()
     port = store.config["port"]
 
-    if not single_instance():
-        if not background:
-            ask_running_instance_to_show(running_port(port))
+    if not claim_single_instance(running_port(port), wait=0.0 if background else 5.0, background=background):
         return 0
     updates.apply_pending(argv)     # an update downloaded last time: apply it and start again (doesn't return)
 
@@ -198,10 +233,12 @@ def main(argv=None):
     try:
         Window.run(None)            # blocks until the window is destroyed (Quit)
     finally:
+        # Close the Studio host before anything else: the lighting thread keeps drawing a few more frames while it
+        # stops, and a spawn there used to leave a fresh effect host running for a moment after Airglow quit.
+        studio.HOST.close()
         updater.stop()
-        studio.HOST.stop()
-        server.shutdown()
         ctrl.shutdown()
+        server.shutdown()
         tray.stop()
         install.clear_running()
         log.info("stopped")

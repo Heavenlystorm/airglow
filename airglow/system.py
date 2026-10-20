@@ -132,10 +132,16 @@ class PowerEvents:
     """Hidden top-level window (message-only windows don't get broadcasts) on its own thread.
     handlers: dict with optional suspend, resume, shutdown, shutdown_cancelled, lock, unlock callables."""
 
+    # Windows sends WM_QUERYENDSESSION ("may I end the session?") and then WM_ENDSESSION ("ending it now") for the same
+    # shutdown. Without this, Airglow turned the lights off and set the fans to the failsafe speed twice, a few hundred
+    # milliseconds apart. A cancel clears the mark, so the next real shutdown still goes through.
+    SHUTDOWN_QUIET = 30.0
+
     def __init__(self, handlers):
         self.handlers = handlers
         self._proc = WNDPROC(self._wndproc)        # keep a reference so it isn't garbage-collected
         self._hwnd = None
+        self._shutdown_at = 0.0
 
     def _fire(self, name):
         fn = self.handlers.get(name)
@@ -145,6 +151,13 @@ class PowerEvents:
             except Exception:
                 log.exception("power event handler %s failed", name)
 
+    def _fire_shutdown(self):
+        now = time.monotonic()
+        if now - self._shutdown_at < self.SHUTDOWN_QUIET:
+            return
+        self._shutdown_at = now
+        self._fire("shutdown")
+
     def _wndproc(self, hwnd, msg, wparam, lparam):
         if msg == WM_POWERBROADCAST:
             if wparam == PBT_APMSUSPEND:
@@ -153,11 +166,15 @@ class PowerEvents:
                 self._fire("resume")
             return 1
         if msg == WM_QUERYENDSESSION:
-            self._fire("shutdown")
+            self._fire_shutdown()
             return 1
         if msg == WM_ENDSESSION:
             # wparam FALSE: something cancelled the shutdown announced by WM_QUERYENDSESSION
-            self._fire("shutdown" if wparam else "shutdown_cancelled")
+            if wparam:
+                self._fire_shutdown()
+            else:
+                self._shutdown_at = 0.0
+                self._fire("shutdown_cancelled")
             return 0
         if msg == WM_WTSSESSION_CHANGE:
             if wparam == WTS_SESSION_LOCK:

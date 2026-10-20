@@ -32,6 +32,10 @@ FRAME_TIMEOUT = 4.0           # no frames for this long while effects run: the h
 START_GRACE = 15.0            # WebView2 can take a while to start
 MEMORY_LIMIT = 512 * 1024 * 1024          # for any one WebView2 process (each effect's page runs in one)
 RUNAWAY_SECONDS = 120.0                    # over the limit this soon after a fresh start: an effect is eating memory
+RESTART_GAP = 1.5             # WebView2 needs a moment to let go of its profile after the old host is killed
+RESTART_BACKOFF = (1.5, 3.0, 6.0, 12.0)   # a host that keeps dying is restarted more and more slowly
+CRASH_WINDOW = 60.0           # this many crashes in this long and the effects are turned off instead
+CRASH_LIMIT = 3
 UNIT = 200                    # stage canvas units -> effect canvas pixels (1.6 x 1.0 -> 320 x 200)
 
 REASONS = {
@@ -112,7 +116,12 @@ class EffectHost:
         self._last_frame = 0.0
         self._last_active = 0.0
         self._last_mem_check = 0.0
-        self._restarts = []
+        self._dying = None              # the host we just ended; its WebView2 profile is still in use until it exits
+        self._start_at = 0.0            # don't start another one before this
+        self._crash_times = []          # when the host process died, to slow down (and eventually stop) restarts
+        self._frames_since_start = 0    # a host that dies before its first frame probably died starting up
+        self._loaded_since_start = set()  # effects sent to this host, for blaming the one that crashes it
+        self._closing = False           # Airglow is quitting: never start a host again
         self.connected = False
 
     @property
@@ -160,6 +169,7 @@ class EffectHost:
 
     def _load_event(self, inst):
         e = inst.eff
+        self._loaded_since_start.add(e.fx_id)
         return {"type": "load", "id": inst.id, "kind": e.kind, "code": e.code, "layers": e.layers,
                 "params": dict(inst.params), "points": list(inst.points)}
 
@@ -223,6 +233,8 @@ class EffectHost:
         logs: [...]}"""
         with self._lock:
             self._last_frame = self._clock()
+            if body.get("frames"):
+                self._frames_since_start += 1
             for iid, b64 in (body.get("frames") or {}).items():
                 inst = self.instances.get(iid)
                 if inst and isinstance(b64, str):
@@ -255,6 +267,8 @@ class EffectHost:
             o += size
         with self._lock:
             self._last_frame = self._clock()
+            if frames:                          # the empty heartbeat proves the page is alive, not that it drew
+                self._frames_since_start += 1
             for iid, colours in frames.items():
                 inst = self.instances.get(iid)
                 if inst:
@@ -284,35 +298,46 @@ class EffectHost:
 
     # ------------------------------------------------------------ the process
     def _ensure_running(self):
-        if self.url is None or (self.proc is not None and self.proc.poll() is None):
+        """Start the host if one is wanted and it's safe to. Called on many frames: never blocks on a dying process."""
+        if self._closing or self.url is None:
             return
-        self._restarts = [r for r in self._restarts if self._clock() - r < 60]
-        if len(self._restarts) >= 3:
+        if self.proc is not None and self.proc.poll() is None:
+            return
+        now = self._clock()
+        if self._dying is not None:
+            if self._dying.poll() is None:        # still holding its WebView2 profile: wait for it
+                return
+            self._dying = None
+        if now < self._start_at:                  # backing off after a crash, or waiting on the memory watchdog
+            return
+        self._crash_times = [t for t in self._crash_times if now - t < CRASH_WINDOW]
+        if len(self._crash_times) >= CRASH_LIMIT:
             for inst in list(self.instances.values()):
                 self._fail(inst.eff, "crashed")
             self.instances.clear()
             return
-        self._restarts.append(self._clock())
         self.token = secrets.token_urlsafe(24)
-        self._started = self._last_frame = self._clock()
+        self._started = self._last_frame = now
+        self._frames_since_start = 0
+        self._loaded_since_start.clear()
         try:
             self.proc = self._spawn(f"{self.url}/runtime/host.html#token={self.token}")
             log.info("effect host started (pid %s)", getattr(self.proc, "pid", "?"))
         except OSError as e:
             log.error("couldn't start the effect host: %s", e)
             self.proc = None
+            self._start_at = now + RESTART_BACKOFF[0]
 
     def _watch(self, now):
         p = self.proc
         if p is None:
+            if self._dying is not None and self._dying.poll() is not None:
+                self._dying = None
             if self.instances:
                 self._ensure_running()
             return
         if p.poll() is not None:
-            log.warning("effect host exited (%s)", p.returncode)
-            self.proc = None
-            if self.instances:
-                self._ensure_running()
+            self._host_died(p, now)
             return
         if not self.instances:
             if now - self._last_active > IDLE_STOP_SECONDS:
@@ -337,13 +362,38 @@ class EffectHost:
                 # grew slowly over a long time (WebView2 creeps up): start it fresh, the effects carry on
                 log.info("effect host reached %d MB after %d minutes; starting it fresh", used // 2**20,
                          (now - self._started) // 60)
+                self._crash_times.clear()                            # a fresh-start request, not a crash
                 self.stop()
                 self._ensure_running()
 
+    def _host_died(self, p, now):
+        """The host process ended: slow down restarts, and blame an effect that kills it before it ever draws."""
+        log.warning("effect host exited (%s)", p.returncode)
+        self.proc = None
+        self._dying = p                    # WebView2 may still be releasing the profile
+        self._crash_times = [t for t in self._crash_times if now - t < CRASH_WINDOW] + [now]
+        delay = RESTART_BACKOFF[min(len(self._crash_times) - 1, len(RESTART_BACKOFF) - 1)]
+        self._start_at = now + delay
+        if self._frames_since_start == 0 and len(self._loaded_since_start) == 1:
+            # It died loading one effect, before a single frame: that effect is the one that crashes it. Turning
+            # only that one off leaves the others running, instead of the whole host dying again and again.
+            fx_id = next(iter(self._loaded_since_start))
+            inst = next((i for i in self.instances.values() if i.eff.fx_id == fx_id), None)
+            if inst is not None:
+                log.warning("the effect host crashed loading %s; turning it off", fx_id)
+                self.instances.pop(inst.id, None)
+                self._fail(inst.eff, "crashed")
+                self._emit({"type": "unload", "id": inst.id})
+        if not self.instances:
+            self.stop()
+
     def stop(self):
+        """End the host process. Returns at once: the next start waits for it to actually exit."""
         p, self.proc = self.proc, None
         if p is None:
             return
+        self._dying = p
+        self._start_at = max(self._start_at, self._clock() + RESTART_GAP)
         try:
             import psutil
             parent = psutil.Process(p.pid)
@@ -352,6 +402,12 @@ class EffectHost:
             parent.kill()
         except Exception:  # already gone
             pass
+
+    def close(self):
+        """Airglow is quitting: stop the host and never start another one (the lighting thread may still tick)."""
+        self._closing = True
+        self.instances.clear()
+        self.stop()
 
 
 def _audio(frame):

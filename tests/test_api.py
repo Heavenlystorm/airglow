@@ -5,8 +5,9 @@ import threading
 import time
 import unittest
 import urllib.parse
+from unittest import mock
 
-from airglow import api, config
+from airglow import api, config, tools
 from airglow.controller import Controller
 from tests.fakes import FakeLightDevice, FakeManager, FakeNzxt, signals
 from tests.test_profiles import big_profile
@@ -354,6 +355,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((status, s["settings"]["temp_unit"], s["settings"]["lights_off_on_lock"]), (200, "F", True))
         self.request("POST", "/api/settings", {"temp_unit": "C", "lights_off_on_lock": False})
         self.assertEqual(self.request("POST", "/api/settings", {"fan_failsafe_duty": 5})[0], 400)
+
+    def test_settings_reset_puts_them_back(self):
+        self.request("POST", "/api/settings", {"fan_failsafe_duty": 70, "temp_unit": "F"})
+        status, s = self.request("POST", "/api/settings/reset", {})
+        self.assertEqual(status, 200)
+        self.assertEqual((s["settings"]["fan_failsafe_duty"], s["settings"]["temp_unit"]), (30, "C"))
+
+    def test_openrgb_start_explains_when_it_cannot(self):
+        with mock.patch("airglow.tools.launch", side_effect=tools.SetupError("OpenRGB isn't set up on this PC")):
+            status, body = self.request("POST", "/api/openrgb/start", {})
+        self.assertEqual(status, 409)
+        self.assertIn("OpenRGB", body["error"])
+
+    def test_state_says_whether_openrgb_is_reachable(self):
+        state = self.request("GET", "/api/state")[1]
+        self.assertIn("connected", state["openrgb"])
+        self.assertIn("failsafe", state["fans"])
 
     def test_going_online_is_asked_once_and_off_by_default(self):
         self.assertFalse(self.store.settings()["online_checks"])

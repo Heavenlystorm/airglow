@@ -12,19 +12,31 @@ export function setHTML(el, html) {
 }
 
 // ------------------------------------------------------------ api
-async function request(method, path, body) {
+// Every call gives up instead of waiting for ever: a wedged server used to leave the window on old readings with no
+// way back until Airglow was restarted.
+async function request(method, path, body, timeout = 8000) {
   const opts = { method, headers: {} };
   if (method === "POST") {
     opts.headers = { "Content-Type": "application/json", "X-Airglow": "1" };
     opts.body = JSON.stringify(body ?? {});
   }
-  const res = await fetch(path, opts);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-  return data;
+  const abort = new AbortController();
+  opts.signal = abort.signal;
+  const timer = setTimeout(() => abort.abort(), timeout);
+  try {
+    const res = await fetch(path, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("Airglow didn't answer in time");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
-export const get = (p) => request("GET", p);
-export const post = (p, b) => request("POST", p, b);
+export const get = (p, timeout) => request("GET", p, undefined, timeout);
+export const post = (p, b, timeout) => request("POST", p, b, timeout);
 
 let toastTimer;
 export function toast(msg, isError = false) {
