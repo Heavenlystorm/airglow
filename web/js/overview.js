@@ -22,6 +22,9 @@ const CONTROL = {
 const O = { layout: null, editing: false, els: new Map(), drag: null };
 const grid = () => $("#ov-grid");
 const visible = () => !$('[data-view="overview"]').hidden;
+let measureRev = 0;                    // tile text is measured for overflow only when this changes (resize, font)
+window.addEventListener("resize", () => { measureRev++; });
+document.fonts?.ready.then(() => { measureRev++; if (visible()) renderOverview(); });
 
 // ------------------------------------------------------------ persistence
 let saveTimer;
@@ -172,12 +175,18 @@ function updateSensor(el, t) {
   setHTML(el.querySelector(".tile-name"), esc(name));
   const src = el.querySelector(".tile-src"), srcText = t.style === "graph" ? "" : source(meta);
   setHTML(src, esc(srcText));
-  // the title wins: the source is shortened first, and when too little of it is left it moves to the title's tooltip
+  // the title wins: the source is shortened first, and when too little of it is left it moves to the title's tooltip.
+  // Measuring (scrollWidth) makes the browser lay the grid out again, so only do it when the words changed or the
+  // window was resized, not on every two-second update of every tile.
   const nameEl = el.querySelector(".tile-name");
-  src.hidden = false;
-  src.hidden = !!srcText && (nameEl.scrollWidth > nameEl.clientWidth || src.clientWidth < 64);
-  nameEl.title = src.hidden ? `${name} · ${srcText}` : "";
-  src.title = !src.hidden && src.scrollWidth > src.clientWidth ? srcText : "";
+  const fitKey = `${measureRev}|${name}|${srcText}`;
+  if (nameEl._fitKey !== fitKey) {
+    nameEl._fitKey = fitKey;
+    src.hidden = false;
+    src.hidden = !!srcText && (nameEl.scrollWidth > nameEl.clientWidth || src.clientWidth < 64);
+    nameEl.title = src.hidden ? `${name} · ${srcText}` : "";
+    src.title = !src.hidden && src.scrollWidth > src.clientWidth ? srcText : "";
+  }
   const missing = v == null && t.style !== "graph";
   el.classList.toggle("missing", missing);
   let note = el.querySelector(".tile-note");

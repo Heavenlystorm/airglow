@@ -45,7 +45,7 @@ function renderReadouts() {
 const ED = { W: 900, H: 400, L: 52, R: 884, T: 16, B: 362, tMin: 20, tMax: 100 };
 const ex = (t) => ED.L + ((t - ED.tMin) / (ED.tMax - ED.tMin)) * (ED.R - ED.L);
 const ey = (d) => ED.B - (d / 100) * (ED.B - ED.T);
-const E = { curve: null, draft: null, sel: null, drag: null };
+const E = { curve: null, draft: null, sel: null, drag: null, drawn: "" };
 const saved = () => S.curves.curves[E.curve];
 const dirty = () => E.draft && JSON.stringify(E.draft) !== JSON.stringify(saved());
 
@@ -63,9 +63,20 @@ function renderEditor() {
   const named = F.base_curve in S.curves.curves ? F.base_curve : null;
   if (!E.curve || (named && E.curve !== named && !dirty())) { E.curve = named || E.curve || "balanced"; E.draft = null; }   // follow tray/profile changes
   if (!E.draft) E.draft = saved().map((p) => p.slice());
+  const { min_duty: minDuty, safety_temp: safety } = S.curves;
+  const src = S.settings?.settings?.temp_source;
+  const tracking = src === "cpu" ? "the processor" : src === "gpu" ? "the graphics card"
+    : src === "liquid" ? (S.state.sensors.liquid_temp != null ? "the coolant" : "the hotter part until a coolant reading comes through")
+    : "whichever part is hotter";
+  // Rebuilding the whole graph every two seconds threw away the focus of a point you had picked with the keyboard.
+  // Only draw when something it shows has changed, and put the focus back when it does.
+  const key = JSON.stringify([E.curve, E.draft, E.sel, E.drag ? E.drag.i : null, F.curve, F.temp, named, minDuty,
+                               safety, dirty(), S.settings?.settings?.temp_source, S.state.sensors.liquid_temp]);
+  if (key === E.drawn) return;
+  E.drawn = key;
+  const focusPt = document.activeElement?.matches?.("#editor .pt") ? +document.activeElement.dataset.i : null;
   setHTML($("#curve-seg"), Object.keys(S.curves.curves).map((c) =>
     `<button role="radio" data-c="${c}" aria-checked="${!!named && c === E.curve}">${curveLabel(c)}</button>`).join(""));
-  const { min_duty: minDuty, safety_temp: safety } = S.curves;
   const pts = E.draft;
   const line = (arr) => [[ED.tMin, arr[0][1]], ...arr, [ED.tMax, arr.at(-1)[1]]].map(([t, d]) => `${ex(t).toFixed(1)},${ey(d).toFixed(1)}`).join(" ");
   let g = `<g class="grid">`;
@@ -91,12 +102,9 @@ function renderEditor() {
   });
   if (E.drag) g += `<text class="tip" x="${ex(pts[E.drag.i][0])}" y="${ey(pts[E.drag.i][1]) - 16}" text-anchor="middle">${fmtTemp(pts[E.drag.i][0])}, ${pts[E.drag.i][1]}%</text>`;
   setHTML($("#editor"), g);
+  if (focusPt != null) $(`#editor .pt[data-i="${focusPt}"]`)?.focus({ preventScroll: true });
   $("#curve-save").disabled = !dirty();
   $("#curve-discard").disabled = !dirty();
-  const src = S.settings?.settings?.temp_source;
-  const tracking = src === "cpu" ? "the processor" : src === "gpu" ? "the graphics card"
-    : src === "liquid" ? (S.state.sensors.liquid_temp != null ? "the coolant" : "the hotter part until a coolant reading comes through")
-    : "whichever part is hotter";
   $("#curve-lede").textContent = !(F.curve in S.curves.curves)
     ? `The fans follow ${F.curve === "trial" ? "the curve of the profile you're trying" : `${curveLabel(F.curve)}'s own curve`}. Pick a curve here to switch back to one of yours.`
     : F.curve !== F.base_curve
@@ -190,7 +198,8 @@ function channelRow(c) {
   const mode = c.mode || "";
   const steady = c.steady ?? (c.pump ? 70 : 50);
   return `<li class="chan" data-chan="${esc(c.id)}">
-    <div class="chan-name"><strong>${esc(c.name)}${c.pump ? ` <span class="tag">Pump</span>` : ""}</strong><span>${esc(c.device)}</span></div>
+    <div class="chan-name"><strong>${esc(c.name)}${c.pump ? ` <span class="tag">Pump</span>` : ""}</strong><span>${esc(c.device)}</span>
+      <button type="button" class="text-link" data-chan-all title="Give every fan below the same setting">Use for all</button></div>
     <span class="bar" title="What it runs at now"><i></i></span><span class="rpm"></span>
     <select class="select" data-mode aria-label="How ${esc(c.name)} runs">${MODES.map(([v, l]) => `<option value="${v}"${v === mode ? " selected" : ""}>${l}</option>`).join("")}</select>
     <span class="chan-steady"${mode === "steady" ? "" : " hidden"}><input type="range" min="${S.curves?.min_duty ?? 20}" max="100" step="5" value="${steady}" data-steady aria-label="Steady speed"><output>${steady}%</output></span>
@@ -246,7 +255,7 @@ export function renderFans() {
   if (!S.state) return;
   renderReadouts();
   renderPorts();
-  if (!E.drag && !document.activeElement?.classList?.contains("pt")) renderEditor();
+  if (!E.drag) renderEditor();          // dragging redraws it itself; a focused point keeps its focus
 }
 
 export function initFans() {
@@ -264,6 +273,29 @@ export function initFans() {
     if (!e.target.matches("[data-steady]")) return;
     rangeFill(e.target);
     e.target.nextElementSibling.textContent = `${e.target.value}%`;
+  });
+  // "Use for all": the same setting for every header and cooler Airglow drives, one call each.
+  box.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-chan-all]");
+    if (!b) return;
+    const row = b.closest("[data-chan]");
+    const src = (S.state.fans.channels || []).find((c) => c.id === row.dataset.chan);
+    if (!src) return;
+    const mode = src.mode || "";
+    const duty = +(row.querySelector("[data-steady]")?.value ?? 50);
+    const others = (S.state.fans.channels || []).filter((c) => c.id !== src.id);
+    let failed = null;
+    for (const c of others) {
+      try {
+        const r = await post("/api/fans/channel", { id: c.id, mode, duty });
+        S.state.fans.channels = r.channels;
+      } catch (err) { failed = err; break; }
+    }
+    chanKey = "";
+    renderPorts();
+    const what = !mode ? "keeps its own curve" : mode === "curve" ? "follows the fan curve" : `holds ${duty}%`;
+    if (failed) toast(`${src.name}'s setting was applied until ${failed.message}`, true);
+    else toast(`All ${others.length + 1} fans now ${what}`);
   });
   on("state", () => { if (!$('[data-view="fans"]').hidden) renderFans(); });
   window.addEventListener("beforeunload", (e) => { if (dirty()) e.preventDefault(); });

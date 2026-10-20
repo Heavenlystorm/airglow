@@ -78,7 +78,17 @@ export class EffectRunner {
     const a = await runtimeAssets();
     this.frame.src = "/runtime/frame.html";
     document.body.appendChild(this.frame);
-    await this._hello;
+    try {
+      // A frame that never says hello (a broken page, a WebView out of memory) would otherwise leave the preview
+      // silently empty for ever, with the runner waiting on a promise that never settles.
+      await Promise.race([this._hello, new Promise((_, reject) => setTimeout(
+        () => reject(new Error("The effect's page didn't start")), 8000))]);
+    } catch (e) {
+      this.destroy();
+      this.h.onError?.({ message: String(e.message || e), line: null });
+      this.h.onStopped?.("error");
+      return;
+    }
     const early = this._early;
     this._early = null;
     this._post({ type: "load", runtime: a.runtime, layersLib: a.layersLib, defaults: a.defaults, kind: effect.kind,

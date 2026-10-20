@@ -34,24 +34,36 @@ function pack(frames) {
   return body;
 }
 
+const MAX_INFLIGHT = 4;        // Airglow keeping up: a few posts in flight at once. Behind: skip frames, don't queue them
+let inflight = 0;
+
 function post(type, body) {
+  if (inflight >= MAX_INFLIGHT) return false;    // the same colours again next frame; a queue only grows memory
+  inflight++;
   lastPost = performance.now();
   // read every reply: 30 unread responses a second pile up in WebView2 until the host is killed for memory
   fetch("/api/fx/host/frames", { method: "POST", headers: { "Content-Type": type, "X-Airglow": "1", "X-Airglow-Token": token }, body })
     .then((r) => r.arrayBuffer())
-    .catch(() => { /* Airglow is restarting; it starts this host again if needed */ });
+    .catch(() => { /* Airglow is restarting; it starts this host again if needed */ })
+    .finally(() => { inflight--; });
+  return true;
 }
 
 function flush() {
   const { frames, problems, logs } = out;
   out = fresh();
+  const changed = new Map();
   for (const [id, c] of frames) {                // an effect that didn't change (a still frame, a slow fade) isn't sent
-    if (same(c, sent.get(id))) frames.delete(id);
-    else sent.set(id, c);
+    if (!same(c, sent.get(id))) changed.set(id, c);
   }
   if (Object.keys(problems).length || logs.length) post("application/json", JSON.stringify({ token, problems, logs }));
-  if (frames.size) post("application/octet-stream", pack(frames));
-  else if (runners.size && performance.now() - lastPost > ALIVE_MS) post("application/octet-stream", new Uint8Array(0));
+  if (changed.size) {
+    if (post("application/octet-stream", pack(changed))) {       // only remember them as sent when they went out
+      for (const [id, c] of changed) sent.set(id, c);
+    }
+  } else if (runners.size && performance.now() - lastPost > ALIVE_MS) {
+    post("application/octet-stream", new Uint8Array(0));
+  }
 }
 
 function unload(id) {
