@@ -513,5 +513,53 @@ class SetupFlowTests(unittest.TestCase):
             tools.start_setup(self.ctrl, self.store)
 
 
+class LaunchTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name) / "Airglow Tools"
+        (self.root / "OpenRGB").mkdir(parents=True)
+        (self.root / "OpenRGB" / "OpenRGB.exe").write_bytes(b"exe")
+        self.spec = tools.spec()
+        for p in (mock.patch.object(tools, "spec", return_value=self.spec),
+                  mock.patch.object(tools, "tools_dir", return_value=self.root),
+                  mock.patch.object(tools, "_processes", return_value=[])):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_starts_openrgb_through_its_sign_in_task(self):
+        # the task runs with highest rights, which is what I2C/SMBus needs; a plain launch shows the "interfaces
+        # failed to initialize" warning and no graphics card, memory or onboard RGB
+        run = Commands()
+        elevate = mock.Mock(return_value=False)
+        self.assertTrue(tools.launch("openrgb", run=run, elevate=elevate))
+        self.assertEqual(run.named("schtasks", "/Run")[0][-1], "Airglow - OpenRGB")
+        elevate.assert_not_called()
+
+    def test_without_a_task_windows_is_asked_for_permission(self):
+        run = Commands(code=1)                              # no such task registered
+        elevate = mock.Mock(return_value=True)
+        self.assertTrue(tools.launch("openrgb", run=run, elevate=elevate, openrgb_port=6742))
+        exe, args = elevate.call_args.args
+        self.assertEqual(Path(exe).name, "OpenRGB.exe")
+        self.assertIn("--server-port 6742", " ".join(args))
+
+    def test_a_declined_admin_prompt_is_reported(self):
+        with self.assertRaisesRegex(tools.SetupError, "administrator rights"):
+            tools.launch("openrgb", run=Commands(code=1), elevate=mock.Mock(return_value=False), openrgb_port=6742)
+
+    def test_a_running_copy_is_not_started_twice(self):
+        with mock.patch.object(tools, "_processes", return_value=[(1, Path("C:/somewhere/OpenRGB.exe"))]):
+            with self.assertRaisesRegex(tools.SetupError, "already running"):
+                tools.launch("openrgb", run=Commands())
+
+    def test_a_program_that_isnt_installed_is_reported(self):
+        (self.root / "OpenRGB" / "OpenRGB.exe").unlink()
+        with self.assertRaisesRegex(tools.SetupError, "isn't set up"):
+            tools.launch("openrgb", run=Commands())
+
+
 if __name__ == "__main__":
     unittest.main()
