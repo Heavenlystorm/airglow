@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.0
 - **The effect host is restarted properly.** It used to be started again a few milliseconds after the old process was
   killed, while WebView2 still held its profile: the new host could fail-fast crash on start (three starts in 78 ms,
   then the effect was turned off for the rest of the session). Airglow now waits for the old process to go, then backs
