@@ -3,7 +3,6 @@
 import { $, S, emit, esc, fail, post, toast } from "./core.js";
 import { refreshTools } from "./helpers.js";
 import { closeSheet, openSheet } from "./sheet.js";
-import { openSetup } from "./setup.js";
 
 function item(ok, title, text, action = "") {
   return `<div class="onb-item"><i class="dot ${ok === null ? "" : ok ? "on" : "off"}"></i><div style="flex:1"><strong>${title}</strong><span>${text}</span></div>${action}</div>`;
@@ -50,7 +49,11 @@ export function openWelcome() {
   const finish = () => { done(); };
   sheet.addEventListener("cancel", finish);
   $("#onb-close").addEventListener("click", finish);
-  $("#onb-start").addEventListener("click", () => { done(); if (st.setup_pending) openSetup({ start: true }); else closeSheet(); });
+  $("#onb-start").addEventListener("click", () => {
+    done();
+    if (st.setup_pending) import("./setup.js").then((m) => m.openSetup({ start: true })).catch(fail);
+    else closeSheet();
+  });
   $("#onb-skip").addEventListener("click", () => { done(); closeSheet(); if (!st.setup_pending) location.hash = "#devices"; });
 }
 

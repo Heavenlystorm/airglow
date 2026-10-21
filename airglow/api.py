@@ -71,12 +71,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         log.debug("%s %s", self.address_string(), fmt % args)
 
-    def _send(self, status, payload, ctype="application/json; charset=utf-8", csp=CSP):
+    def _send(self, status, payload, ctype="application/json; charset=utf-8", csp=CSP, cache="no-store", extra=None):
         body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
+        for key, value in (extra or {}).items():
+            self.send_header(key, value)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", csp)
         self.end_headers()
@@ -205,7 +207,15 @@ class Handler(BaseHTTPRequestHandler):
         if ctype.startswith("text/") or ctype.endswith("javascript"):
             ctype += "; charset=utf-8"
         csp = EFFECT_FRAME_CSP if rel == "runtime/frame.html" else CSP
-        self._send(200, target.read_bytes(), ctype, csp)
+        stat = target.stat()
+        etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            return
+        self._send(200, target.read_bytes(), ctype, csp, cache="no-cache", extra={"ETag": etag})
 
     def do_GET(self):
         self._dispatch("GET")

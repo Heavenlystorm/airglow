@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.1
+- **Starting the UI is lighter.** Overview now loads only the code it needs; Lighting, Studio, Fans, Devices, Settings
+  and the setup guide are fetched the first time you open them, then kept for the rest of the session.
+- **Unchanged files are no longer re-downloaded in full.** The page, scripts, styles, font and images carry an ETag, so
+  a later launch revalidates them with a 304 instead of reading and sending the whole file again.
+- **The display font no longer blocks the first paint.** Martian Mono swaps in as it arrives instead of hiding the text.
+- **Showing the window refreshes immediately.** Coming back from the tray fetches a current state instead of showing the
+  readings from before the window was hidden. Nothing extra runs while it is hidden.
+
 ## 1.8.0
 - **A "Why" strip says what changed the lights or fans.** When an automation is holding the lights dark, the fans are at
   the failsafe speed, automations are paused, or a rule has taken over, Airglow says so under the top bar and offers

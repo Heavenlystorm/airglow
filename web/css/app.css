@@ -7,7 +7,7 @@
   src: url("../fonts/martian-mono.woff2") format("woff2-variations");
   font-weight: 100 800;
   font-stretch: 75% 112.5%;
-  font-display: block;
+  font-display: swap;
 }
 
 :root {

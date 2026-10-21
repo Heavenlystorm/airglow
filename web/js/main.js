@@ -2,23 +2,17 @@
 
 import { $, $$, S, curveLabel, emit, esc, fail, get, on, post, setHTML, toast } from "./core.js";
 import { initStage } from "./stage.js";
-import { initLighting, renderLighting } from "./lighting.js";
-import { initFans, renderFans } from "./fans.js";
-import { initAutomations, renderAutomations } from "./automations.js";
-import { initDevices, renderDevices, showZone } from "./devices.js";
-import { initSettings, loadSettings, restartToUpdate } from "./settings.js";
-import { initStudio, leaveStudio, renderStudio } from "./studio.js";
+import { initAutomations, renderAutomations, pauseAutomations, sentence } from "./automations.js";
 import { openOnlineQuestion, openWelcome } from "./onboarding.js";
-import { openSetup } from "./setup.js";
 import { renderTrial } from "./profiles.js";
 import { initOverview, onFrames, renderOverview } from "./overview.js";
 import { R, fmt, level, loadCatalog, pushReadings } from "./readings.js";
 import { countTo, enter, moveMarker } from "./motion.js";
-import { pauseAutomations, sentence } from "./automations.js";
 import { initShortcuts } from "./help.js";
 import { startLive, sync as syncLive } from "./live.js";
 
 const TABS = ["overview", "lighting", "studio", "fans", "automations", "devices", "settings"];
+const views = {};                 // loaded on first use: Overview should not wait for Studio, Fans, Settings or Devices
 let currentView = null;
 const HISTORY_SECONDS = 600;
 let connected = true;
@@ -31,24 +25,48 @@ let probing = false;             // one watchdog fetch at a time
 let failsafeSeen = false;        // the fans' failsafe speed is mentioned once while readings are missing
 
 // ------------------------------------------------------------ routing
-function route() {
+let routeSeq = 0;
+const loading = {};
+
+async function loadView(view) {
+  if (views[view]) return views[view];
+  if (loading[view]) return loading[view];
+  loading[view] = (async () => {
+    let m;
+    if (view === "lighting") { m = await import("./lighting.js"); m.initLighting(); }
+    else if (view === "fans") { m = await import("./fans.js"); m.initFans(); }
+    else if (view === "devices") { m = await import("./devices.js"); m.initDevices(); }
+    else if (view === "settings") { m = await import("./settings.js"); m.initSettings(); }
+    else if (view === "studio") { m = await import("./studio.js"); m.initStudio(); }
+    else throw new Error(`unknown view: ${view}`);
+    views[view] = m;
+    return m;
+  })().finally(() => { delete loading[view]; });
+  return loading[view];
+}
+
+async function route() {
+  const seq = ++routeSeq;
   const [tab, arg] = (location.hash || "#overview").slice(1).split("/");
   const view = TABS.includes(tab) ? tab : "overview";
   $$(".tabs a").forEach((a) => (a.dataset.tab === view ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
   $$(".view").forEach((v) => (v.hidden = v.dataset.view !== view));
   moveMarker($(".tab-ink"), $(`.tabs a[data-tab="${view}"]`), currentView === null);
-  if (currentView === "studio" && view !== "studio") leaveStudio();
+  if (currentView === "studio" && view !== "studio") views.studio?.leaveStudio();
   if (currentView !== null && currentView !== view) enter($(`.view[data-view="${view}"]`));
   currentView = view;
-  if (view === "overview") renderOverview();
-  if (view === "fans") renderFans();
-  if (view === "automations") renderAutomations();
-  if (view === "devices") { if (arg) showZone(decodeURIComponent(arg)); renderDevices(); }
-  if (view === "settings") loadSettings();
-  if (view === "lighting") renderLighting();
-  if (view === "studio") renderStudio(arg);
+  if (view === "overview") { renderOverview(); return; }
+  if (view === "automations") { renderAutomations(); return; }
+  let m;
+  try { m = await loadView(view); } catch (e) { fail(e); return; }
+  if (seq !== routeSeq) return;
+  if (view === "fans") m.renderFans();
+  else if (view === "devices") { if (arg) m.showZone(decodeURIComponent(arg)); m.renderDevices(); }
+  else if (view === "settings") m.loadSettings();
+  else if (view === "lighting") m.renderLighting();
+  else if (view === "studio") await m.renderStudio(arg);
 }
-window.addEventListener("hashchange", route);
+window.addEventListener("hashchange", () => { route().catch(fail); });
 
 window.addEventListener("resize", () => moveMarker($(".tab-ink"), $(".tabs a[aria-current]"), true));
 
@@ -195,10 +213,10 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("[data-why-pause]")) { pauseAutomations(60); return; }
   if (e.target.closest("[data-why-resume]")) { pauseAutomations(0); return; }
   const b = e.target.closest("[data-open-setup]");
-  if (b) openSetup({ start: b.dataset.openSetup === "start", only: b.dataset.zone || null });
+  if (b) import("./setup.js").then((m) => m.openSetup({ start: b.dataset.openSetup === "start", only: b.dataset.zone || null })).catch(fail);
   if (e.target.closest("#setup-later")) { setupDismissed = S.state.setup_pending; renderBar(); }
   if (e.target.closest("#update-later")) { updateDismissed = S.state.update?.latest; renderBar(); }
-  if (e.target.closest("#update-restart")) restartToUpdate();
+  if (e.target.closest("#update-restart")) import("./settings.js").then((m) => m.restartToUpdate()).catch(fail);
   if (e.target.closest("[data-openrgb-start]")) {
     post("/api/openrgb/start").then(() => toast("Starting OpenRGB")).catch(fail);
   }
@@ -275,14 +293,9 @@ async function boot() {
   }
   await initOverview(S.overview);
   initStage();
-  initLighting();
-  initFans();
   initAutomations();
-  initDevices();
-  initSettings();
-  initStudio();
   renderBar();
-  route();
+  await route().catch(fail);
   if (!S.state.onboarded) openWelcome();
   else if (!S.state.online_asked && S.state.update && S.state.update.kind !== "scoop") openOnlineQuestion();
   startLive({
@@ -303,7 +316,10 @@ async function boot() {
     refresh().finally(() => { probing = false; });
   }, 4000);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") lastStateAt = Date.now();   // the stream reopens: give it a moment
+    if (document.visibilityState === "visible") {
+      lastStateAt = Date.now();   // the stream reopens: give it a moment
+      refresh();                  // don't show the readings from before the tray for a whole state tick
+    }
   });
 }
 
