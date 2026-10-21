@@ -30,7 +30,7 @@ export function fieldHTML(spec, value, prefix) {
   }
   if (spec.type === "choice") {
     return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span></div>
-      <select class="select" id="${id}">${spec.options.map((o) => `<option value="${esc(o.value)}"${o.value === value ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select></div>`;
+      <select class="select" id="${id}" aria-label="${esc(spec.label)}">${spec.options.map((o) => `<option value="${esc(o.value)}"${o.value === value ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select></div>`;
   }
   if (spec.type === "toggle") {
     return `<div class="field" data-param="${spec.id}"><label class="lab" style="align-items:center"><span>${esc(spec.label)}</span>
@@ -154,7 +154,10 @@ function renderSceneInspector() {
   const eff = S.effects.find((e) => e.id === scene.effect) || S.effects[0];
   const ins = $("#inspector");
   ins.innerHTML = `${overrideBanner()}${presetsHTML()}<div class="rule-line"></div>
-    <div class="ins-block"><div class="ins-title"><h2>${esc(eff.name)}</h2><span class="meta">Whole rig</span></div>
+    <div class="ins-block"><div class="ins-title"><h2>${esc(eff.name)}</h2></div>
+      <div class="zone-line"><label for="zone-pick">Lighting for</label><select class="select zone-pick" id="zone-pick" aria-label="Choose a lighting zone">
+      <option value="">Whole rig</option>${(S.zones?.zones || []).filter((z) => z.device.online).map((z) => `<option value="${esc(z.key)}">${esc(z.config.name)} · ${esc(z.device.name)}</option>`).join("")}
+    </select></div>
       <p class="ins-desc">${esc(eff.description)}${eff.needs.includes("audio") ? " Plays from whatever your speakers or headphones are playing." : ""}${eff.needs.includes("screen") ? " Uses your main display. Nothing is recorded or saved." : ""}</p>
       ${studioButton(eff)}
       <div class="ins-block" id="scene-fields">${eff.params.map((p) => fieldHTML(p, scene.params[p.id], "sp")).join("")}</div>
@@ -172,6 +175,11 @@ function renderSceneInspector() {
   bri.addEventListener("input", () => {
     editingParams = Date.now(); rangeFill(bri); $("#bri-out").textContent = `${bri.value}%`;
     S.state.scene.brightness = +bri.value; sendScene({ brightness: +bri.value });
+  });
+  $("#zone-pick")?.addEventListener("change", (e) => {
+    const key = e.target.value;
+    if (!key) { selectedZone = null; select(null); renderInspector(true); return; }
+    selectedZone = key; select(key); renderInspector(true);
   });
 }
 

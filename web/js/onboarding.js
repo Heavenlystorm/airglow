@@ -28,7 +28,9 @@ export function openWelcome() {
     list += item(false, `${esc(c.name)} is running`, `It controls ${esc(c.conflicts_with)} too, which makes lights flicker.`,
       `<button class="btn" data-close-app="${esc(c.name)}">Close it</button>`);
   }
-  openSheet(`<div class="body"><h2>Welcome to Airglow</h2>
+  openSheet(`<div class="body"><div class="sheet-head"><h2>Welcome to Airglow</h2>
+      <div class="sheet-head-side"><span class="sheet-step">${st.setup_pending ? "Step 1 of 2" : "What I found"}</span>
+      <button class="icon-btn" id="onb-close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div></div>
     <p class="lede" style="margin:0">Here's what it found on this PC. Everything stays on this computer: no account, no cloud.</p>
     <div class="onb-list">${list}</div>
     <div class="tools-box" data-tools></div>
@@ -37,10 +39,17 @@ export function openWelcome() {
     <div class="actions"><button class="btn quiet" id="onb-skip">${st.setup_pending ? "Later" : "Check devices"}</button><span class="spacer"></span>
       <button class="btn primary" id="onb-start">${st.setup_pending ? "Set up lights" : "Start"}</button></div></div>`);
   refreshTools();
+  let finished = false;
   const done = () => {
+    if (finished) return Promise.resolve();
+    finished = true;
     if ($("#onb-online")) post("/api/settings", { online_checks: $("#onb-online").checked }).catch(() => {});
     return post("/api/onboarded").then(() => emit("refresh")).catch(() => {});
   };
+  const sheet = $("#sheet");
+  const finish = () => { done(); };
+  sheet.addEventListener("cancel", finish);
+  $("#onb-close").addEventListener("click", finish);
   $("#onb-start").addEventListener("click", () => { done(); if (st.setup_pending) openSetup({ start: true }); else closeSheet(); });
   $("#onb-skip").addEventListener("click", () => { done(); closeSheet(); if (!st.setup_pending) location.hash = "#devices"; });
 }
@@ -52,7 +61,7 @@ function onlineItem() {
   const u = S.state.update;
   if (!u || u.kind === "scoop" || S.state.online_asked) return "";
   return `<label class="onb-item"><div style="flex:1"><strong>Keep Airglow up to date automatically</strong><span>${ONLINE_TEXT}</span></div>
-    <span class="switch"><input type="checkbox" id="onb-online"><span></span></span></label>`;
+    <span class="switch"><input type="checkbox" id="onb-online"${S.settings?.settings?.online_checks ? " checked" : ""}><span></span></span></label>`;
 }
 
 export function openOnlineQuestion() {

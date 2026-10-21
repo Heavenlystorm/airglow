@@ -887,7 +887,23 @@ async function onClick(e) {
   }
   if (ds.st === "del" && typeof E.sel === "number") {
     if (E.doc.layers.length === 1) return toast("An effect needs at least one layer.", true);
-    E.doc.layers.splice(E.sel, 1); E.sel = Math.min(E.sel, E.doc.layers.length - 1); rerenderSides(); return changed(true);
+    const doc = E.doc;
+    const index = E.sel;
+    const removed = E.doc.layers.splice(E.sel, 1)[0];
+    E.sel = Math.min(E.sel, E.doc.layers.length - 1);
+    rerenderSides(); changed(true);
+    toast("Layer deleted", {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          if (E.doc !== doc) return;
+          E.doc.layers.splice(index, 0, removed);
+          E.sel = index;
+          rerenderSides(); changed(true);
+        },
+      },
+    });
+    return;
   }
   if (ds.st === "dup" && typeof E.sel === "number") {
     if (E.doc.layers.length >= 12) return toast("12 layers is the most an effect can have.", true);

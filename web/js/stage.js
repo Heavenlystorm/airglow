@@ -122,7 +122,8 @@ export function renderOverlay() {
       handle = `<line class="rot-line" x1="${cx}" y1="${cy}" x2="${hx}" y2="${hy}"/><circle class="rot" data-rot="${esc(z.key)}" cx="${hx}" cy="${hy}" r="11"/>`;
     }
     const placingThis = !!st.placing?.includes(z.key);
-    html += `<g class="zone${on ? "" : " off"}${sel || placingThis ? " selected" : ""}${placingThis ? " placing" : ""}" data-key="${esc(z.key)}">${deco}${hit}
+    const aria = `${z.config.name}${on ? "" : " (off)"}${z.device?.name ? `, ${z.device.name}` : ""}`;
+    html += `<g class="zone${on ? "" : " off"}${sel || placingThis ? " selected" : ""}${placingThis ? " placing" : ""}" data-key="${esc(z.key)}" tabindex="0" role="button" aria-label="${esc(aria)}" aria-pressed="${sel}">${deco}${hit}
       <text class="label" x="${lx}" y="${ly}" data-y="${ly}" data-below="${below}">${esc(z.config.name)}${on ? "" : " (off)"}</text></g>${handle}`;
   }
   s.innerHTML = html;
@@ -130,7 +131,7 @@ export function renderOverlay() {
   $("#stage").classList.toggle("arranging", st.arranging);
   $("#stage-hint").textContent = st.arranging
     ? "Drag zones to where they sit in your case. Use the handle to rotate."
-    : (visible.length ? "Click a zone to give it its own effect. Arrange shows switched-off zones too." : "");
+    : (visible.length ? "Select a zone to give it its own effect. Arrange shows switched-off zones too." : "");
 }
 
 // ------------------------------------------------------------ canvas (LEDs)
@@ -295,6 +296,28 @@ async function saveLayout(z, layout) {
   } catch (e) { fail(e); renderOverlay(); draw(); }
 }
 
+function zoneEl(key) {
+  return key ? svg().querySelector(`.zone[data-key="${CSS.escape(key)}"]`) : null;
+}
+
+function selectZone(key, focus = false) {
+  if (st.selected !== key) {
+    st.selected = key;
+    renderOverlay();
+    emit("select-zone", key);
+  }
+  if (focus) zoneEl(key)?.focus({ preventScroll: true });
+}
+
+function onKey(e) {
+  const g = e.target.closest?.(".zone");
+  if (!g) return;
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    selectZone(g.dataset.key, true);
+  }
+}
+
 function onPointerDown(e) {
   const rotEl = e.target.closest("[data-rot]");
   const g = e.target.closest(".zone");
@@ -307,7 +330,7 @@ function onPointerDown(e) {
     return;
   }
   if (!g) {
-    if (st.selected) { st.selected = null; renderOverlay(); emit("select-zone", null); }
+    if (st.selected) selectZone(null);
     return;
   }
   const key = g.dataset.key;
@@ -317,11 +340,7 @@ function onPointerDown(e) {
     st.drag = { key, keys, mode: "move", x0: p.x, y0: p.y, dx: 0, dy: 0, moved: false };
     svg().setPointerCapture(e.pointerId);
   }
-  if (st.selected !== key) {
-    st.selected = key;
-    renderOverlay();
-    emit("select-zone", key);
-  }
+  selectZone(key);
 }
 
 function onPointerMove(e) {
@@ -386,11 +405,16 @@ export function initStage() {
   svg().addEventListener("pointermove", onPointerMove);
   svg().addEventListener("pointerup", onPointerUp);
   svg().addEventListener("pointercancel", onPointerUp);
-  $("#arrange").addEventListener("click", () => {
-    st.arranging = !st.arranging;
-    $("#arrange").setAttribute("aria-pressed", String(st.arranging));
+  svg().addEventListener("keydown", onKey);
+  const setArranging = (on) => {
+    st.arranging = on;
+    $("#arrange").setAttribute("aria-pressed", String(on));
     renderOverlay();
     draw();
+  };
+  $("#arrange").addEventListener("click", () => setArranging(!st.arranging));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && st.arranging && !$("#sheet").open) setArranging(false);
   });
   on("zones", () => { renderOverlay(); draw(); });
   renderOverlay();

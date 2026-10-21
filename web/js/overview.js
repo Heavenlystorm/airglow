@@ -50,8 +50,8 @@ function shell(t) {
   el.className = `tile tile-${t.type}`;
   el.dataset.id = t.id;
   el.innerHTML = `<div class="tile-inner"></div>
-    <div class="tile-tools"><button class="icon-btn" data-act="edit" title="Tile settings"><svg><use href="#i-sliders"/></svg></button>
-      <button class="icon-btn" data-act="remove" title="Remove tile"><svg><use href="#i-close"/></svg></button></div>
+    <div class="tile-tools"><button class="icon-btn" data-act="edit" title="Tile settings" aria-label="Tile settings"><svg><use href="#i-sliders"/></svg></button>
+      <button class="icon-btn" data-act="remove" title="Remove tile" aria-label="Remove tile"><svg><use href="#i-close"/></svg></button></div>
     <span class="tile-resize" data-act="resize" title="Drag to resize" aria-hidden="true"></span>`;
   if (t.type !== "sensor") el.querySelector('[data-act="edit"]').remove();
   return el;
@@ -340,7 +340,7 @@ export function renderOverview() {
   if (O.editing) g.append(add); else add?.remove();
   for (const t of O.layout.tiles) update(O.els.get(t.id), t);
   g.classList.toggle("editing", O.editing);
-  $$(".tile", g).forEach((el) => { el.tabIndex = O.editing && !el.classList.contains("tile-add") ? 0 : -1; });
+  $$(".tile", g).forEach((el) => { el.tabIndex = O.editing ? 0 : -1; });
 }
 
 // Live preview frames arrive ~15 times a second while the Overview is open.
@@ -468,9 +468,22 @@ function onKey(e) {
 
 function removeTile(id) {
   const t = tileById(id);
+  if (!t) return;
+  const index = O.layout.tiles.indexOf(t);
+  const label = t.label || (t.type === "sensor" ? sensorName(t.sensors[0]) : CONTROL[t.type].name);
   flip(grid(), () => { O.layout.tiles = O.layout.tiles.filter((x) => x.id !== id); renderOverview(); });
   save();
-  toast(`${t.label || (t.type === "sensor" ? sensorName(t.sensors[0]) : CONTROL[t.type].name)} removed`);
+  toast(`${label} removed`, {
+    action: {
+      label: "Undo",
+      onClick: () => {
+        O.layout.tiles.splice(Math.min(index, O.layout.tiles.length), 0, t);
+        if (t.sensors) ensureHistory(t.sensors).catch(() => {});
+        flip(grid(), () => renderOverview());
+        save();
+      },
+    },
+  });
 }
 
 async function addTile(tile) {
@@ -487,7 +500,7 @@ async function addTile(tile) {
 
 // ------------------------------------------------------------ sheets: picker, add, tile settings
 function pickerHTML(selected) {
-  return `<input class="text search" id="pk-q" type="search" placeholder="Search readings, for example memory or fan" autocomplete="off" spellcheck="false">
+  return `<input class="text search" id="pk-q" type="search" placeholder="Search readings, for example memory or fan" aria-label="Search readings" autocomplete="off" spellcheck="false">
     <div class="picker" id="pk-list">${pickerRows(selected, "")}</div>`;
 }
 
@@ -646,6 +659,7 @@ export async function initOverview(layout) {
     if (el && !O.editing) tileSheet(el.dataset.id);
   });
   $("#ov-edit").addEventListener("click", () => setEditing(!O.editing));
+  $("#ov-addtile").addEventListener("click", addTileSheet);
   $("#ov-reset").addEventListener("click", async () => {
     if (!confirm("Put the Overview back to how it was at first? Your tiles and pins will be replaced.")) return;
     try {

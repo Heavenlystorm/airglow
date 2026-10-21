@@ -48,15 +48,15 @@ function zoneCard(z) {
       <input data-f="name" value="${esc(c.name)}" maxlength="40" aria-label="Zone name" spellcheck="false"></div>
     <div class="btn-row">${z.zone.resizable ? `<button class="btn" data-open-setup data-zone="${esc(z.key)}">What's plugged in?</button>` : ""}<button class="btn" data-identify>Identify</button></div>
     <div class="zfields">
-      <label>Shape<select class="select" data-f="shape"><option value="fans"${L.shape === "fans" ? " selected" : ""}>Fans</option><option value="strip"${L.shape === "strip" ? " selected" : ""}>Strip</option>${grid ? `<option value="matrix"${L.shape === "matrix" ? " selected" : ""}>Grid</option>` : ""}</select></label>
+      <label>Shape<select class="select" data-f="shape" aria-label="Shape"><option value="fans"${L.shape === "fans" ? " selected" : ""}>Fans</option><option value="strip"${L.shape === "strip" ? " selected" : ""}>Strip</option>${grid ? `<option value="matrix"${L.shape === "matrix" ? " selected" : ""}>Grid</option>` : ""}</select></label>
       ${L.shape === "fans"
-        ? `<label>Fans<input class="text num" type="number" min="1" max="12" data-f="fans" value="${L.fans}"></label>
-           <label>LEDs per fan<input class="text num" type="number" min="1" max="128" data-f="leds_per_fan" value="${L.leds_per_fan}"></label>`
+        ? `<label>Fans<input class="text num" type="number" min="1" max="12" data-f="fans" aria-label="Fans" value="${L.fans}"></label>
+           <label>LEDs per fan<input class="text num" type="number" min="1" max="128" data-f="leds_per_fan" aria-label="LEDs per fan" value="${L.leds_per_fan}"></label>`
         : L.shape === "matrix"
         ? `<span class="hint">${L.rows} × ${L.cols} grid, as OpenRGB lays it out</span>`
-        : `<label>LEDs<input class="text num" type="number" min="1" max="${max}" data-f="leds" value="${L.leds}"></label>`}
-      <label>Colour order<select class="select" data-f="order">${ORDERS.map((o) => `<option${o === c.order ? " selected" : ""}>${o}</option>`).join("")}</select></label>
-      <label>Direction<select class="select" data-f="reverse"><option value="0"${L.reverse ? "" : " selected"}>Normal</option><option value="1"${L.reverse ? " selected" : ""}>Reversed</option></select></label>
+        : `<label>LEDs<input class="text num" type="number" min="1" max="${max}" data-f="leds" aria-label="LEDs" value="${L.leds}"></label>`}
+      <label>Colour order<select class="select" data-f="order" aria-label="Colour order">${ORDERS.map((o) => `<option${o === c.order ? " selected" : ""}>${o}</option>`).join("")}</select></label>
+      <label>Direction<select class="select" data-f="reverse" aria-label="Direction"><option value="0"${L.reverse ? "" : " selected"}>Normal</option><option value="1"${L.reverse ? " selected" : ""}>Reversed</option></select></label>
       <span class="hint" style="margin-left:auto">${!c.enabled && z.zone.default_leds === 0 ? "Nothing detected on this channel" : `${total} of up to ${max} LEDs`}</span>
     </div>
     <div class="zstrip" data-strip="${esc(z.key)}">${Array.from({ length: Math.min(total, 60) }, () => "<i></i>").join("")}</div>

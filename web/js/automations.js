@@ -117,18 +117,18 @@ async function openBuilder(rule, isNew) {
     const w = r.when, t = r.then;
     const whenFields = {
       app_running: () => appField(w), app_focused: () => appField(w),
-      idle: () => `<span>for</span><input class="text" type="number" min="1" max="240" data-w="minutes" value="${w.minutes ?? 10}" style="width:80px"><span>minutes</span>`,
-      time: () => `<input class="text" type="time" data-w="start" value="${w.start ?? "23:00"}" style="width:auto"><span>to</span><input class="text" type="time" data-w="end" value="${w.end ?? "07:00"}" style="width:auto">
-        <div class="days">${DAYS.map((d, i) => `<button type="button" data-day="${i}" aria-pressed="${(w.days ?? [0, 1, 2, 3, 4, 5, 6]).includes(i)}">${d}</button>`).join("")}</div>`,
+      idle: () => `<span>for</span><input class="text" type="number" min="1" max="240" data-w="minutes" aria-label="Idle minutes" value="${w.minutes ?? 10}" style="width:80px"><span>minutes</span>`,
+      time: () => `<input class="text" type="time" data-w="start" aria-label="Start time" value="${w.start ?? "23:00"}" style="width:auto"><span>to</span><input class="text" type="time" data-w="end" aria-label="End time" value="${w.end ?? "07:00"}" style="width:auto">
+        <div class="days" role="group" aria-label="Days">${DAYS.map((d, i) => `<button type="button" data-day="${i}" aria-pressed="${(w.days ?? [0, 1, 2, 3, 4, 5, 6]).includes(i)}">${d}</button>`).join("")}</div>`,
       locked: () => "",
-      temp_above: () => `<select class="select" data-w="source" style="width:auto">${[["max", "Hotter part"], ["cpu", "Processor"], ["gpu", "Graphics card"], ["liquid", "Coolant"]].map(([v, l]) => `<option value="${v}"${(w.source ?? "max") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
-        <span>above</span><input class="text" type="number" min="${tempIn(30)}" max="${tempIn(100)}" data-w="temp" value="${tempIn(w.temp ?? 80)}" style="width:80px"><span>°${unitF() ? "F" : "C"}</span>`,
+      temp_above: () => `<select class="select" data-w="source" aria-label="Temperature source" style="width:auto">${[["max", "Hotter part"], ["cpu", "Processor"], ["gpu", "Graphics card"], ["liquid", "Coolant"]].map(([v, l]) => `<option value="${v}"${(w.source ?? "max") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
+        <span>above</span><input class="text" type="number" min="${tempIn(30)}" max="${tempIn(100)}" data-w="temp" aria-label="Temperature" value="${tempIn(w.temp ?? 80)}" style="width:80px"><span>°${unitF() ? "F" : "C"}</span>`,
     }[w.type]();
     const thenFields = {
-      preset: () => `<select class="select" data-t="preset" style="width:auto">${S.presets.map((p) => `<option value="${esc(p.id)}"${p.id === t.preset ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select>`,
+      preset: () => `<select class="select" data-t="preset" aria-label="Profile" style="width:auto">${S.presets.map((p) => `<option value="${esc(p.id)}"${p.id === t.preset ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select>`,
       lights_off: () => "",
-      dim: () => `<span>to</span><input class="text" type="number" min="0" max="100" data-t="brightness" value="${t.brightness ?? 20}" style="width:80px"><span>%</span>`,
-      fan_curve: () => `<select class="select" data-t="curve" style="width:auto">${curves.map((c) => `<option value="${c}"${c === t.curve ? " selected" : ""}>${curveLabel(c)}</option>`).join("")}</select>`,
+      dim: () => `<span>to</span><input class="text" type="number" min="0" max="100" data-t="brightness" aria-label="Brightness" value="${t.brightness ?? 20}" style="width:80px"><span>%</span>`,
+      fan_curve: () => `<select class="select" data-t="curve" aria-label="Fan curve" style="width:auto">${curves.map((c) => `<option value="${c}"${c === t.curve ? " selected" : ""}>${curveLabel(c)}</option>`).join("")}</select>`,
     }[t.type]();
     let preview = "";
     const needsExe = ["app_running", "app_focused"].includes(w.type) && !w.exe;
@@ -136,9 +136,9 @@ async function openBuilder(rule, isNew) {
     if (needsExe) preview = "Type the program's file name, or pick one that's open right now, to finish this rule.";
     openSheet(`<form id="rb-form"><h2>${isNew ? "New automation" : "Edit automation"}</h2>
       <div class="builder">
-        <div class="row"><span>When</span><select class="select" id="rb-when">${[["app_running", "A program is running"], ["app_focused", "A program is in front"], ["idle", "The PC is idle"], ["time", "It's between two times"], ["locked", "The PC is locked"], ["temp_above", "It's running hot"]].map(([v, l]) => `<option value="${v}"${v === w.type ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+        <div class="row"><span>When</span><select class="select" id="rb-when" aria-label="When">${[["app_running", "A program is running"], ["app_focused", "A program is in front"], ["idle", "The PC is idle"], ["time", "It's between two times"], ["locked", "The PC is locked"], ["temp_above", "It's running hot"]].map(([v, l]) => `<option value="${v}"${v === w.type ? " selected" : ""}>${l}</option>`).join("")}</select></div>
         ${whenFields ? `<div class="row"><span></span><div class="sub">${whenFields}</div></div>` : ""}
-        <div class="row"><span>Then</span><select class="select" id="rb-then">${[["preset", "Use a profile"], ["lights_off", "Turn the lights off"], ["dim", "Dim the lights"], ["fan_curve", "Switch the fan curve"]].map(([v, l]) => `<option value="${v}"${v === t.type ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+        <div class="row"><span>Then</span><select class="select" id="rb-then" aria-label="Then">${[["preset", "Use a profile"], ["lights_off", "Turn the lights off"], ["dim", "Dim the lights"], ["fan_curve", "Switch the fan curve"]].map(([v, l]) => `<option value="${v}"${v === t.type ? " selected" : ""}>${l}</option>`).join("")}</select></div>
         ${thenFields ? `<div class="row"><span></span><div class="sub">${thenFields}</div></div>` : ""}
         <div class="preview-sentence">${preview || "Fill in the details to see the rule."}</div>
         <p class="hint">When the condition stops being true, your own lighting and fan settings come back by themselves.</p>
@@ -170,8 +170,8 @@ async function openBuilder(rule, isNew) {
       catch (err2) { render(err2.message); }
     });
   };
-  const appField = (w) => `<input class="text" data-w="exe" value="${esc(w.exe ?? "")}" placeholder="Cyberpunk2077.exe" spellcheck="false" style="width:220px">
-      ${apps.length ? `<select class="select" data-app-pick style="width:auto"><option value="">Pick a running program</option>${apps.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select>` : ""}`;
+  const appField = (w) => `<input class="text" data-w="exe" aria-label="Program file name" value="${esc(w.exe ?? "")}" placeholder="Cyberpunk2077.exe" spellcheck="false" style="width:220px">
+      ${apps.length ? `<select class="select" data-app-pick aria-label="Pick a running program" style="width:auto"><option value="">Pick a running program</option>${apps.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select>` : ""}`;
   render();
 }
 
@@ -186,8 +186,21 @@ export function initAutomations() {
     else if (e.target.closest("[data-down]") && i < rules.length - 1) { [rules[i + 1], rules[i]] = [rules[i], rules[i + 1]]; saveRules(rules); }
     else if (e.target.closest("[data-edit]")) openBuilder(rules[i], false);
     else if (e.target.closest("[data-del]")) {
+      const index = i;
       const removed = rules.splice(i, 1)[0];
-      if (await saveRules(rules, "Automation deleted")) S._lastDeleted = removed;
+      if (await saveRules(rules)) {
+        S._lastDeleted = removed;
+        toast("Automation deleted", {
+          action: {
+            label: "Undo",
+            onClick: () => {
+              const next = [...S.rules];
+              next.splice(Math.min(index, next.length), 0, removed);
+              saveRules(next, "Automation restored");
+            },
+          },
+        });
+      }
     }
   });
   $("#rules").addEventListener("change", (e) => {
