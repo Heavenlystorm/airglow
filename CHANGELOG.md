@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.2
+- **Overview graphs draw from the first reading.** The sparklines and big graphs no longer wait for six samples before
+  drawing, so a cold start shows the trend immediately instead of a blank chart for the first 12 seconds.
+- **No ghost digits behind the live numbers.** The faint unlit-segment figures behind temperatures, fan speeds and the
+  setup counter are gone; only the current value remains.
+
 ## 1.8.1
 - **Starting the UI is lighter.** Overview now loads only the code it needs; Lighting, Studio, Fans, Devices, Settings
   and the setup guide are fetched the first time you open them, then kept for the rest of the session.

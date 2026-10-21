@@ -1,10 +1,9 @@
 // Fans screen: temperature/power readouts with history, the curve editor, and fan speeds.
 
-import { ghost } from "./motion.js";
 import { $, $$, S, cap, clamp, curveLabel, emit, esc, fail, fmtTemp, on, post, rangeFill, setHTML, tempLevel, toUnit, toast, unitF } from "./core.js";
 
 const HISTORY_SECONDS = 600;
-const num = (v) => `<span class="num" data-ghost="${ghost(v)}">${v}</span>`;
+const num = (v) => `<span class="num">${v}</span>`;
 
 // ------------------------------------------------------------ readouts
 function spark(points, min, max, color) {
