@@ -41,7 +41,7 @@ function markup(full) {
     ? `<p class="hint">Airglow can download ${missing.map((t) => `${esc(t.name)} ${esc(t.version)}`).join(" and ")} (about ${mb(missing.reduce((n, t) => n + t.size, 0))} MB) from ${missing.length > 1 ? "their official sources" : "its official source"}, check ${missing.length > 1 ? "each file" : "it"} against a known checksum, and install ${missing.length > 1 ? "them" : "it"} so ${missing.length > 1 ? "they start" : "it starts"} with Windows. Windows asks for permission once.</p>`
     : "";
   const buttons = [
-    missing.length && !busy() ? `<button class="btn primary" data-tools-setup>Set up automatically</button>` : "",
+    missing.length && !busy() ? `<button class="btn${full ? " primary" : ""}" data-tools-setup>${full ? "Set up automatically" : "Install OpenRGB &amp; sensors"}</button>` : "",
     full && st.installed_any && !busy() ? `<button class="btn quiet" data-tools-remove>Remove them</button>` : "",
   ].join("");
   if (!full && !missing.length && !["working", "waiting", "failed", "done"].includes(st.job.state)) return "";

@@ -14,13 +14,13 @@
   <a class="wordmark" href="#overview"><svg aria-hidden="true"><use href="#i-mark"/></svg>Airglow</a>
   <nav class="tabs" aria-label="Sections">
     <span class="tab-ink" aria-hidden="true"></span>
-    <a href="#overview" data-tab="overview">Overview</a>
-    <a href="#lighting" data-tab="lighting">Lighting</a>
-    <a href="#studio" data-tab="studio">Studio</a>
-    <a href="#fans" data-tab="fans">Fans</a>
-    <a href="#automations" data-tab="automations">Automations</a>
-    <a href="#devices" data-tab="devices">Devices</a>
-    <a href="#settings" data-tab="settings">Settings</a>
+    <a href="#overview" data-tab="overview" aria-keyshortcuts="Control+1">Overview</a>
+    <a href="#lighting" data-tab="lighting" aria-keyshortcuts="Control+2">Lighting</a>
+    <a href="#studio" data-tab="studio" aria-keyshortcuts="Control+3">Studio</a>
+    <a href="#fans" data-tab="fans" aria-keyshortcuts="Control+4">Fans</a>
+    <a href="#automations" data-tab="automations" aria-keyshortcuts="Control+5">Automations</a>
+    <a href="#devices" data-tab="devices" aria-keyshortcuts="Control+6">Devices</a>
+    <a href="#settings" data-tab="settings" aria-keyshortcuts="Control+7">Settings</a>
   </nav>
   <div class="bar-right">
     <a class="ambient" id="ambient" href="#overview" title="Pinned readings. Pin others from a tile's settings on the Overview."></a>
@@ -28,6 +28,7 @@
   </div>
 </header>
 
+<div class="why" id="why" role="status" aria-live="polite" hidden></div>
 <div class="notice" id="notice" hidden></div>
 
 <main>
@@ -36,6 +37,7 @@
     <div class="ov-bar">
       <div class="ov-editbar" id="ov-editbar" hidden>
         <span>Drag tiles to move them, drag a corner to resize. With the keyboard: arrows move, Shift and arrows resize.</span>
+        <button class="btn" id="ov-addtile"><svg aria-hidden="true"><use href="#i-plus"/></svg>Add a tile</button>
         <button class="text-link" id="ov-reset">Reset to default</button>
       </div>
       <button class="chip-btn" id="ov-edit" aria-pressed="false"><svg aria-hidden="true"><use href="#i-move"/></svg>Customize</button>
@@ -48,7 +50,7 @@
     <div class="stage-wrap">
       <div class="stage" id="stage">
         <canvas id="stage-canvas" aria-hidden="true"></canvas>
-        <svg id="stage-svg" aria-label="Live preview of your lighting" role="img"></svg>
+        <svg id="stage-svg" aria-label="Lighting zones" role="group"></svg>
         <div class="stage-tools">
           <button class="chip-btn" id="arrange" aria-pressed="false"><svg aria-hidden="true"><use href="#i-move"/></svg>Arrange</button>
         </div>
@@ -125,8 +127,16 @@
 
   <!-- ============================================================ Settings -->
   <section class="view settings-view" data-view="settings" aria-label="Settings" hidden>
-    <h1>Settings</h1>
-    <div class="settings" id="settings"></div>
+    <div class="settings-head">
+      <h1>Settings</h1>
+    </div>
+    <div class="settings-layout">
+      <nav class="settings-nav" id="settings-nav" aria-label="Settings sections">
+        <div class="settings-nav-links" id="settings-nav-links"></div>
+        <span class="settings-saved" id="settings-saved" role="status" aria-live="polite"></span>
+      </nav>
+      <div class="settings" id="settings"></div>
+    </div>
   </section>
 </main>
 

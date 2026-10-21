@@ -1,6 +1,6 @@
 // Boot, routing, the 2-second state poll, and the top bar.
 
-import { $, $$, S, emit, esc, fail, get, on, post, setHTML, toast } from "./core.js";
+import { $, $$, S, curveLabel, emit, esc, fail, get, on, post, setHTML, toast } from "./core.js";
 import { initStage } from "./stage.js";
 import { initLighting, renderLighting } from "./lighting.js";
 import { initFans, renderFans } from "./fans.js";
@@ -15,6 +15,7 @@ import { initOverview, onFrames, renderOverview } from "./overview.js";
 import { R, fmt, level, loadCatalog, pushReadings } from "./readings.js";
 import { countTo, enter, moveMarker } from "./motion.js";
 import { pauseAutomations, sentence } from "./automations.js";
+import { initShortcuts } from "./help.js";
 import { startLive, sync as syncLive } from "./live.js";
 
 const TABS = ["overview", "lighting", "studio", "fans", "automations", "devices", "settings"];
@@ -88,6 +89,46 @@ function heldOff() {
   return { text: "Something is keeping them off right now." };
 }
 
+// The one line that says why the hardware is not doing what the user last set.
+function renderWhy() {
+  const s = S.state;
+  const el = $("#why");
+  if (!s) { el.hidden = true; return; }
+  const o = s.override || {};
+  const held = heldOff();
+  let text = "", action = "";
+  if (held) {
+    text = held.text;
+    action = held.rule
+      ? `<button class="btn" data-why-pause>Pause all for an hour</button>`
+      : `<a class="btn quiet" href="#settings">Settings</a>`;
+  } else if (s.fans?.failsafe) {
+    text = "Fans are at the failsafe speed because no temperature readings are coming through.";
+    action = `<a class="btn quiet" href="#settings">Check sensors</a>`;
+  } else if (o.paused_until) {
+    const until = new Date(o.paused_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    text = `Automations are paused until ${until}.`;
+    action = `<button class="btn" data-why-resume>Resume</button>`;
+  } else if (o.fans) {
+    const rule = S.rules.find((r) => r.id === o.fans);
+    text = `Fans are following ${curveLabel(s.fans?.curve)} for now${rule ? `: “${sentence(rule, false)}”` : "."} Your own curve returns when it stops.`;
+    action = `<button class="btn" data-why-pause>Pause all for an hour</button>`;
+  } else if (o.lighting) {
+    const rule = S.rules.find((r) => r.id === o.lighting);
+    text = `An automation is controlling the lights${rule ? `: “${sentence(rule, false)}”` : "."} Your own setting returns when it stops.`;
+    action = `<button class="btn" data-why-pause>Pause all for an hour</button>`;
+  }
+  if (!text) {
+    el.hidden = true;
+    setHTML(el, "");
+    return;
+  }
+  const hadFocus = el.contains(document.activeElement);
+  el.hidden = false;
+  setHTML(el, `<span class="why-chip"><i class="why-dot" aria-hidden="true"></i>Why</span><span class="why-text">${esc(text)}</span>${action}`);
+  if (hadFocus) el.querySelector("button, a")?.focus({ preventScroll: true });
+}
+
 // a Studio effect on your lights that Airglow had to turn off (it hung, crashed, or used too much)
 function fxProblem() {
   const s = S.state;
@@ -99,6 +140,7 @@ function renderBar() {
   const u = S.state.update;
   renderPins();
   renderTrial();
+  renderWhy();
   const held = heldOff();
   $("#power").setAttribute("aria-pressed", String(S.state.scene.on));
   $("#power").toggleAttribute("data-held", !!held);
@@ -150,6 +192,8 @@ function renderBar() {
 }
 
 document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-why-pause]")) { pauseAutomations(60); return; }
+  if (e.target.closest("[data-why-resume]")) { pauseAutomations(0); return; }
   const b = e.target.closest("[data-open-setup]");
   if (b) openSetup({ start: b.dataset.openSetup === "start", only: b.dataset.zone || null });
   if (e.target.closest("#setup-later")) { setupDismissed = S.state.setup_pending; renderBar(); }
@@ -264,3 +308,4 @@ async function boot() {
 }
 
 boot();
+initShortcuts();

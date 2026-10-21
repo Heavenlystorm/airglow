@@ -39,13 +39,38 @@ export const get = (p, timeout) => request("GET", p, undefined, timeout);
 export const post = (p, b, timeout) => request("POST", p, b, timeout);
 
 let toastTimer;
-export function toast(msg, isError = false) {
+export function toast(msg, isErrorOrOptions = false) {
+  const opts = typeof isErrorOrOptions === "boolean" ? { isError: isErrorOrOptions } : (isErrorOrOptions || {});
   const t = $("#toast");
-  t.textContent = msg;
-  t.classList.toggle("error", isError);
+  t.inert = false;
+  t.replaceChildren();
+  const text = document.createElement("span");
+  text.textContent = msg;
+  t.append(text);
+  let actionButton = null;
+  if (opts.action) {
+    actionButton = document.createElement("button");
+    actionButton.type = "button";
+    actionButton.className = "toast-action";
+    actionButton.textContent = opts.action.label;
+    actionButton.addEventListener("click", () => {
+      clearTimeout(toastTimer);
+      t.classList.remove("show", "has-action");
+      t.inert = true;
+      opts.action.onClick?.();
+    });
+    t.append(actionButton);
+  }
+  t.classList.toggle("error", !!opts.isError);
+  t.classList.toggle("has-action", !!opts.action);
   t.classList.add("show");
+  if (actionButton) actionButton.focus({ preventScroll: true });
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), isError ? 4500 : 2200);
+  const duration = opts.duration ?? (opts.action ? 9000 : opts.isError ? 4500 : 2200);
+  toastTimer = setTimeout(() => {
+    t.classList.remove("show", "has-action");
+    t.inert = true;
+  }, duration);
 }
 export const fail = (err) => toast(err.message || String(err), true);
 

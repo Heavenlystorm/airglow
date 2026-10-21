@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.8.0
+- **A "Why" strip says what changed the lights or fans.** When an automation is holding the lights dark, the fans are at
+  the failsafe speed, automations are paused, or a rule has taken over, Airglow says so under the top bar and offers
+  Pause all for an hour or Resume. It follows you across every tab.
+- **The lighting stage works from the keyboard.** Every zone is a focusable button (Enter or Space selects it), and the
+  Lighting inspector has a "Lighting for" picker, so a zone can get its own effect without the mouse.
+- **The first-run guide has one way forward.** It now has one primary action, a close button and a step marker; closing
+  it (or pressing Esc) finishes onboarding instead of asking again next launch. Installing OpenRGB and the sensor helper
+  is a secondary action.
+- **Settings is easier to navigate.** A section rail jumps between groups, the page remembers where you were, and a small
+  Saved note sits in the rail. The column is centered on large screens.
+- **Undo after a delete.** Automation rules, Overview tiles and Studio layers can be brought back from the toast.
+- **A keyboard shortcut sheet** (`?` or F1, also Settings, About) lists the tab shortcuts, Ctrl+S, the fan-curve keys and
+  the rest. The tabs now carry their Ctrl+1–7 shortcuts for assistive technology.
+- **Accessibility fixes:** Settings, Devices and the automation builder name their controls; dialogs have accessible
+  names and a Tab loop; text fields and colour swatches have a clear 2 px focus ring; two low-contrast labels were raised
+  above 4.5:1.
+- Overview's **Add a tile** is in the Customize bar (and back in the tab order), and choosing a zone no longer requires
+  the mouse.
+
 ## 1.7.1
 - **"Start OpenRGB" starts OpenRGB with the rights it needs.** Graphics cards, memory and onboard RGB are reached over
   I2C/SMBus, which goes through the PawnIO driver and therefore needs administrator rights: a copy started normally
