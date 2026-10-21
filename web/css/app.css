@@ -751,11 +751,7 @@ code { font: 12px var(--mono); font-stretch: 87.5%; background: var(--well); pad
 .hint.warn { border-left: 2px solid var(--warm); padding-left: 10px; }
 
 /* ------------------------------------------------------------ display numerals
-   Every live number sits on a display whose unlit segments show faintly behind it (data-ghost, set in motion.js).
-   Mono digits make the ghost line up exactly. */
-.num[data-ghost] { position: relative; display: inline-block; isolation: isolate; }
-.num[data-ghost]::before { content: attr(data-ghost); position: absolute; left: 0; top: 0; z-index: -1; color: var(--ink); opacity: .13; pointer-events: none; }
-.tile[data-level] .num[data-ghost]::before, .ro .big.warm .num::before, .ro .big.hot .num::before { color: inherit; opacity: .15; }
+   Live values are the only numbers in the display: no unlit ghost digits behind them. */
 
 /* device plugin settings (Devices tab) */
 .dev-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px 28px; padding: 14px 16px; border: 1px solid var(--line-soft); border-radius: var(--r-panel); }

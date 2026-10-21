@@ -3,7 +3,6 @@
 // need the last step. Answers become ordinary zone settings, so Arrange and the Devices tab keep working as before.
 
 import { $, $$, S, emit, esc, fail, get, post } from "./core.js";
-import { ghost } from "./motion.js";
 import { closeSheet, openSheet } from "./sheet.js";
 import { placing } from "./stage.js";
 
@@ -310,7 +309,7 @@ function stepLeds() {
     title: "Count the LEDs",
     lede: `Move the slider until ${what}. One more and the amber dot disappears off the end.`,
     body: `<div class="su-counter">
-        <div class="readout"><span class="num" id="su-num" data-ghost="${ghost(String(G.a.leds))}">${G.a.leds}</span><span class="unit">LEDs</span><span class="of" id="su-per"></span></div>
+        <div class="readout"><span class="num" id="su-num">${G.a.leds}</span><span class="unit">LEDs</span><span class="of" id="su-per"></span></div>
         <div class="su-ctl"><button class="icon-btn" data-d="-1" aria-label="One less">−</button>
           <input type="range" id="su-n" min="1" max="${max}" value="${G.a.leds}" aria-label="LEDs lit" data-autofocus>
           <button class="icon-btn" data-d="1" aria-label="One more">+</button></div>
@@ -322,7 +321,6 @@ function stepLeds() {
     const n = +input.value;
     G.a.leds = n;
     $("#su-num").textContent = n;
-    $("#su-num").dataset.ghost = ghost(String(n));
     input.style.setProperty("--fill", `${((n - 1) / Math.max(max - 1, 1)) * 100}%`);
     $("#su-per").textContent = fans > 1 ? (n % fans ? `doesn't split evenly over ${fans} fans yet` : `${n / fans} per fan`) : "";
     probeCount(n);

@@ -10,14 +10,9 @@ export const EASE = "cubic-bezier(.2, .7, .2, 1)";
 
 // ------------------------------------------------------------ numbers
 // New readings replace the old ones straight away (no counting animation).
-// Live readings sit on a display: the unlit segments ("8" in every digit place) show faintly behind the value,
-// drawn by CSS from data-ghost.
-export const ghost = (text) => String(text).replace(/[0-9]/g, "8").replace(/[–-]/g, "8");
-
 export function countTo(el, text) {
   if (!el || el.textContent === text) return;
   el.textContent = text;
-  el.dataset.ghost = ghost(text);
 }
 
 // ------------------------------------------------------------ FLIP
