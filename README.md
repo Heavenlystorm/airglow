@@ -17,6 +17,22 @@ them. It's free and open source, there's no account, and it doesn't collect anyt
 
 ![The Overview: your lights, temperatures, load, power and fans on one screen](docs/screenshots/overview.png)
 
+<details>
+<summary><b>What's new in 1.9</b></summary>
+
+- The Studio works before any lights are set up: a labelled **sample case** stands in, and every template shows a
+  real live still.
+- One **palette** and **speed, brightness and music-reactivity** knobs for the whole effect, each exposable as a
+  control. Controls keep their ids when a layer moves.
+- **Music reaction on any layer**, plus **Comet** and **Chase** layers, built on each LED's place around its own fan
+  or along its strip.
+- **Undo/redo, autosave and Revert**, typed slider values and a reset, and a debug strip for code.
+- **Share runs the check**: the reviewer list, strobing and frame time, and the exact file, before GitHub opens.
+- Code effects declare controls with `airglow.params({...})`; `console.log` and clickable errors.
+
+[Release notes](https://github.com/Heavenlystorm/airglow/releases/tag/v1.9.0) · [Changelog](CHANGELOG.md)
+</details>
+
 ## Lighting
 Airglow draws your fans and strips where they actually sit in the case and lights them with the colours the hardware
 is showing right now. Setting that up takes a minute: each header blinks while you set it up, you pick the product
@@ -30,36 +46,36 @@ before keeping them.
 ![Lighting: the case as you set it up, with the effect list underneath](docs/screenshots/lighting.png)
 
 ## The Studio
-New in 1.6, and much quicker in 1.9. If none of the effects is quite what you want, make your own. Pick a starting
-point or press **Surprise me**, stack layers (gradients, plasma, waves, sparkles, a scanner, a comet around every fan,
-a chase, a pulse on the beat), choose how each one mixes in and which part of the case it lights, and watch the result
-as you go. With no lights set up yet it plays on a sample case, so you can start before the hardware is configured.
-Turn on "Also on my lights" and the real hardware follows along.
+If none of the built-in effects is quite what you want, make your own. Pick a starting point or press **Surprise me**,
+stack layers (gradients, plasma, waves, sparkles, a scanner, a comet around every fan, a chase, a pulse on the beat),
+choose how each one mixes in and which part of the case it lights, and watch the result as you go. With no lights set
+up yet it plays on a labelled sample case, so you can start before the hardware is configured. Turn on "Also on my
+lights" and the real hardware follows along.
 
-One palette and a speed, brightness and music-reactivity knob apply to the whole effect, so a person who installs it
-can retune it without touching every layer. Tick "Show as a control" under any setting, including the palette, and it
-appears in their effect panel. Layers can follow the music, and the palette survives a reorder: a control stays with
-its own layer. Undo and redo, autosave and "Revert" make experimenting cheap; **Check** lists what a reviewer would
-say before you share.
+The palette, speed, brightness and music reactivity are one set of settings for the whole effect, so whoever installs
+it can retune it in one place. Tick "Show as a control" under any setting, including the palette, and it appears in
+their effect panel; a control stays with its own layer when you reorder the stack. Any layer can follow the music, and
+undo/redo, autosave and Revert make experimenting cheap.
 
-![The Studio: layers on the left, your case in the middle, the selected layer's settings on the right](docs/screenshots/studio.png)
+![The Studio: layers on the left, your case in the middle, and the effect's palette and knobs on the right](docs/screenshots/studio.png)
+
+**Share** first shows the check a reviewer would run — the reviewer list, strobing and frame time, and the exact file
+— then opens GitHub. Once the pull request is merged, everyone can find it in Studio, Community effects, see it on
+their own case and install it; **How it's made** shows the layers and controls before installing, and **Learn** has the
+rules and copyable recipes. Every effect, yours or someone else's, runs sandboxed: it can't reach the internet, your
+files or the rest of Airglow. [docs/EFFECT-STUDIO.md](docs/EFFECT-STUDIO.md) has the format, and
+[effects/README.md](effects/README.md) explains sharing.
+
+![Ready to share: the check, the reviewer list and the exact file, before GitHub opens](docs/screenshots/studio-check.png)
 
 If you'd rather write code, switch the editor to Code. An effect is a small HTML file with a script that draws on a
 320 × 200 canvas, or simply answers "what colour is this LED right now?" — with `led.local`, `led.fan`, `led.area` and
 `ctx.rig` when it needs to know where it is. Declare controls with `airglow.params({...})` next to the code, use
 `console.log` and the clickable error line, and pause or slow the preview down to look at a frame. There are templates
-to start from, a type file in `docs/effect-api.d.ts`, and you can edit in VS Code with the preview reloading every
-time you save.
+to start from, [type declarations](docs/effect-api.d.ts) for editors, and you can edit in VS Code with the preview
+reloading every time you save.
 
 ![Code mode: the effect's file on the left, the preview in the middle, its controls on the right](docs/screenshots/studio-code.png)
-
-Share sends your effect to the community gallery as a pull request on GitHub. It gets checked automatically and
-looked over, and once it's merged everyone can find it in Studio, Community effects, see it running on their own
-case and install it. The gallery's **How it's made** shows a shared effect's layers and controls before you install
-it, and **Learn** in the Studio has the rules and copyable recipes. Every effect, yours or someone else's, runs
-sandboxed: it can't reach the internet, your files or the rest of Airglow.
-[docs/EFFECT-STUDIO.md](docs/EFFECT-STUDIO.md) has the details, and [effects/README.md](effects/README.md) explains
-sharing.
 
 ![Community effects, each shown on your own case](docs/screenshots/community.png)
 
@@ -87,17 +103,35 @@ turns the lights off while the PC sleeps (plenty of boards leave RGB on) and set
 2. Close any other RGB software (SignalRGB, iCUE, NZXT CAM, Armoury Crate). Two programs driving the same LEDs makes
    them flicker. Airglow spots the usual ones and offers to close them.
 3. Open Airglow. The welcome screen shows what it found. Temperatures and most RGB devices come from two other free
-   programs, LibreHardwareMonitor and OpenRGB. Press **Set up automatically** and Airglow downloads them from their
-   own sites, checks each file against a known checksum and installs them. Windows asks for permission once.
-4. Set up your lights when it asks. It takes about a minute.
+   programs, LibreHardwareMonitor and OpenRGB; if they're missing, the welcome screen offers **Set up automatically**,
+   which downloads them from their official sources, checks each file against a known checksum and installs them.
+   Windows asks for permission once.
+4. Press **Set up lights** and tell Airglow what's plugged in where. It takes about a minute.
 
-Coming from 1.5 or older? Run the new installer. It moves Airglow to the new setup and keeps your settings, profiles
-and helper programs. From 1.6 on, Airglow can update itself: it asks once whether to check automatically, and if you
-say no it only looks when you press "Check for updates" in Settings, About. winget and Scoop packages are planned.
+Already on 1.6 or newer? Airglow updates itself: it asks once whether to check automatically, and if you say no it
+only looks when you press "Check for updates" in Settings, About. Coming from 1.5 or older, run the new installer; it
+keeps your settings, profiles and helper programs.
 
 You need Windows 10 (1809 or newer) or Windows 11. Windows 11 already has the WebView2 runtime Airglow uses; on
 Windows 10 it usually comes with Edge. If your PC doesn't have it, the installer adds it, and if you start Airglow
 without it (from the portable zip, say) it tells you where to get it.
+
+<details>
+<summary>Scoop, winget or the portable zip</summary>
+
+Scoop (run `scoop update airglow` to update it):
+
+```
+scoop bucket add airglow https://github.com/Heavenlystorm/scoop-airglow
+scoop install airglow
+```
+
+**winget:** a manifest is in review; once Microsoft merges it, `winget install Heavenlystorm.Airglow` works. Until
+then, use the installer or Scoop.
+
+The portable zip is on the [releases page](https://github.com/Heavenlystorm/airglow/releases); it needs the WebView2
+runtime, which the installer would add for you.
+</details>
 
 <details>
 <summary>Setting up the helper programs yourself, or motherboard fans</summary>
@@ -193,6 +227,13 @@ a version tag is pushed; [docs/RELEASING.md](docs/RELEASING.md) has the steps.
 
 The NZXT and ASUS packet formats follow what liquidctl and OpenRGB document for these controllers (credits in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Airglow is its own implementation and includes none of their code.
+
+## Contributing
+Bug reports and ideas are welcome on the [issues](https://github.com/Heavenlystorm/airglow/issues).
+[CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the test commands and the conventions; effects have their own guide
+in [effects/README.md](effects/README.md), and each device family is one plugin in
+[`airglow/plugins/`](airglow/plugins/). Security reports go through [SECURITY.md](SECURITY.md). The unit tests need no
+hardware.
 
 ## Licence
 MIT, see [LICENSE](LICENSE). Bundled components and their licences are listed in
