@@ -30,24 +30,36 @@ before keeping them.
 ![Lighting: the case as you set it up, with the effect list underneath](docs/screenshots/lighting.png)
 
 ## The Studio
-New in 1.6. If none of the effects is quite what you want, make your own. Pick a starting point, stack layers
-(gradients, plasma, waves, sparkles, a scanner, a pulse on the beat), choose how each one mixes in and which part of
-the case it lights, and watch the result on your own case as you go. Turn on "Also on my lights" and the real hardware
-follows along. Tick "Show as a control" under any setting and whoever uses your effect can change it.
+New in 1.6, and much quicker in 1.9. If none of the effects is quite what you want, make your own. Pick a starting
+point or press **Surprise me**, stack layers (gradients, plasma, waves, sparkles, a scanner, a comet around every fan,
+a chase, a pulse on the beat), choose how each one mixes in and which part of the case it lights, and watch the result
+as you go. With no lights set up yet it plays on a sample case, so you can start before the hardware is configured.
+Turn on "Also on my lights" and the real hardware follows along.
+
+One palette and a speed, brightness and music-reactivity knob apply to the whole effect, so a person who installs it
+can retune it without touching every layer. Tick "Show as a control" under any setting, including the palette, and it
+appears in their effect panel. Layers can follow the music, and the palette survives a reorder: a control stays with
+its own layer. Undo and redo, autosave and "Revert" make experimenting cheap; **Check** lists what a reviewer would
+say before you share.
 
 ![The Studio: layers on the left, your case in the middle, the selected layer's settings on the right](docs/screenshots/studio.png)
 
 If you'd rather write code, switch the editor to Code. An effect is a small HTML file with a script that draws on a
-320 × 200 canvas, or simply answers "what colour is this LED right now?". There's a canvas, a per-LED and a WebGL
-template to start from, and you can edit in VS Code with the preview reloading every time you save.
+320 × 200 canvas, or simply answers "what colour is this LED right now?" — with `led.local`, `led.fan`, `led.area` and
+`ctx.rig` when it needs to know where it is. Declare controls with `airglow.params({...})` next to the code, use
+`console.log` and the clickable error line, and pause or slow the preview down to look at a frame. There are templates
+to start from, a type file in `docs/effect-api.d.ts`, and you can edit in VS Code with the preview reloading every
+time you save.
 
 ![Code mode: the effect's file on the left, the preview in the middle, its controls on the right](docs/screenshots/studio-code.png)
 
 Share sends your effect to the community gallery as a pull request on GitHub. It gets checked automatically and
 looked over, and once it's merged everyone can find it in Studio, Community effects, see it running on their own
-case and install it. Every effect, yours or someone else's, runs sandboxed: it can't reach the internet, your files
-or the rest of Airglow. [docs/EFFECT-STUDIO.md](docs/EFFECT-STUDIO.md) has the details, and
-[effects/README.md](effects/README.md) explains sharing.
+case and install it. The gallery's **How it's made** shows a shared effect's layers and controls before you install
+it, and **Learn** in the Studio has the rules and copyable recipes. Every effect, yours or someone else's, runs
+sandboxed: it can't reach the internet, your files or the rest of Airglow.
+[docs/EFFECT-STUDIO.md](docs/EFFECT-STUDIO.md) has the details, and [effects/README.md](effects/README.md) explains
+sharing.
 
 ![Community effects, each shown on your own case](docs/screenshots/community.png)
 

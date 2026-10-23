@@ -853,6 +853,44 @@ button.st-card:hover { transform: translateY(-1px); }
 .st-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-3); font-size: 13px; }
 .st-console { flex: none; max-height: 120px; overflow-y: auto; padding: 8px 10px; border-radius: var(--r-ctl); background: var(--well); border: 1px solid #0d0d0e; color: var(--ink-2); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .6); }
 .st-console .st-err { color: #f2a397; }
+
+/* Studio: a typed value beside every slider, with a reset */
+.field > .lab .val { display: inline-flex; align-items: center; gap: 4px; }
+.field > .lab .num { width: 58px; padding: 1px 4px; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--ink); font: 400 12px var(--mono); font-stretch: 87.5%; text-align: right; -moz-appearance: textfield; }
+.field > .lab .num::-webkit-outer-spin-button, .field > .lab .num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.field > .lab .num:hover { border-color: var(--line); background: var(--well); }
+.field > .lab .num:focus-visible { outline: none; border-color: var(--brass); background: var(--well); }
+.field > .lab .unit { color: var(--ink-3); font-size: 11.5px; }
+.field-reset { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 3px; background: none; color: var(--ink-3); cursor: pointer; }
+.field-reset svg { width: 12px; height: 12px; }
+.field-reset:hover { background: var(--raised); color: var(--ink); }
+
+/* Studio: preview controls, the sample-case note and the check list */
+.st-dbg { display: flex; align-items: center; gap: 2px; padding-left: 6px; border-left: 1px solid var(--line-soft); }
+.st-dbg .btn { padding: 4px 8px; font-size: 12px; }
+.st-dbg .icon-btn { width: 26px; height: 26px; }
+.st-dbg [aria-pressed="true"] { color: var(--brass-hi); background: rgba(201, 162, 95, .14); }
+.st-sample { position: absolute; left: 12px; bottom: 10px; margin: 0; padding: 3px 9px; border-radius: 999px; background: rgba(20, 21, 23, .85); border: 1px solid var(--line); color: var(--ink-3); font-size: 11.5px; }
+.st-sample a { color: var(--brass-hi); }
+.st-ctl-name { margin-top: -6px; font-size: 12.5px; }
+.st-jump { padding: 0; border: 0; background: none; color: var(--brass-hi); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.st-checks { display: grid; gap: 6px; }
+.st-check { display: flex; gap: 9px; align-items: baseline; padding: 7px 9px; border-radius: var(--r-ctl); background: var(--well); border: 1px solid var(--line-soft); font-size: 13px; color: var(--ink-2); }
+.st-check span { width: 16px; flex: none; text-align: center; font-weight: 700; }
+.st-check.ok span { color: var(--ok); }
+.st-check.bad span { color: var(--hot); }
+.st-check.bad { border-color: rgba(239, 90, 72, .35); }
+.st-steps { display: grid; gap: 6px; padding-left: 20px; color: var(--ink-2); font-size: 13px; }
+.st-recipe { display: grid; gap: 6px; }
+.st-recipe-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.st-pre { margin: 0; padding: 10px 12px; border-radius: var(--r-ctl); background: var(--well); border: 1px solid #0d0d0e; color: var(--ink-2); font: 12px/1.5 var(--mono); font-stretch: 87.5%; overflow-x: auto; }
+.cm-error-line { background: rgba(239, 90, 72, .14); }
+.st-top { flex-wrap: wrap; row-gap: 6px; }
+.st-layer-acts { justify-content: flex-end; align-items: center; margin-top: -8px; }
+.st-checks + .hint { margin-top: 8px; }
+.st-file summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+.st-file summary:hover { color: var(--ink); }
+.st-file .st-pre { max-height: 240px; overflow: auto; margin-top: 8px; }
 @media (max-width: 1100px) {
   .st-edit { grid-template-columns: 220px minmax(0, 1fr) 270px; }
   .st-edit.is-code { grid-template-columns: minmax(320px, 1fr) minmax(0, 1fr) 250px; }

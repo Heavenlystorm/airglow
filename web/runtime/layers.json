@@ -1,6 +1,7 @@
 {
   "_": "The Studio's layer types. One source for the builder's controls (web/js/studio.js), the renderer (web/runtime/layers.js) and the validator (airglow/fxformat.py). Parameter specs use the same types as built-in effects.",
   "blends": ["normal", "add", "screen", "multiply"],
+  "master": {"palette": ["#ff2fb4", "#2f5bff"], "speed": 100, "brightness": 100, "react": 50},
   "types": {
     "solid": {
       "name": "Solid", "group": "Colour", "description": "One colour.",
@@ -60,6 +61,26 @@
         {"id": "width", "label": "Width", "type": "range", "default": 25, "min": 2, "max": 100, "step": 1, "unit": ""},
         {"id": "angle", "label": "Direction", "type": "range", "default": 0, "min": 0, "max": 359, "step": 1, "unit": "°"},
         {"id": "bounce", "label": "Go back and forth", "type": "toggle", "default": true}
+      ]
+    },
+    "comet": {
+      "name": "Comet", "group": "Motion", "description": "A bright head with a fading tail races around each fan and along each strip.",
+      "params": [
+        {"id": "color", "label": "Colour", "type": "color", "default": "#ffffff"},
+        {"id": "background", "label": "Background", "type": "color", "default": "#06121c"},
+        {"id": "speed", "label": "Speed", "type": "range", "default": 40, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "tail", "label": "Tail length", "type": "range", "default": 45, "min": 1, "max": 100, "step": 1, "unit": ""},
+        {"id": "reverse", "label": "Reverse direction", "type": "toggle", "default": false}
+      ]
+    },
+    "chase": {
+      "name": "Chase", "group": "Motion", "description": "Bright bands chase each other around every fan and along every strip.",
+      "params": [
+        {"id": "color", "label": "Colour", "type": "color", "default": "#00e0c8"},
+        {"id": "speed", "label": "Speed", "type": "range", "default": 40, "min": 0, "max": 100, "step": 1, "unit": ""},
+        {"id": "count", "label": "Bands", "type": "range", "default": 3, "min": 1, "max": 6, "step": 1, "unit": ""},
+        {"id": "width", "label": "Band width", "type": "range", "default": 50, "min": 5, "max": 100, "step": 1, "unit": ""},
+        {"id": "reverse", "label": "Reverse direction", "type": "toggle", "default": false}
       ]
     },
     "sparkles": {

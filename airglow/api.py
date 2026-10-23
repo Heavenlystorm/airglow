@@ -252,6 +252,7 @@ def _zones_view(ctrl, store):
                                                "params": dict(dev.params)},
                         "zone": z.info(), "config": cfg, "spot": lightsetup.zone_spot(cfg),
                         "positions": [[round(float(x), 4), round(float(y), 4)] for x, y in pos],
+                        "local": [round(float(v), 4) for v in local],
                         "fan_index": fan.tolist()})
     return {"canvas": {"w": geometry.CANVAS_W, "h": geometry.CANVAS_H}, "zones": out}
 

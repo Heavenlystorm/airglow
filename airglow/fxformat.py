@@ -28,6 +28,10 @@ MAX_LAYERS = 12
 MAX_TAGS = 5
 CANVAS_W, CANVAS_H = 320, 200
 PERMISSIONS = ("audio",)
+# Effect-wide settings a builder effect always has. Exposing one makes it a control in everyone's effect panel.
+MASTER_KEYS = ("palette", "speed", "brightness", "react")
+MASTER_DEFAULTS = {"palette": ["#ff2fb4", "#2f5bff"], "speed": 100, "brightness": 100, "react": 50}
+LAYER_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,15}")          # stable, so a reordered layer keeps its controls
 # OSI-approved licences the gallery accepts (SPDX ids)
 LICENSES = ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MPL-2.0", "0BSD", "Unlicense",
             "GPL-2.0-or-later", "GPL-3.0-or-later", "LGPL-3.0-or-later", "AGPL-3.0-or-later")
@@ -130,6 +134,12 @@ def parse_param(a):
         if not _HEX.fullmatch(a.get("default", "")):
             raise FormatError(f"control '{pid}' needs a default colour like #12abef")
         out["default"] = a["default"].lower()
+    elif kind == "colors":
+        # 2 to 4 colours, comma separated, which is what the effect panel's palette control can draw
+        stops = [c.strip() for c in a.get("default", "").split(",") if c.strip()]
+        if not 2 <= len(stops) <= 4 or not all(_HEX.fullmatch(c) for c in stops):
+            raise FormatError(f"control '{pid}' needs 2 to 4 default colours like #12abef,#ff2fb4")
+        out["default"] = [c.lower() for c in stops]
     elif kind == "boolean":
         if a.get("default", "false") not in ("true", "false"):
             raise FormatError(f"control '{pid}' needs default=\"true\" or \"false\"")
@@ -143,7 +153,7 @@ def parse_param(a):
             raise FormatError(f"control '{pid}' has a default that isn't one of its options")
         out.update(options=opts, default=default)
     else:
-        raise FormatError(f"control '{pid}' has type '{kind}'; use number, color, boolean or select")
+        raise FormatError(f"control '{pid}' has type '{kind}'; use number, color, colors, boolean or select")
     return out
 
 
@@ -155,6 +165,8 @@ def to_schema(params):
             out.append(effects.p_range(p["id"], p["label"], p["default"], p["min"], p["max"], p["step"]))
         elif p["type"] == "color":
             out.append(effects.p_color(p["id"], p["label"], p["default"]))
+        elif p["type"] == "colors":
+            out.append(effects.p_colors(p["id"], p["label"], p["default"]))
         elif p["type"] == "boolean":
             out.append(effects.p_toggle(p["id"], p["label"], p["default"]))
         else:
@@ -163,21 +175,79 @@ def to_schema(params):
 
 
 # ---------------------------------------------------------------- builder layers
+#
+# The layers script is either the original list (v1 files) or an object:
+#
+#   {"v": 2, "layers": [...], "master": {"palette": [...], "speed": 100, "brightness": 100, "react": 50},
+#    "expose": {"palette": "Colours", "speed": "Speed"}}
+#
+# A layer may carry "id" (so its exposed controls keep their ids when it is reordered), "palette": true (take its
+# colours from the effect's palette) and "react": {"what": "strength"|"speed", "amount": 0..100} (follow the music).
 
-def _layer_param_to_file(spec, pid, label):
+def _layer_param_to_file(spec, pid, label, default):
     """A layer setting exposed as a control, in the file's terms."""
     kind = spec["type"]
     if kind == "range":
         return {"id": pid, "label": label, "type": "number", "min": float(spec["min"]), "max": float(spec["max"]),
-                "step": float(spec["step"]), "default": float(spec["default"])}
+                "step": float(spec["step"]), "default": float(default)}
     if kind == "color":
-        return {"id": pid, "label": label, "type": "color", "default": spec["default"]}
+        return {"id": pid, "label": label, "type": "color", "default": default}
+    if kind == "colors":
+        return {"id": pid, "label": label, "type": "colors", "default": list(default)}
     if kind == "toggle":
-        return {"id": pid, "label": label, "type": "boolean", "default": bool(spec["default"])}
+        return {"id": pid, "label": label, "type": "boolean", "default": bool(default)}
     if kind == "choice":
         return {"id": pid, "label": label, "type": "select", "options": [o["value"] for o in spec["options"]],
-                "default": spec["default"]}
+                "default": default}
     raise FormatError(f"{spec['label']} can't be a control")
+
+
+def _hexes(value, name, low=2, high=4):
+    if isinstance(value, str):
+        value = [c.strip() for c in value.split(",") if c.strip()]
+    if not isinstance(value, list) or not low <= len(value) <= high or not all(isinstance(c, str) and _HEX.fullmatch(c) for c in value):
+        raise FormatError(f"{name} needs {low} to {high} colours like #12abef")
+    return [c.lower() for c in value]
+
+
+def clean_master(raw):
+    """The effect-wide settings: palette (2 to 4 colours), speed (0..200 %, 100 = normal), brightness and
+    audio reactivity (0..100). Missing values take the defaults."""
+    raw = raw if isinstance(raw, dict) else {}
+    out = {"palette": _hexes(raw.get("palette", MASTER_DEFAULTS["palette"]), "the palette")}
+    for key, lo, hi in (("speed", 0, 200), ("brightness", 0, 100), ("react", 0, 100)):
+        v = raw.get(key, MASTER_DEFAULTS[key])
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
+            raise FormatError(f"the {key} setting must be a number from {lo} to {hi}")
+        out[key] = int(v) if float(v).is_integer() else round(float(v), 1)
+    return out
+
+
+def clean_master_expose(raw):
+    """The effect-wide settings shown as controls: {"speed": "Speed", ...}."""
+    raw = raw if isinstance(raw, dict) else {}
+    out = {}
+    for key in MASTER_KEYS:
+        if key not in raw:
+            continue
+        out[key] = _text(raw[key] if isinstance(raw[key], str) else "", f"the label for {key}", 32, required=True)
+    return out
+
+
+def master_controls(master, expose):
+    """Effect-wide exposes -> file controls (ids m_palette, m_speed, m_brightness, m_react)."""
+    out = []
+    for key in MASTER_KEYS:
+        label = expose.get(key)
+        if not label:
+            continue
+        if key == "palette":
+            out.append({"id": "m_palette", "label": label, "type": "colors", "default": list(master["palette"])})
+        else:
+            lo, hi, step = (0, 200, 5) if key == "speed" else (0, 100, 1)
+            out.append({"id": f"m_{key}", "label": label, "type": "number", "min": lo, "max": hi,
+                        "step": step, "default": master[key]})
+    return out
 
 
 def clean_layers(raw):
@@ -195,35 +265,78 @@ def clean_layers(raw):
         except ValueError as e:
             raise FormatError(f"layer {i + 1} ({t['name']}): {e}") from None
         opacity = layer.get("opacity", 100)
-        if not isinstance(opacity, (int, float)) or not 0 <= opacity <= 100:
+        if isinstance(opacity, bool) or not isinstance(opacity, (int, float)) or not 0 <= opacity <= 100:
             raise FormatError(f"layer {i + 1}: opacity is 0 to 100")
         if layer.get("blend", "normal") not in blends:
             raise FormatError(f"layer {i + 1}: blend is one of {', '.join(blends)}")
         mask = layer.get("mask", "all")
         if mask != "all" and mask not in lightsetup.SPOTS:
             raise FormatError(f"layer {i + 1}: unknown area '{mask}'")
+        lid = layer.get("id")
+        if lid is not None and (not isinstance(lid, str) or not LAYER_ID.fullmatch(lid)):
+            raise FormatError(f"layer {i + 1}: id must be lowercase letters, digits and dashes")
+        key = lid if lid is not None else str(i)          # v1 files keep their l<index>_<setting> control ids
+        palette = bool(layer.get("palette", False))
+        if palette and not any(s["id"] in ("color", "colors") for s in t["params"]):
+            raise FormatError(f"layer {i + 1} ({t['name']}) has no colour to take from the palette")
+        react = layer.get("react") or {}
+        if not isinstance(react, dict):
+            raise FormatError(f"layer {i + 1}: react says what follows the music")
+        what = react.get("what", "strength")
+        if what not in ("strength", "speed"):
+            raise FormatError(f"layer {i + 1}: react is 'strength' or 'speed'")
+        amount = react.get("amount", 0)
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not 0 <= amount <= 100:
+            raise FormatError(f"layer {i + 1}: react amount is 0 to 100")
+        amount = round(float(amount), 1)
         expose = layer.get("expose") or {}
         if not isinstance(expose, dict):
             raise FormatError(f"layer {i + 1}: expose lists settings shown as controls")
         clean_expose = {}
-        for key, label in expose.items():
-            spec = next((s for s in t["params"] if s["id"] == key), None)
-            if spec is None or spec["type"] == "colors":
-                raise FormatError(f"layer {i + 1}: '{key}' can't be shown as a control")
+        for setting, label in expose.items():
+            spec = next((s for s in t["params"] if s["id"] == setting), None)
+            if spec is None:
+                raise FormatError(f"layer {i + 1}: '{setting}' can't be shown as a control")
             label = _text(label if isinstance(label, str) else spec["label"], "a control label", 32, required=True)
-            clean_expose[key] = label
-            params.append(_layer_param_to_file({**spec, "default": values[key]}, f"l{i}_{key}", label))
-        layers.append({"type": layer["type"], "enabled": bool(layer.get("enabled", True)),
-                       "opacity": int(opacity) if float(opacity).is_integer() else round(float(opacity), 1), "blend": layer.get("blend", "normal"), "mask": mask,
-                       "params": values, "expose": clean_expose})
-    if len(params) > MAX_PARAMS:
-        raise FormatError(f"at most {MAX_PARAMS} settings can be shown as controls")
+            clean_expose[setting] = label
+            params.append(_layer_param_to_file(spec, f"l{key}_{setting}", label, values[setting]))
+        out = {"type": layer["type"], "enabled": bool(layer.get("enabled", True)),
+               "opacity": int(opacity) if float(opacity).is_integer() else round(float(opacity), 1),
+               "blend": layer.get("blend", "normal"), "mask": mask, "params": values, "expose": clean_expose}
+        if lid is not None:
+            out["id"] = lid
+        if palette:
+            out["palette"] = True
+        if amount:
+            out["react"] = {"what": what, "amount": amount}
+        layers.append(out)
     return layers, params
 
 
+def clean_effect(raw):
+    """The layers script (list or object) -> (layers, master, expose, params), all checked."""
+    if isinstance(raw, list):
+        cfg = {"layers": raw}
+    elif isinstance(raw, dict):
+        cfg = raw
+    else:
+        raise FormatError("a builder effect's layers are a list")
+    master = clean_master(cfg.get("master"))
+    expose = clean_master_expose(cfg.get("expose"))
+    layers, params = clean_layers(cfg.get("layers"))
+    params = master_controls(master, expose) + params
+    if len(params) > MAX_PARAMS:
+        raise FormatError(f"at most {MAX_PARAMS} settings can be shown as controls")
+    if len({p["id"] for p in params}) != len(params):
+        raise FormatError("two controls share an id")
+    return layers, master, expose, params
+
+
 def layers_need_audio(layers):
+    """A music layer asks for audio; so does any layer that reacts to it."""
     types, _ = layer_types()
-    return any(types[layer["type"]].get("audio") and layer["enabled"] for layer in layers)
+    return any((types[layer["type"]].get("audio") or (layer.get("react") or {}).get("amount"))
+               and layer["enabled"] for layer in layers)
 
 
 # ---------------------------------------------------------------- the whole file
@@ -275,14 +388,14 @@ def validate(text):
         raise FormatError("an effect has either one layers script (builder) or one JavaScript script (code)")
     if data:
         try:
-            layers, params = clean_layers(json.loads(data[0]))
+            layers, master, effect_expose, params = clean_effect(json.loads(data[0]))
         except json.JSONDecodeError as e:
             raise FormatError(f"the layers aren't valid JSON: {e.msg}") from None
         if layers_need_audio(layers) and "audio" not in perms:
             perms.append("audio")
         code_text = None
     else:
-        layers, code_text = None, code[0]
+        layers, master, effect_expose, code_text = None, None, None, code[0]
         params = [parse_param(a) for a in r.props]
         if len(params) > MAX_PARAMS:
             raise FormatError(f"an effect can have at most {MAX_PARAMS} controls")
@@ -292,6 +405,7 @@ def validate(text):
             "description": _text(m.get("description"), "the description", 200), "tags": tags,
             "license": license_, "remix_of": remix_of, "permissions": perms, "params": params,
             "schema": to_schema(params), "kind": "layers" if layers is not None else "code", "layers": layers,
+            "master": master, "expose": effect_expose,
             "code": code_text, "source": text, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "bytes": size}
 
@@ -308,7 +422,7 @@ def _num(v):
 
 def to_html(eff):
     """Write an effect file from its parts (name, author, description, tags, license, remix_of, permissions and
-    either layers or code + params). The result always passes validate()."""
+    either layers + master + expose, or code + params). The result always passes validate()."""
     lines = ["<!doctype html>", '<meta charset="utf-8">', f"<title>{html.escape(eff['name'].strip())}</title>",
              f'<meta name="airglow-effect" content="{API_VERSIONS[-1]}">']
     for key, meta in (("author", "author"), ("description", "description"), ("license", "license"),
@@ -318,10 +432,13 @@ def to_html(eff):
     if eff.get("tags"):
         lines.append(f'<meta name="tags" content="{_attr(", ".join(eff["tags"]))}">')
     layers = eff.get("layers")
+    master = clean_master(eff.get("master"))
+    effect_expose = clean_master_expose(eff.get("expose"))
     params = eff.get("params") or []
     perms = list(eff.get("permissions") or [])
     if layers is not None:
-        layers, params = clean_layers(layers)
+        layers, master, effect_expose, params = clean_effect(
+            {"layers": layers, "master": master, "expose": effect_expose})
         if layers_need_audio(layers) and "audio" not in perms:
             perms.append("audio")
     if perms:
@@ -330,6 +447,8 @@ def to_html(eff):
         a = f'property="{_attr(p["id"])}" label="{_attr(p["label"])}" type="{p["type"]}"'
         if p["type"] == "number":
             a += f' min="{_num(p["min"])}" max="{_num(p["max"])}" step="{_num(p["step"])}" default="{_num(p["default"])}"'
+        elif p["type"] == "colors":
+            a += f' default="{_attr(",".join(p["default"]))}"'
         elif p["type"] == "boolean":
             a += f' default="{"true" if p["default"] else "false"}"'
         elif p["type"] == "select":
@@ -340,7 +459,12 @@ def to_html(eff):
     lines.append("")
     if layers is not None:
         body = ",\n".join(json.dumps(layer, ensure_ascii=False) for layer in layers).replace("</", "<\\/")
-        lines.append(f'<script type="application/json" id="layers">\n[\n{body}\n]\n</script>')   # a layer per line
+        master_text = json.dumps(master, ensure_ascii=False, separators=(", ", ": "))
+        expose_text = json.dumps(effect_expose, ensure_ascii=False, separators=(", ", ": "))
+        lines.append('<script type="application/json" id="layers">\n'
+                     '{\n  "v": 2,\n  "layers": [\n' + body + "\n  ],\n"
+                     f'  "master": {master_text},\n  "expose": {expose_text}\n'
+                     "}\n</script>")                                    # a layer per line
     else:
         code = (eff.get("code") or "").replace("</script", "<\\/script")
         lines.append(f"<script>\n{code.strip()}\n</script>")
