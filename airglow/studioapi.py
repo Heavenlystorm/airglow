@@ -20,7 +20,8 @@ class StudioError(Exception):
 def _summary(eff, with_source=True):
     """What the UI needs about an effect."""
     out = {k: eff.get(k) for k in ("fx_id", "id", "name", "author", "description", "tags", "license", "remix_of",
-                                   "permissions", "params", "schema", "kind", "layers", "code", "origin", "sha256")}
+                                   "permissions", "params", "schema", "kind", "layers", "master", "expose",
+                                   "code", "origin", "sha256", "bytes")}
     if with_source:
         out["source"] = eff["source"]
     return out
@@ -41,6 +42,8 @@ def _parts(body):
              "license": str(body.get("license") or "").strip(), "remix_of": str(body.get("remix_of") or "").strip()}
     if body.get("layers") is not None:
         parts["layers"] = body["layers"]
+        parts["master"] = body.get("master")
+        parts["expose"] = body.get("expose")
     else:
         parts["code"], parts["params"] = str(body.get("code") or ""), body.get("params") or []
     return parts
@@ -182,6 +185,7 @@ def _route(ctrl, hooks, method, path, body, query):
             raise StudioError(400, "Add a short description: what does it look like?")
         if eff["kind"] == "layers":
             parts["layers"] = eff["layers"]
+            parts["master"], parts["expose"] = eff.get("master"), eff.get("expose")
         else:
             parts["code"], parts["params"] = eff["code"], eff["params"]
         source = fxformat.to_html(parts)

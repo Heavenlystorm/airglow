@@ -25,8 +25,13 @@ function parse(source) {
   const layers = /<script type="application\/json" id="layers">([\s\S]*?)<\/script>/i.exec(source);
   const code = /<script>([\s\S]*?)<\/script>/i.exec(source);
   const params = {};
-  for (const m of source.matchAll(/<meta property="([^"]+)"[^>]*?type="([^"]+)"[^>]*?default="([^"]*)"/g)) {
-    params[m[1]] = m[2] === "number" ? +m[3] : m[2] === "boolean" ? m[3] === "true" : m[3];
+  for (const m of source.matchAll(/<meta\s+property="([^"]+)"([^>]*)>/g)) {
+    const type = /\btype="([^"]+)"/.exec(m[2])?.[1] || "";
+    const def = /\bdefault="([^"]*)"/.exec(m[2])?.[1] ?? "";
+    params[m[1]] = type === "number" ? +def
+      : type === "boolean" ? def === "true"
+        : type === "colors" ? def.split(",").map((c) => c.trim()).filter(Boolean)
+          : def;
   }
   return layers ? { kind: "layers", layers: JSON.parse(layers[1].replace(/<\\\//g, "</")), params } : { kind: "code", code: code?.[1] || "", params };
 }
@@ -37,7 +42,10 @@ const layersLib = readFileSync(join(ROOT, "web/runtime/layers.js"), "utf8");
 const layerInfo = JSON.parse(readFileSync(join(ROOT, "web/runtime/layers.json"), "utf8"));
 const defaults = Object.fromEntries(Object.entries(layerInfo.types).map(([id, t]) => [id, Object.fromEntries(t.params.map((p) => [p.id, p.default]))]));
 const AREAS = ["front", "top", "rear", "bottom", "gpu", "cooler", "ram", "board"];
-const points = Array.from({ length: 400 }, (_, i) => [((i * 37) % 320) + 0.5, ((i * 53) % 200) + 0.5, AREAS[i % AREAS.length]]);
+const points = Array.from({ length: 400 }, (_, i) => [
+  ((i * 37) % 320) + 0.5, ((i * 53) % 200) + 0.5, AREAS[i % AREAS.length],
+  (i % 24) / 24, Math.floor(i / 24) % 3, `zone-${i % 6}`,
+]);
 
 // AIRGLOW_BROWSER=msedge uses an installed Edge instead of Playwright's own Chromium (handy on Windows)
 const browser = await chromium.launch(process.env.AIRGLOW_BROWSER ? { channel: process.env.AIRGLOW_BROWSER } : {});

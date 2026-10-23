@@ -5,23 +5,27 @@
 // An effect calls airglow.effect({...}) with:
 //   init(ctx)                         once, before the first frame
 //   render(ctx, frame)                draw on ctx.canvas (320 x 200) every frame; LEDs take the colour under them
-//   point(led, frame) -> [r, g, b]    or answer per LED instead (0..255); led = {x, y (0..1), px, py, area, index}
+//   point(led, frame) -> [r, g, b]    or answer per LED instead (0..255); led = {x, y (0..1), px, py, area,
+//                                     local (0..1 on its own fan/strip), fan, zone, index}
 //   frame(frame)                      optional, once per frame before point()
 //   onParamChange(id, value, ctx)     optional
 //   dispose(ctx)                      optional
+// airglow.params({...}) declares the controls in code; the Studio writes them into the file when it saves.
 // frame = {time, dt (seconds), audio: {level, bass, beat, bands: Float32Array(64)} or null}
+// ctx.rig = {count, zones: [{name, area, count, x0, y0, x1, y1}]} (positions 0..1), so an effect can adapt to the rig.
 // Everything but `airglow` stays inside this function, so an effect's own names never clash with the runtime's.
 (() => {
 "use strict";
 const W = 320, H = 200;
 const airglow = (() => {
   let def = null;
-  return { effect(d) { def = d; }, get _def() { return def; } };
+  return { effect(d) { def = d; }, params() { /* written into the file's controls when saved */ },
+           get _def() { return def; } };
 })();
 self.airglow = airglow;
 
 const R = {
-  def: null, canvas: null, ctx: null, sampler: null, points: null, n: 0, logs: 0, logReset: 0,
+  def: null, canvas: null, ctx: null, sampler: null, points: null, n: 0, logs: 0, logReset: 0, rig: null,
 };
 
 function post(msg, transfer) { self.postMessage(msg, transfer || []); }
@@ -33,10 +37,36 @@ function log(...args) {
   post({ type: "log", text: args.map((a) => (typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })())).join(" ").slice(0, 500) });
 }
 
+// console.* in an effect lands in the Studio's console, where the author can see it (the worker has no devtools).
+try {
+  console.log = console.info = console.debug = (...a) => log(...a);
+  console.warn = (...a) => log("warn:", ...a);
+  console.error = (...a) => log("error:", ...a);
+} catch { /* no console here: nothing to route */ }
+
+function rigOf(points) {
+  const zones = new Map();
+  for (const p of points) {
+    const key = p.zone || p.area || "all";
+    let z = zones.get(key);
+    if (!z) { z = { name: key, area: p.area || null, count: 0, x0: 1, y0: 1, x1: 0, y1: 0 }; zones.set(key, z); }
+    z.count++;
+    z.x0 = Math.min(z.x0, p.x); z.y0 = Math.min(z.y0, p.y); z.x1 = Math.max(z.x1, p.x); z.y1 = Math.max(z.y1, p.y);
+  }
+  return { count: points.length, zones: [...zones.values()] };
+}
+
 function setPoints(list) {
-  // list: [[px, py, area], ...] in canvas pixels
+  // list: [[px, py, area, local, fan, zone], ...] in canvas pixels
   R.n = list.length;
-  R.points = list.map(([px, py, area], index) => ({ x: px / W, y: py / H, px, py, area: area || null, index }));
+  R.points = list.map(([px, py, area, local, fan, zone], index) => ({
+    x: px / W, y: py / H, px, py, area: area || null, index,
+    local: typeof local === "number" ? local : px / W,
+    fan: typeof fan === "number" ? fan : 0,
+    zone: zone || area || null,
+  }));
+  R.rig = rigOf(R.points);
+  if (R.ctx) R.ctx.rig = R.rig;
 }
 
 function ensureCanvas() {
@@ -48,7 +78,7 @@ function ensureCanvas() {
     const get = R.canvas.getContext.bind(R.canvas);
     R.canvas.getContext = (type, ...rest) => { R.drawing = type; return get(type, ...rest); };
   } catch { /* can't watch it: the colour read-back goes the long way round, which still works */ }
-  R.ctx = { canvas: R.canvas, width: W, height: H, params: R.ctx?.params || {}, log };
+  R.ctx = { canvas: R.canvas, width: W, height: H, params: R.ctx?.params || {}, rig: R.rig || { count: 0, zones: [] }, log };
 }
 
 function start(params, points) {

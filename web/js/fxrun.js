@@ -25,10 +25,54 @@ export function ledPoints(zones) {
   const points = [], slices = [];
   for (const z of zones) {
     slices.push({ key: z.key, from: points.length, count: z.positions.length });
-    for (const [x, y] of z.positions) points.push([x * UNIT, y * UNIT, z.spot || null]);
+    const local = z.local || [], fans = z.fan_index || [];
+    for (let i = 0; i < z.positions.length; i++) {
+      const [x, y] = z.positions[i];
+      points.push([x * UNIT, y * UNIT, z.spot || null, local[i], fans[i],
+        (z.zone && z.zone.name) || z.name || z.key]);
+    }
   }
   return { points, slices };
 }
+
+// A sample PC case, for when no lights are set up yet: the Studio and the gallery draw it instead of an empty
+// stage, so an effect can be made and judged before any hardware exists. It is never sent to the lamps.
+export function sampleZones() {
+  const zones = [];
+  const ring = (key, name, spot, cx, cy, r, fans, perFan, size) => {
+    const positions = [], local = [], index = [];
+    for (let f = 0; f < fans; f++) {
+      const ox = cx + (f - (fans - 1) / 2) * size * 1.12;
+      for (let i = 0; i < perFan; i++) {
+        const t = i / perFan, th = -Math.PI / 2 + t * Math.PI * 2;
+        positions.push([ox + r * Math.cos(th), cy + r * Math.sin(th)]);
+        local.push(t); index.push(f);
+      }
+    }
+    zones.push({ key, spot, positions, local, fan_index: index, zone: { name }, name,
+      config: { enabled: true, layout: { shape: "fans", fans, leds_per_fan: perFan, size, x: cx, y: cy, angle: 0 } },
+      device: { online: true } });
+  };
+  const strip = (key, name, spot, x0, y0, x1, y1, n) => {
+    const positions = [], local = [], index = [];
+    for (let i = 0; i < n; i++) {
+      const t = n > 1 ? i / (n - 1) : 0.5;
+      positions.push([x0 + (x1 - x0) * t, y0 + (y1 - y0) * t]);
+      local.push(t); index.push(0);
+    }
+    zones.push({ key, spot, positions, local, fan_index: index, zone: { name }, name,
+      config: { enabled: true, layout: { shape: "strip", leds: n, length: Math.hypot(x1 - x0, y1 - y0), x: (x0 + x1) / 2, y: (y0 + y1) / 2, angle: 0 } },
+      device: { online: true } });
+  };
+  ring("sample/front", "Front fans", "front", 0.42, 0.5, 0.1, 3, 24, 0.2);
+  strip("sample/top", "Top strip", "top", 0.24, 0.1, 1.2, 0.1, 36);
+  strip("sample/bottom", "Bottom strip", "bottom", 0.24, 0.9, 1.2, 0.9, 30);
+  ring("sample/rear", "Rear fan", "rear", 1.34, 0.3, 0.09, 1, 18, 0.18);
+  ring("sample/cooler", "CPU cooler", "cooler", 0.95, 0.34, 0.08, 1, 20, 0.16);
+  ring("sample/gpu", "Graphics card", "gpu", 0.93, 0.6, 0.07, 2, 16, 0.14);
+  return zones;
+}
+
 
 // colours for all points -> {zone key: "rrggbb..."} (what the stage's paint functions take)
 export function zoneFrames(colors, slices) {

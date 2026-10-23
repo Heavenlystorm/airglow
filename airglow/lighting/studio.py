@@ -91,8 +91,19 @@ class Instance:
 
 
 def _points(z):
+    """The host's LED list: [x, y, area, local, fan, zone]. local/fan are what per-fan layers (Comet) need; a zone
+    without them (an older caller) gets its position along the strip, and fan 0."""
     spot = getattr(z, "spot", None)
-    return [[round(float(x) * UNIT * 1.6, 2), round(float(y) * UNIT, 2), spot] for x, y in z.pos]
+    local = getattr(z, "local", None)
+    fan = getattr(z, "fan", None)
+    name = getattr(z, "key", None)
+    n = len(z.pos)
+    out = []
+    for i, (x, y) in enumerate(z.pos):
+        t = round(float(local[i]), 4) if local is not None and i < len(local) else round(i / max(n - 1, 1), 4)
+        f = int(fan[i]) if fan is not None and i < len(fan) else 0
+        out.append([round(float(x) * UNIT * 1.6, 2), round(float(y) * UNIT, 2), spot, t, f, name])
+    return out
 
 
 class EffectHost:

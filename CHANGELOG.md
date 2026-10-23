@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.9.0
+- **The Studio works with no lights set up.** Previews and gallery cards draw a labelled sample case, so an effect
+  can be made on a fresh PC; the starting points (code templates included) now show real live stills instead of a
+  placeholder, and **Surprise me** makes a valid effect in one click.
+- **Undo, redo, autosave and Revert.** Ctrl+Z / Ctrl+Shift+Z undo a whole slider drag as one step, saved effects
+  autosave after a pause, and **Revert** goes back to where the session started (or your last Save); autosave does
+  not move that point. **Save** is the primary button while there are changes; **Share** is secondary.
+- **A palette and effect-wide knobs.** One palette, speed, brightness and music reactivity apply to the whole effect,
+  and any of them can be exposed as a control. Layers opt into the palette with one tick, and a layer's colours can be
+  exposed too. **See it as a user** shows the panel people get in Lighting.
+- **Controls stay with their layer.** A layer has a stable id, so exposing a setting and then reordering the stack no
+  longer moves the control to another layer or resets anyone's value. Files from 1.8 keep their old ids.
+- **Any layer can follow the music**, by strength or by speed, not just the dedicated music layers.
+- **Comet and Chase layers**, and each LED now knows its position on its own fan or strip (`led.local`, `led.fan`,
+  `led.zone`) plus `ctx.rig` for the whole layout.
+- **Code effects declare controls next to the code** with `airglow.params({...})`; the Studio writes them into the
+  file on save. `console.log` output and errors appear under the preview, an error's line can be clicked to jump to
+  it, and `docs/effect-api.d.ts` gives editors the same shapes.
+- **A debug strip in the preview**: pause, quarter speed, restart the clock, an x/y grid with LED numbers and zone
+  names, and Save canvas as PNG.
+- **Check before sharing**: name, description, controls, music permission, size, reviewer scan, strobing faster than
+  3 times a second and frame time, in one sheet, with the exact file shown under it. Share runs the check first.
+  Export an effect to a file, import one, or drop it on the Studio.
+- **The community gallery teaches**: "How it's made" shows a shared effect's controls and layers before installing,
+  and **Learn** in the Studio has the rules, the API and copyable recipes.
+- **Smaller fixes:** the effect's More sheet no longer adds a second click handler every time it opens; going from
+  Layers to Code and back survives reopening the effect; a code effect that reads the music now asks for the audio
+  permission instead of playing silent on the lights; sliders take a typed value and have a reset; layers can be
+  moved with buttons, duplicated with Ctrl+D and deleted with Delete; the size in the check reads in bytes under 1 KB.
+
 ## 1.8.2
 - **Overview graphs draw from the first reading.** The sparklines and big graphs no longer wait for six samples before
   drawing, so a cold start shows the trend immediately instead of a blank chart for the first 12 seconds.

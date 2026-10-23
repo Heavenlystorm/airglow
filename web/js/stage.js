@@ -220,7 +220,7 @@ export const litZones = () => (S.zones?.zones || []).filter((z) => z.device.onli
 
 // Draw the rig into a canvas. fit "zones": zoom to the lit zones (tiles, gallery cards); fit "stage": the whole
 // 1.6 x 1.0 stage, so a picture of a Studio effect's 320 x 200 canvas (backdrop) lines up behind the LEDs.
-export function paintRig(c, frames, { fit = "zones", backdrop = null, pad = 22, maxScale = 0.6 } = {}) {
+export function paintRig(c, frames, { fit = "zones", backdrop = null, pad = 22, maxScale = 0.6, zones: given = null, overlay = null } = {}) {
   const r = c.getBoundingClientRect();
   if (!r.width || !r.height) return;
   const dpr = window.devicePixelRatio || 1;
@@ -231,7 +231,7 @@ export function paintRig(c, frames, { fit = "zones", backdrop = null, pad = 22, 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.globalCompositeOperation = "source-over";
   ctx.clearRect(0, 0, r.width, r.height);
-  const zones = litZones();
+  const zones = given || litZones();
   let x0 = 0, y0 = 0, x1 = 1.6, y1 = 1.0;
   if (fit === "zones") {
     if (!zones.length) return;
@@ -271,6 +271,14 @@ export function paintRig(c, frames, { fit = "zones", backdrop = null, pad = 22, 
         ctx.beginPath(); ctx.arc(x, y, rad * 0.9, 0, Math.PI * 2); ctx.fill();
       }
     }
+  }
+  // The Studio can draw the effect's own coordinates over the rig (LED numbers, the x/y grid).
+  if (overlay) {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    overlay(ctx, { ox, oy, s, u: U, zones });
+    ctx.restore();
   }
 }
 

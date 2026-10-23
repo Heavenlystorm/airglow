@@ -9,27 +9,37 @@ let selectedZone = null;
 let editingParams = 0;          // timestamp of the last local edit; pauses re-rendering from polled state
 
 // ------------------------------------------------------------ parameter controls (built from the schema)
-// Shared with the Devices tab, which draws device plugin settings from the same schema.
-export function fieldHTML(spec, value, prefix) {
+// Shared with the Devices tab, which draws device plugin settings from the same schema, and with the Studio.
+// opts.reset adds a back-to-default button; Studio passes it, the other screens keep their compact look.
+const resetBtn = (spec) => `<button type="button" class="field-reset" data-reset title="Back to the default" aria-label="Reset ${esc(spec.label)}"><svg aria-hidden="true"><use href="#i-rotate"/></svg></button>`;
+const stepNum = (v, spec) => {
+  const step = +spec.step || 1;
+  const lo = Number.isFinite(+spec.min) ? +spec.min : -Infinity;
+  const hi = Number.isFinite(+spec.max) ? +spec.max : Infinity;
+  const n = Math.round(v / step) * step;
+  return +Math.min(hi, Math.max(lo, n)).toFixed(4);
+};
+export function fieldHTML(spec, value, prefix, opts = {}) {
   const id = `${prefix}-${spec.id}`;
   if (spec.type === "color") {
-    return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span></div>
+    return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
       <div class="color-row"><label class="swatch" style="background:${value}"><input type="color" id="${id}" value="${value}" aria-label="${esc(spec.label)}"></label>
       <div class="quick">${QUICK.map((c) => `<button type="button" data-quick="${c}" style="background:${c}" aria-label="${c}" aria-pressed="${c === value}"></button>`).join("")}</div></div></div>`;
   }
   if (spec.type === "colors") {
     const sw = value.map((c, i) => `<label class="swatch" style="background:${c}"><input type="color" data-stop="${i}" value="${c}" aria-label="Colour ${i + 1}"></label>`).join("");
-    return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span></div>
+    return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
       <div class="stops">${sw}
       ${value.length < spec.max ? `<button type="button" class="icon-btn" data-add-stop title="Add a colour"><svg><use href="#i-plus"/></svg></button>` : ""}
       ${value.length > spec.min ? `<button type="button" class="icon-btn" data-remove-stop title="Remove the last colour"><svg><use href="#i-trash"/></svg></button>` : ""}</div></div>`;
   }
   if (spec.type === "range") {
-    return `<div class="field" data-param="${spec.id}"><label class="lab" for="${id}"><span>${esc(spec.label)}</span><output>${value}${spec.unit || ""}</output></label>
+    return `<div class="field" data-param="${spec.id}"><div class="lab"><label for="${id}"><span>${esc(spec.label)}</span></label>
+      <span class="val"><input type="number" class="num" id="${id}-num" min="${spec.min}" max="${spec.max}" step="${spec.step}" value="${value}" aria-label="${esc(spec.label)}" inputmode="decimal">${spec.unit ? `<span class="unit">${esc(spec.unit)}</span>` : ""}${opts.reset ? resetBtn(spec) : ""}</span></div>
       <input type="range" id="${id}" min="${spec.min}" max="${spec.max}" step="${spec.step}" value="${value}"></div>`;
   }
   if (spec.type === "choice") {
-    return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span></div>
+    return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
       <select class="select" id="${id}" aria-label="${esc(spec.label)}">${spec.options.map((o) => `<option value="${esc(o.value)}"${o.value === value ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select></div>`;
   }
   if (spec.type === "toggle") {
@@ -52,18 +62,36 @@ export function wireFields(root, effect, params, onChange) {
         box.querySelectorAll("[data-quick]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.quick === v))); };
       input.addEventListener("input", () => { sync(input.value); send(); });
       box.querySelectorAll("[data-quick]").forEach((b) => b.addEventListener("click", () => { sync(b.dataset.quick); send(); }));
+      box.querySelector("[data-reset]")?.addEventListener("click", () => { sync(spec.default); send(false); });
     } else if (spec.type === "colors") {
       box.querySelectorAll("[data-stop]").forEach((inp) => inp.addEventListener("input", () => {
         cur[spec.id][+inp.dataset.stop] = inp.value; inp.parentElement.style.background = inp.value; send();
       }));
       box.querySelector("[data-add-stop]")?.addEventListener("click", () => { cur[spec.id].push(cur[spec.id].at(-1)); send(false); });
       box.querySelector("[data-remove-stop]")?.addEventListener("click", () => { cur[spec.id].pop(); send(false); });
+      box.querySelector("[data-reset]")?.addEventListener("click", () => { cur[spec.id] = structuredClone(spec.default); send(false); });
     } else if (spec.type === "range") {
-      const input = box.querySelector("input");
+      const input = box.querySelector("input[type=range]");
+      const num = box.querySelector("input.num");
       rangeFill(input);
       input.addEventListener("input", () => {
         cur[spec.id] = +input.value; rangeFill(input);
-        box.querySelector("output").textContent = `${input.value}${spec.unit || ""}`; send();
+        if (num && document.activeElement !== num) num.value = input.value;
+        send();
+      });
+      num?.addEventListener("input", () => {
+        const v = parseFloat(num.value);
+        if (!Number.isFinite(v)) return;
+        cur[spec.id] = stepNum(v, spec); input.value = cur[spec.id]; rangeFill(input); send();
+      });
+      num?.addEventListener("change", () => {
+        const fallback = Number.isFinite(+spec.default) ? +spec.default : +input.min;
+        const v = Number.isFinite(parseFloat(num.value)) ? stepNum(parseFloat(num.value), spec) : fallback;
+        num.value = v; cur[spec.id] = v; input.value = v; rangeFill(input); send(false);
+      });
+      box.querySelector("[data-reset]")?.addEventListener("click", () => {
+        const v = Number.isFinite(+spec.default) ? +spec.default : +input.min;
+        cur[spec.id] = v; input.value = v; if (num) num.value = v; rangeFill(input); send(false);
       });
     } else if (spec.type === "choice") {
       box.querySelector("select").addEventListener("change", (e) => { cur[spec.id] = e.target.value; send(false); });

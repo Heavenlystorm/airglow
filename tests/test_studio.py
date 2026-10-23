@@ -75,7 +75,58 @@ class FormatTests(unittest.TestCase):
         with self.assertRaises(fxformat.FormatError):
             fxformat.to_html({"name": "X", "layers": [{"type": "solid", "mask": "roof"}]})
         with self.assertRaises(fxformat.FormatError):
-            fxformat.to_html({"name": "X", "layers": [{"type": "gradient", "expose": {"colors": "Colours"}}]})
+            fxformat.to_html({"name": "X", "layers": [{"type": "rainbow", "palette": True}]})
+
+    def test_effect_wide_controls_and_palette(self):
+        eff = fxformat.validate(fxformat.to_html({
+            "name": "X", "expose": {"palette": "Your colours", "speed": "Pace"},
+            "master": {"palette": ["#112233", "#445566"], "speed": 60},
+            "layers": [{"type": "gradient", "palette": True}]}))
+        self.assertEqual([(p["id"], p["type"]) for p in eff["params"]], [("m_palette", "colors"), ("m_speed", "number")])
+        self.assertEqual(eff["master"]["palette"], ["#112233", "#445566"])
+        self.assertTrue(eff["layers"][0]["palette"])
+        self.assertEqual([s["type"] for s in eff["schema"]], ["colors", "range"])
+
+    def test_layer_ids_keep_control_ids_when_reordered(self):
+        src = fxformat.to_html({"name": "X", "layers": [
+            {"id": "a1", "type": "wave", "expose": {"speed": "Wave speed"}},
+            {"id": "b2", "type": "pulse", "expose": {"speed": "Breath speed"}}]})
+        eff = fxformat.validate(src)
+        self.assertEqual([p["id"] for p in eff["params"]], ["la1_speed", "lb2_speed"])
+        moved = fxformat.to_html({"name": "X", "layers": list(reversed(eff["layers"]))})
+        self.assertEqual([p["id"] for p in fxformat.validate(moved)["params"]], ["lb2_speed", "la1_speed"])
+
+    def test_v1_layer_list_still_loads(self):
+        src = builder()
+        cfg = json.loads(src.split('id="layers">', 1)[1].split("</script>", 1)[0])
+        self.assertEqual(cfg["v"], 2)
+        legacy = src.split('id="layers">', 1)[0] + 'id="layers">' + json.dumps(cfg["layers"]) + "</script>\n"
+        eff = fxformat.validate(legacy)
+        self.assertEqual(eff["layers"][0]["type"], "gradient")
+        self.assertNotIn("id", eff["layers"][0])
+
+    def test_reacting_layer_asks_for_audio(self):
+        eff = fxformat.validate(fxformat.to_html({"name": "X", "layers": [
+            {"type": "wave", "react": {"what": "speed", "amount": 50}}]}))
+        self.assertEqual(eff["permissions"], ["audio"])
+        self.assertEqual(eff["layers"][0]["react"], {"what": "speed", "amount": 50})
+
+    def test_colours_can_be_exposed(self):
+        eff = fxformat.validate(fxformat.to_html({"name": "X", "layers": [
+            {"type": "gradient", "expose": {"colors": "Colours"}}]}))
+        self.assertEqual([(p["id"], p["type"]) for p in eff["params"]], [("l0_colors", "colors")])
+
+    def test_a_palette_control_in_a_code_effect(self):
+        eff = fxformat.validate(fxformat.to_html({
+            "name": "X", "code": CODE,
+            "params": [{"id": "palette", "label": "Colours", "type": "colors",
+                        "default": ["#112233", "#445566"]}]}))
+        self.assertEqual((eff["params"][0]["type"], eff["schema"][0]["type"]), ("colors", "colors"))
+        self.assertEqual(eff["schema"][0]["default"], ["#112233", "#445566"])
+
+    def test_master_defaults_match_the_catalogue(self):
+        data = json.loads((ROOT / "web" / "runtime" / "layers.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["master"], fxformat.MASTER_DEFAULTS)
 
     def test_scan_flags_for_reviewers(self):
         self.assertEqual(fxformat.scan(builder()), [])
@@ -227,6 +278,14 @@ class HostTests(unittest.TestCase):
         out, self.host._events = self.host._events, []
         return out
 
+    def test_the_host_sends_per_fan_positions(self):
+        z = SimpleNamespace(key="hub/1", n=4, spot="front", pos=np.array([[0.1 * i, 0.5] for i in range(4)]),
+                            local=np.array([0.0, 0.25, 0.5, 0.75]), fan=np.array([0, 0, 1, 1]))
+        pts = studio._points(z)
+        self.assertEqual([p[3] for p in pts], [0.0, 0.25, 0.5, 0.75])
+        self.assertEqual([p[4] for p in pts], [0, 0, 1, 1])
+        self.assertTrue(all(p[5] == "hub/1" for p in pts))
+
     def test_render_loads_once_and_returns_the_hosts_colours(self):
         z = self.zone("hub/1")
         self.assertEqual(self.host.render(self.eff, z, 0.0, {}).shape, (3, 3))
@@ -235,7 +294,8 @@ class HostTests(unittest.TestCase):
         self.host.tick(0.0)
         ev = [e for e in self.events() if e["type"] != "tick"]
         self.assertEqual([e["type"] for e in ev], ["load"])                  # one load, LED positions included
-        self.assertEqual(ev[0]["points"][2], [64.0, 100.0, "front"])          # 0.2 across, halfway down, its area
+        self.assertEqual(ev[0]["points"][2][:3], [64.0, 100.0, "front"])     # 0.2 across, halfway down, its area
+        self.assertEqual(ev[0]["points"][2][3:], [1.0, 0, "hub/1"])          # the end of its strip, its fan, its zone
         iid = ev[0]["id"]
         colours = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255])
         self.host.frames({"frames": {iid: base64.b64encode(colours).decode()}})
@@ -505,6 +565,29 @@ class StudioApiTests(unittest.TestCase):
         self.assertIn('<meta name="author" content="jane-dev">', sh["source"])
         self.assertEqual(self.opened[-1], sh["url"])
         self.assertEqual(self.request("POST", "/api/studio/open-share", {"url": "https://evil.example/"})[0], 400)
+        self.request("POST", "/api/scene", {"effect": "solid"})
+        self.assertEqual(self.request("POST", "/api/studio/delete", {"fx_id": fx_id})[0], 200)
+
+    def test_master_settings_and_stable_ids_through_the_api(self):
+        parts = {"name": "Api Knobs", "description": "Two knobs", "expose": {"palette": "Colours", "speed": "Pace"},
+                 "master": {"palette": ["#00e0c8", "#8a3dff"], "speed": 70, "brightness": 90, "react": 40},
+                 "layers": [{"id": "aa", "type": "gradient", "palette": True},
+                            {"id": "bb", "type": "solid", "expose": {"color": "Colour"}}]}
+        status, built = self.request("POST", "/api/studio/build", parts)
+        self.assertEqual(status, 200)
+        eff = built["effect"]
+        self.assertEqual([p["id"] for p in eff["params"]], ["m_palette", "m_speed", "lbb_color"])
+        self.assertEqual((eff["master"]["speed"], eff["expose"]["palette"]), (70, "Colours"))
+        self.assertTrue(eff["layers"][0]["palette"])
+        self.assertEqual([l["id"] for l in eff["layers"]], ["aa", "bb"])
+        status, saved = self.request("POST", "/api/studio/save", parts)
+        fx_id = saved["effect"]["fx_id"]
+        self.assertEqual(status, 200)
+        summary = next(e for e in self.request("GET", "/api/studio/effects")[1]["effects"] if e["fx_id"] == fx_id)
+        self.assertEqual((summary["master"]["brightness"], summary["expose"]["speed"]), (90, "Pace"))
+        self.assertEqual(summary["layers"][1]["id"], "bb")
+        status, r = self.request("POST", "/api/studio/use", {"fx_id": fx_id, "values": {"m_speed": 120, "lbb_color": "#ff0000"}})
+        self.assertEqual(r["scene"]["params"], {"m_palette": ["#00e0c8", "#8a3dff"], "m_speed": 120, "lbb_color": "#ff0000"})
         self.request("POST", "/api/scene", {"effect": "solid"})
         self.assertEqual(self.request("POST", "/api/studio/delete", {"fx_id": fx_id})[0], 200)
 
