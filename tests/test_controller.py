@@ -208,6 +208,17 @@ class ControllerTests(unittest.TestCase):
         for sid in ("app/fan_duty", "app/fan_rpm"):
             self.assertTrue(self.ctrl.readings[sid]["short"])
 
+    def test_cost_per_hour_follows_power_and_the_tariff(self):
+        self.store.update_settings({"energy_price": 0.3797})
+        self.ctrl.tick()
+        cost = self.ctrl.readings["app/energy_cost"]
+        self.assertAlmostEqual(cost["value"], round(150 / 1000 * 0.3797, 3))     # cpu 60 + gpu 90
+        self.assertEqual((cost["short"], cost["source"], cost["needs_lhm"]), ("Cost", "CPU + GPU", True))
+        self.temps["total_power"] = 200.0                                        # an explicit total wins
+        self.ctrl.tick()                                                         # sensors are read every other tick
+        self.ctrl.tick()
+        self.assertAlmostEqual(self.ctrl.readings["app/energy_cost"]["value"], round(0.2 * 0.3797, 3))
+
     def test_editing_a_preset_in_use_by_a_rule_takes_effect(self):
         self.store.set_rules([{"id": "game", "enabled": True, "when": {"type": "app_running", "exe": "game.exe"},
                                "then": {"type": "preset", "preset": "gaming"}}], lambda r: r)

@@ -30,6 +30,15 @@ class ValidationTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad):
                 config.validate_settings(bad)
 
+    def test_design_and_energy_price(self):
+        self.assertEqual(config.validate_settings({"design": "ascii"}), {"design": "ascii"})
+        self.assertEqual(config.validate_settings({"energy_price": "0.41"}), {"energy_price": 0.41})
+        self.assertEqual(config.validate_settings({"energy_price": 0.37971}), {"energy_price": 0.3797})
+        for bad in ({"design": "neon2"}, {"energy_price": 0}, {"energy_price": 5.01},
+                    {"energy_price": "free"}, {"energy_price": float("nan")}, {"energy_price": float("inf")}):
+            with self.assertRaises(ValueError, msg=bad):
+                config.validate_settings(bad)
+
     def test_preset_from_pre_2_colour_preset(self):
         p = config.validate_preset({"id": "a-1", "name": " Night ", "color": "00FF00", "brightness": 20,
                                     "fan_curve": "silent"}, config.DEFAULT_CURVES)
@@ -86,6 +95,11 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(config.Store(self.dir).settings()["lhm_url"], "http://127.0.0.1:8085")
         self.assertEqual(config.DEFAULT_CONFIG["lhm_url"], "http://127.0.0.1:8085")
 
+    def test_an_unknown_saved_design_falls_back_to_graphite(self):
+        self.dir.mkdir(parents=True)
+        (self.dir / "config.json").write_text(json.dumps({"design": "vaporwave"}), encoding="utf-8")
+        self.assertEqual(config.Store(self.dir).settings()["design"], "graphite")
+
     def test_defaults_when_empty(self):
         s = config.Store(self.dir)
         self.assertEqual([p["id"] for p in s.get_presets()], ["silent", "balanced", "gaming", "night"])
@@ -108,6 +122,14 @@ class StoreTests(unittest.TestCase):
         self.assertIn("mine", [p["id"] for p in s.get_presets()])
         again = config.Store(self.dir)
         self.assertEqual(again.settings()["fan_failsafe_duty"], 30)    # and it survived the save
+
+    def test_design_and_price_persist_and_reset(self):
+        s = config.Store(self.dir)
+        s.update_settings({"design": "paper", "energy_price": 0.42})
+        again = config.Store(self.dir)
+        self.assertEqual((again.settings()["design"], again.settings()["energy_price"]), ("paper", 0.42))
+        again.reset_settings()
+        self.assertEqual((again.settings()["design"], again.settings()["energy_price"]), ("graphite", 0.3797))
 
     def test_round_trip(self):
         s = config.Store(self.dir)

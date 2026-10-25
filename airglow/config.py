@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 
 COLOR_ORDERS = ("RGB", "RBG", "BGR", "BRG", "GBR", "GRB")
 TEMP_SOURCES = ("max", "cpu", "gpu", "liquid")    # liquid: an AIO's or custom loop's coolant, when LHM reads one
+DESIGNS = ("graphite", "ascii", "paper", "amber", "contrast", "neon")   # interface designs; ids match web/js/design.js
 MIN_FAN_DUTY = 20          # below this some fans stall
 SAFETY_TEMP = 90           # at or above this the hub fans run at 100% whatever the curve says
 PERIPHERAL_TYPES = {"Keyboard", "Mouse", "Mouse mat", "Headset", "Headset stand", "Gamepad", "Microphone", "Keypad"}
@@ -30,6 +31,8 @@ DEFAULT_CONFIG = {
     "lhm_url": "http://127.0.0.1:8085",
     "temp_source": "max",
     "temp_unit": "C",
+    "design": "graphite",             # how the window looks; the lights keep their real colours either way
+    "energy_price": 0.3797,           # €/kWh for the Cost per hour tile: the German household average, H1 2026
     "fan_failsafe_duty": 30,
     "fan_max_step": 5,
     "fancontrol_exe": "",
@@ -78,6 +81,7 @@ DEFAULT_OVERVIEW = {
         {"id": "ram", "type": "sensor", "sensors": ["auto/ram_load"], "style": "bar", "w": 1, "h": 1},
         {"id": "ssd-temp", "type": "sensor", "sensors": ["auto/ssd_temp"], "style": "spark", "w": 1, "h": 1},
         {"id": "net-down", "type": "sensor", "sensors": ["auto/net_down"], "style": "spark", "w": 1, "h": 1},
+        {"id": "cost", "type": "sensor", "sensors": ["app/energy_cost"], "style": "spark", "w": 1, "h": 1},
     ],
     "pins": ["auto/cpu_temp", "auto/gpu_temp"],
 }
@@ -95,7 +99,7 @@ SCHEMA_VERSION = 1
 RESETTABLE_SETTINGS = ("lhm_url", "temp_source", "temp_unit", "fan_failsafe_duty", "fan_max_step", "fancontrol_exe",
                        "fancontrol_configs_dir", "openrgb_enabled", "openrgb_host", "openrgb_port",
                        "lights_off_on_sleep", "lights_off_on_lock", "dynamic_lighting_enabled", "online_checks",
-                       "update_channel")
+                       "update_channel", "design", "energy_price")
 
 
 # ---------------------------------------------------------------- validation
@@ -150,6 +154,18 @@ def validate_settings(patch):
             if value not in ("C", "F"):
                 raise ValueError("temperature unit must be C or F")
             out[key] = value
+        elif key == "design":
+            if value not in DESIGNS:
+                raise ValueError(f"unknown interface design '{value}'")
+            out[key] = value
+        elif key == "energy_price":
+            try:
+                price = float(value)
+            except (TypeError, ValueError):
+                raise ValueError("Electricity price must be a number") from None
+            if not 0.01 <= price <= 5:
+                raise ValueError("Electricity price must be between 0.01 and 5 €/kWh")
+            out[key] = round(price, 4)
         elif key == "fan_failsafe_duty":
             out[key] = _int_in(value, 30, 100, "Failsafe speed")
         elif key == "fan_max_step":

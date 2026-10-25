@@ -4,6 +4,8 @@ import { $, $$, S, emit, esc, fail, get, on, post, rangeFill, setHTML, toast } f
 import { paintTools, refreshTools } from "./helpers.js";
 import { openWelcome } from "./onboarding.js";
 import { openShortcuts } from "./help.js";
+import { openSheet } from "./sheet.js";
+import { DESIGNS, applyDesign, currentDesign } from "./design.js";
 
 const SECTIONS = [["general", "General"], ["lighting", "Lighting"], ["fans", "Fans"], ["helpers", "Helper programs"],
   ["sensors", "Sensors"], ["devices", "More devices"], ["about", "About"]];
@@ -61,6 +63,66 @@ function paintUpdate() {
   setHTML(box, row("Updates", updateText(u), updateButton(u)));
 }
 
+// ------------------------------------------------------------ interface designs
+// A miniature of the app, not a colour chip: each card shows its design's own tokens and structural marks. It is
+// decorative (aria-hidden), so it has no controls and no focus stops inside the card's preview.
+function previewHTML() {
+  return `<span class="dsg-bar"><span class="dsg-mark"></span><span class="dsg-tab on">Overview</span><span class="dsg-tab">Fans</span><span class="dsg-pill"></span></span>
+    <span class="dsg-panel"><span class="dsg-label">Processor</span><span class="dsg-num">46<span class="dsg-unit">°C</span></span>
+      <svg class="dsg-spark" viewBox="0 0 120 24" preserveAspectRatio="none" aria-hidden="true"><path d="M0 18L18 14L36 17L54 9L72 12L90 6L120 10"/></svg></span>
+    <span class="dsg-ctl"><span class="dsg-btn">Save</span><span class="dsg-switch on"></span><span class="dsg-meter"><i></i></span></span>`;
+}
+
+function markDesign(id) {
+  const d = $("#sheet");
+  if (!d) return;
+  d.querySelectorAll("[data-design-card]").forEach((card) => {
+    const on = card.dataset.designCard === id;
+    card.setAttribute("aria-checked", String(on));
+    let mark = card.querySelector(".dsg-inuse");
+    if (on && !mark) {
+      mark = document.createElement("span");
+      mark.className = "dsg-inuse";
+      mark.textContent = "In use";
+      card.querySelector(".dsg-name")?.append(mark);
+    } else if (!on && mark) {
+      mark.remove();
+    }
+  });
+}
+
+// One write at a time, so two quick clicks cannot land out of order and leave the server on the first design.
+let designQueue = Promise.resolve();
+function pickDesign(id) {
+  const chosen = applyDesign(id);
+  markDesign(chosen);
+  designQueue = designQueue
+    .then(() => save({ design: chosen }, "Design saved"))
+    .then(() => {
+      const confirmed = S.settings?.settings?.design || chosen;
+      applyDesign(confirmed);
+      markDesign(confirmed);
+    })
+    .catch(() => {});
+}
+
+function designSheet() {
+  const current = currentDesign();
+  openSheet(`<div class="body design-sheet">
+    <h2>Interface design</h2>
+    <p class="lede">Changes how Airglow looks. Your lights stay their own colours in every design.</p>
+    <div class="design-gallery" role="radiogroup" aria-label="Interface design">${DESIGNS.map((d) => `<button type="button" role="radio" class="dsg-card" data-design-card="${d.id}" aria-checked="${d.id === current}">
+      <span class="dsg-preview" data-design="${d.id}" aria-hidden="true">${previewHTML()}</span>
+      <span class="dsg-name">${esc(d.name)}${d.id === current ? `<span class="dsg-inuse">In use</span>` : ""}</span>
+      <span class="dsg-blurb">${esc(d.blurb)}</span></button>`).join("")}</div>
+    <div class="actions"><span class="spacer"></span><button type="button" class="btn primary" data-close>Done</button></div></div>`);
+  const d = $("#sheet");
+  d.querySelectorAll("[data-design-card]").forEach((card) => {
+    card.addEventListener("click", () => pickDesign(card.dataset.designCard));
+  });
+  setTimeout(() => (d.querySelector('[aria-checked="true"]') || d.querySelector("[data-design-card]"))?.focus({ preventScroll: true }), 30);
+}
+
 export async function loadSettings() {
   try { S.settings = await get("/api/settings"); renderSettings(); } catch (e) { fail(e); }
   refreshTools();
@@ -70,11 +132,17 @@ export function renderSettings() {
   const v = S.settings;
   if (!v) return;
   const s = v.settings;
+  applyDesign(s.design);
+  const designName = DESIGNS.find((d) => d.id === s.design)?.name || "Graphite";
   const sensorsOk = S.state?.sensors?.online;
   setHTML($("#settings"), `
     <section class="set-group" id="set-general"><h2>General</h2>
       ${row("Start with Windows", "Opens quietly in the tray when you sign in, so lighting and fan curves apply right away.", sw("s-startup", v.start_with_windows, "Start with Windows"))}
       ${row("Temperature unit", "", `<div class="seg" id="s-unit" role="radiogroup" aria-label="Temperature unit"><button role="radio" data-v="C" aria-checked="${s.temp_unit === "C"}">°C</button><button role="radio" data-v="F" aria-checked="${s.temp_unit === "F"}">°F</button></div>`)}
+      ${row("Interface design", "Changes how Airglow looks, not what it does. Your lights keep their real colours in every design.",
+        `<span class="design-current"><span class="dsg-preview" data-design="${esc(s.design)}" aria-hidden="true">${previewHTML()}</span><button type="button" class="btn" id="s-design" aria-label="Change interface design (currently ${esc(designName)})">Change</button></span>`)}
+      ${row("Electricity price", "Feeds the Cost per hour tile. It starts at the German household average of 37.97 ct/kWh (Destatis, first half of 2026); Hamburg tariffs run from about 35 ct to 45 ct. Only the processor and graphics card power Airglow already reads is counted.",
+        `<input class="text num" id="s-price" type="number" min="0.01" max="5" step="0.01" value="${s.energy_price}" aria-label="Electricity price per kilowatt hour" style="width:110px"><span class="hint">€/kWh</span>`)}
     </section>
     <section class="set-group" id="set-lighting"><h2>Lighting</h2>
       ${row("Lights off when the PC sleeps or shuts down", "Many boards keep their RGB on in sleep. This turns everything dark first.", sw("s-sleep", s.lights_off_on_sleep, "Lights off when the PC sleeps or shuts down"))}
@@ -194,6 +262,17 @@ export function initSettings() {
     else if (t.id === "s-sleep") save({ lights_off_on_sleep: t.checked });
     else if (t.id === "s-lock") save({ lights_off_on_lock: t.checked });
     else if (t.id === "s-source") save({ temp_source: t.value });
+    else if (t.id === "s-price") {
+      const price = Number(t.value);
+      if (!Number.isFinite(price) || price < 0.01 || price > 5) {
+        t.classList.add("invalid");                     // the saved value is what the page said before the edit
+        t.value = S.settings?.settings?.energy_price ?? "";
+        toast("Electricity price must be between 0.01 and 5 €/kWh", true);
+      } else {
+        t.classList.remove("invalid");
+        save({ energy_price: price });
+      }
+    }
     else if (t.id === "s-failsafe") save({ fan_failsafe_duty: +t.value });
     else if (t.id === "s-step") save({ fan_max_step: +t.value });
     else if (t.id === "s-lhm") save({ lhm_url: t.value.trim() });
@@ -205,6 +284,7 @@ export function initSettings() {
   });
   box.addEventListener("input", (e) => {
     const t = e.target;
+    if (t.id === "s-price") t.classList.remove("invalid");
     if (t.type === "range") { rangeFill(t); $(`#${t.id}-v`).textContent = `${t.value}%`; }
   });
   box.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.classList.contains("text")) e.target.blur(); });
@@ -217,6 +297,7 @@ export function initSettings() {
     if (e.target.closest("#s-diag")) post("/api/diagnostics", {}).then((r) => toast(`Saved ${r.name}. Explorer shows where.`)).catch(fail);
     if (e.target.closest("#s-welcome")) openWelcome();
     if (e.target.closest("#s-keys")) openShortcuts();
+    if (e.target.closest("#s-design")) designSheet();
     if (e.target.closest("#s-update")) {
       post("/api/updates/check").then((u) => { S.state.update = u; paintUpdate(); emit("refresh"); }).catch(fail);
     }

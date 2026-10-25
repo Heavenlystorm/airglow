@@ -201,7 +201,9 @@ def main(argv=None):
              # show a saved diagnostics report in Explorer, selected
              "reveal": lambda f: subprocess.Popen(["explorer", "/select,", str(f)]),
              # the gallery's share page (only GitHub's new-file page for the profiles folder; api.py checks)
-             "open_url": lambda url: webbrowser.open(url)}
+             "open_url": lambda url: webbrowser.open(url),
+             # keep the native title bar with the interface design chosen in Settings
+             "design_changed": lambda design: window and window.apply_design(design)}
     updater = updates.Updater(store)
     server = start_server(port, ctrl, store, hooks, updater)
     if server is None:
@@ -224,7 +226,8 @@ def main(argv=None):
         window.destroy()
 
     window = Window(f"http://127.0.0.1:{port}/", start_hidden=background,
-                    on_first_hide=lambda: tray and tray.notify("Still running in the tray. Right-click the Airglow icon to quit."))
+                    on_first_hide=lambda: tray and tray.notify("Still running in the tray. Right-click the Airglow icon to quit."),
+                    design=store.settings()["design"])
     updater.quit_app = quit_app
     tray = Tray(ctrl, store, show_window=window.show, quit_app=quit_app, updater=updater)
     tray.start()

@@ -25,7 +25,9 @@ class ApiTests(unittest.TestCase):
         cls.ctrl.tick()
         cls.ctrl.engine.tick()
         cls.shown = threading.Event()
-        cls.server = api.Server(0, cls.ctrl, cls.store, {"show_window": cls.shown.set})
+        cls.designs = []
+        cls.server = api.Server(0, cls.ctrl, cls.store, {"show_window": cls.shown.set,
+                                                         "design_changed": cls.designs.append})
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
 
@@ -355,6 +357,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((status, s["settings"]["temp_unit"], s["settings"]["lights_off_on_lock"]), (200, "F", True))
         self.request("POST", "/api/settings", {"temp_unit": "C", "lights_off_on_lock": False})
         self.assertEqual(self.request("POST", "/api/settings", {"fan_failsafe_duty": 5})[0], 400)
+
+    def test_settings_take_a_design_and_an_energy_price(self):
+        self.designs.clear()
+        status, s = self.request("POST", "/api/settings", {"design": "amber", "energy_price": 0.41})
+        self.assertEqual((status, s["settings"]["design"], s["settings"]["energy_price"]), (200, "amber", 0.41))
+        self.assertEqual(self.request("POST", "/api/settings", {"design": "nope"})[0], 400)
+        self.assertEqual(self.request("POST", "/api/settings", {"energy_price": 0})[0], 400)
+        self.assertEqual(self.designs, ["amber"], "the window's title bar is told about the new design")
+        self.request("POST", "/api/settings", {"design": "graphite", "energy_price": 0.3797})
 
     def test_settings_reset_puts_them_back(self):
         self.request("POST", "/api/settings", {"fan_failsafe_duty": 70, "temp_unit": "F"})

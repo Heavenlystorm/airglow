@@ -32,6 +32,12 @@ class ParseRealDataTests(unittest.TestCase):
         self.assertTrue(all(f["rpm"] > 0 for f in self.s["fans"]))
 
 
+class FormatTests(unittest.TestCase):
+    def test_money_per_hour(self):
+        self.assertEqual(sensors.fmt({"unit": "€/h"}, 0.123), "€0.12/h")
+        self.assertEqual(sensors.fmt({"unit": "€/h"}, None), "n/a")
+
+
 class ParseEdgeCaseTests(unittest.TestCase):
     def test_decimal_comma(self):
         self.assertEqual(sensors._num("41,9 °C"), 41.9)

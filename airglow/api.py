@@ -544,7 +544,9 @@ def route(server, method, path, body, query=None):
         if "start_with_windows" in body:
             autostart.enable() if body.pop("start_with_windows") else autostart.disable()
         if body:
-            store.update_settings(body)
+            clean = store.update_settings(body)
+            if "design" in clean:
+                server.hooks.get("design_changed", lambda d: None)(clean["design"])
             if "online_checks" in body:
                 store.save_state(online_asked=True)     # answered, whether from the question or from Settings
             if {"online_checks", "update_channel"} & set(body) and server.updater:
@@ -560,6 +562,7 @@ def route(server, method, path, body, query=None):
         return _settings_view(store, server.updater)
     if path == "/api/settings/reset":
         store.reset_settings()
+        server.hooks.get("design_changed", lambda d: None)(store.settings()["design"])
         bridge = ctrl.manager.bridge
         bridge.client.host = store.settings()["openrgb_host"]
         bridge.client.port = store.settings()["openrgb_port"]
