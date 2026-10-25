@@ -216,6 +216,12 @@ class OpenRGBBridge:
         try:
             ctrls = self.client.controllers()
         except (OpenRGBError, OSError) as e:
+            if self.devices:
+                # one controller that is slow to answer (OpenRGB probing a GPU, say) must not make every OpenRGB
+                # zone vanish and everything reconnect: keep what we have and say it's busy.
+                self.status = f"OpenRGB is busy ({e})"
+                self._last_try = time.monotonic()
+                return
             self.status = f"OpenRGB connection lost ({e})"
             self.client.close()
             self.devices = {}

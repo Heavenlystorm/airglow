@@ -534,7 +534,12 @@ function wireHover() {
   box().onpointerover = (e) => {
     const card = e.target.closest("[data-card]");
     const key = card?.dataset.card;
-    if (!key || STILL.live?.key === key) return;
+    if (STILL.live?.key === key) return;
+    if (!key) {                                   // off the cards but still in the Studio: stop the preview
+      STILL.live?.stop();
+      STILL.live = null;
+      return;
+    }
     STILL.live?.stop();
     STILL.live = null;
     const item = STILL.items.find((i) => i.key === key);
@@ -1107,7 +1112,7 @@ function loop(now) {
   if (!E.paused) {
     E.t += real * E.scale;
     const audio = E.beat ? testAudio(E.t) : null;
-    E.runner?.tick(E.t, real * E.scale, audio, E.doc?.mode === "code" && E.framesSeen % 2 === 0);
+    E.runner?.tick(E.t, real * E.scale, audio, E.doc?.mode === "code" && E.framesSeen % 4 === 0);
   }
   // Repaint only when the effect sent a new frame: the canvas is expensive (one glow per LED), and a still effect
   // was being drawn 60 times a second on top of that.
@@ -1310,6 +1315,8 @@ function toLayers() {
     E.layersCopy = cfg;
   }
   if (!confirm("Go back to the layers? Changes you made in the code are dropped.")) { renderEditor(); return; }
+  clearInterval(E.watch);                         // the editor's file watcher belongs to Code mode
+  E.watch = null;
   E.doc.mode = "layers";
   E.doc.layers = E.layersCopy.layers || [];
   E.doc.master = E.layersCopy.master || structuredClone(MASTER);

@@ -242,8 +242,6 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.dev.last("z1"), [(0, 0, 0)] * zone.max_leds)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class IdleRateTests(unittest.TestCase):
@@ -302,3 +300,7 @@ class IdleRateTests(unittest.TestCase):
         start = self.engine.frame_id
         time.sleep(0.5)
         self.assertGreater(self.engine.frame_id - start, 8)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -108,7 +108,8 @@ export function resample(series, n = 61, now = Date.now() / 1000) {
   let j = 0;
   for (let k = 0; k < n; k++) {
     const t = start + k * step;
-    if (t < series[0][0] - step) { out.push(null); continue; }
+    if (t < series[0][0] - step) { out.push(null); continue; }        // before the first sample: nothing yet
+    if (t > series[series.length - 1][0] + step) { out.push(null); continue; }   // after the last: not a flat line
     while (j < series.length - 1 && series[j + 1][0] <= t) j++;
     const a = series[j], b = series[j + 1];
     out.push(b && t > a[0] ? a[1] + (b[1] - a[1]) * Math.min(1, (t - a[0]) / (b[0] - a[0])) : a[1]);

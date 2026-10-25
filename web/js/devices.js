@@ -132,6 +132,8 @@ async function saveZone(key, mutate) {
 function paintStrips() {
   for (const el of $$("#dev-detail [data-strip]")) {
     const hex = frames[el.dataset.strip];
+    if (el._painted === hex) continue;              // an unchanged strip must not touch every cell again
+    el._painted = hex;
     const cells = el.children;
     for (let i = 0; i < cells.length; i++) {
       cells[i].style.background = hex && hex.length >= (i + 1) * 6 ? `#${hex.substr(i * 6, 6)}` : "";

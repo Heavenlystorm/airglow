@@ -3,6 +3,7 @@
 import copy
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -120,7 +121,7 @@ def norm_hex(color):
 def _int_in(value, lo, hi, name):
     try:
         v = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise ValueError(f"{name} must be a whole number") from None
     if not lo <= v <= hi:
         raise ValueError(f"{name} must be between {lo} and {hi}")
@@ -178,7 +179,12 @@ def validate_settings(patch):
             out[key] = str(value or "")
         elif key in ("openrgb_enabled", "lights_off_on_sleep", "lights_off_on_lock", "dynamic_lighting_enabled",
                      "online_checks"):
-            out[key] = bool(value)
+            if isinstance(value, bool):
+                out[key] = value
+            elif isinstance(value, int) and value in (0, 1):
+                out[key] = bool(value)
+            else:                       # bool("false") is True: never guess
+                raise ValueError(f"{key} must be true or false")
         elif key == "update_channel":
             if value not in ("stable", "beta"):
                 raise ValueError("update channel must be stable or beta")
@@ -467,6 +473,7 @@ class Store:
         self.dir = Path(directory) if directory else paths.data_dir()
         self.dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._load_failed = False            # a file that exists but could not be read: never write over it
         self.config = self._load_config()
         self.presets = self._load_presets()
         self.state = self._load_state()
@@ -481,30 +488,64 @@ class Store:
 
     # -- low level
     def _read(self, name, default):
+        """A missing file means "first run" and gets the defaults. A file that is there but unreadable or damaged
+        must never be treated the same way: the defaults would be written back over it by _upgrade."""
+        path = self.dir / name
+        problem = None
+        for wait in (0.0, 0.15, 0.35):        # an antivirus or the search indexer can hold it for a moment
+            time.sleep(wait)
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                return copy.deepcopy(default)
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                self._quarantine(path, e)
+                return copy.deepcopy(default)
+            except OSError as e:
+                problem = e
+        log.error("could not read %s (%s); starting from defaults and leaving the file alone", name, problem)
+        self._load_failed = True
+        return copy.deepcopy(default)
+
+    def _quarantine(self, path, error):
+        """Keep a damaged file for inspection instead of overwriting it, and don't rewrite anything this run."""
+        self._load_failed = True
+        broken = path.with_name(path.name + ".corrupt")
+        log.error("%s is damaged (%s); keeping it as %s and starting from defaults", path.name, error, broken.name)
         try:
-            return json.loads((self.dir / name).read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return copy.deepcopy(default)
-        except (OSError, json.JSONDecodeError) as e:
-            log.warning("could not read %s (%s); using defaults", name, e)
-            return copy.deepcopy(default)
+            path.replace(broken)
+        except OSError:
+            log.exception("couldn't move the damaged %s aside", path.name)
 
     def _write(self, name, data):
-        with self._lock:
-            tmp = self.dir / (name + ".tmp")
-            tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-            for wait in (0.05, 0.1, 0.2, 0.4, None):
-                try:
-                    tmp.replace(self.dir / name)
-                    return
-                except PermissionError:             # antivirus or the search indexer has the file open for a moment
-                    if wait is None:
-                        raise
-                    time.sleep(wait)
+        """Write the file whole, so a crash leaves either the old contents or the new ones, never half a file.
+        The expensive part (the write and its fsync) happens outside the lock, so readers don't wait for it."""
+        tmp = self.dir / f"{name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=2, ensure_ascii=False))
+            f.flush()
+            os.fsync(f.fileno())
+        for wait in (0.05, 0.1, 0.2, 0.4, None):
+            try:
+                tmp.replace(self.dir / name)
+                return
+            except PermissionError:                 # antivirus or the search indexer has the file open for a moment
+                if wait is None:
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
+                    raise
+                time.sleep(wait)
 
     def _upgrade(self):
         """Files are converted while loading (see _migrate_preset and _load_state); once that happened, save them
         in the current format so the conversions only ever run once."""
+        if self._load_failed:
+            # One of the files could not be read: writing now would replace it (and its neighbours) with the
+            # defaults we fell back to. Keep what is on disk for the next start.
+            self.schema = self.config["schema"] = SCHEMA_VERSION
+            return
         if self.schema > SCHEMA_VERSION:
             log.warning("settings were saved by a newer Airglow (format %d); they won't be rewritten", self.schema)
             return
@@ -520,6 +561,9 @@ class Store:
 
     def _load_config(self):
         raw = self._read("config.json", {})
+        if not isinstance(raw, dict):
+            log.warning("ignoring config.json: it doesn't hold an object")
+            raw = {}
         cfg = copy.deepcopy(DEFAULT_CONFIG)
         self.schema = raw.get("schema", 0) if isinstance(raw.get("schema", 0), int) else 0
         cfg["schema"] = self.schema
@@ -531,7 +575,16 @@ class Store:
                     except ValueError as e:
                         log.warning("ignoring invalid curve %s: %s", name, e)
             elif key == "zones" and isinstance(value, dict):
-                cfg["zones"] = {k: v for k, v in value.items() if isinstance(v, dict) and "layout" in v}
+                kept = {}
+                for zkey, zcfg in value.items():
+                    if not isinstance(zcfg, dict) or not isinstance(zcfg.get("layout"), dict):
+                        log.warning("ignoring saved zone %s: no layout", zkey)
+                        continue
+                    if "shape" not in zcfg["layout"]:
+                        log.warning("ignoring saved zone %s: its layout has no shape", zkey)
+                        continue
+                    kept[zkey] = zcfg
+                cfg["zones"] = kept
             elif key == "device_params" and isinstance(value, dict):
                 cfg["device_params"] = {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, dict)}
             elif key == "fan_channels" and isinstance(value, dict):
@@ -573,6 +626,9 @@ class Store:
 
     def _load_state(self):
         raw = self._read("state.json", {})
+        if not isinstance(raw, dict):
+            log.warning("ignoring state.json: it doesn't hold an object")
+            raw = {}
         state = copy.deepcopy(DEFAULT_STATE)
         if "scene" not in raw and "color" in raw:                     # pre-2.0 state
             raw["scene"] = {"effect": "solid", "params": {"color": raw["color"]},
@@ -673,8 +729,8 @@ class Store:
 
     def set_device_params(self, device_id, schema, values):
         from .lighting.effects import clean_values
-        clean = clean_values(schema, {**self.config["device_params"].get(device_id, {}), **(values or {})})
         with self._lock:
+            clean = clean_values(schema, {**self.config["device_params"].get(device_id, {}), **(values or {})})
             self.config["device_params"] = {**self.config["device_params"], device_id: clean}
             self._write("config.json", self.config)
         return clean
@@ -700,8 +756,15 @@ class Store:
             if not cfg:
                 continue
             # a fallback layout (the device never reported) only places new zones, never rewrites saved ones
-            if cfg.get("auto") and not z.get("guessed") and (geometry.total_leds(cfg["layout"]) != _expected_leds(z)
-                                                             or cfg["layout"]["shape"] != z["shape"]):
+            stale_layout = False
+            if cfg.get("auto") and not z.get("guessed"):
+                try:
+                    stale_layout = (geometry.total_leds(cfg["layout"]) != _expected_leds(z)
+                                    or cfg["layout"]["shape"] != z["shape"])
+                except (KeyError, TypeError, ValueError):
+                    # a hand-edited or half-migrated layout: leave it alone rather than stop the whole tick
+                    log.warning("zone %s has an unusable layout; leaving it as it is", key)
+            if stale_layout:
                 stale.add(key)
             else:
                 role = _role(d, z)

@@ -316,7 +316,7 @@ class RegressionTests(unittest.TestCase):
     def test_fan_profile_must_be_a_file_name(self):
         ok = config.validate_preset({"id": "a", "name": "A", "fan_profile": "Game.json"}, config.DEFAULT_CURVES)
         self.assertEqual(ok["fan_profile"], "Game.json")
-        for bad in ("..\..\evil.json", "C:/x/y.json", "notes.txt"):
+        for bad in (r"..\..\evil.json", "C:/x/y.json", "notes.txt"):
             with self.assertRaises(ValueError, msg=bad):
                 config.validate_preset({"id": "a", "name": "A", "fan_profile": bad}, config.DEFAULT_CURVES)
 
@@ -326,6 +326,38 @@ class RegressionTests(unittest.TestCase):
                                                               encoding="utf-8")
         s = config.Store(self.tmp.name)
         self.assertEqual([r["id"] for r in s.get_rules()], ["night"])
+
+
+class DamagedFileTests(unittest.TestCase):
+    """A file that exists but cannot be read must never be replaced by the defaults."""
+
+    def test_a_damaged_config_is_set_aside_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp, "config.json")
+            cfg.write_text(json.dumps({"schema": config.SCHEMA_VERSION, "design": "amber"}), encoding="utf-8")
+            self.assertEqual(config.Store(tmp).settings()["design"], "amber")
+            cfg.write_text("{ not json", encoding="utf-8")
+            store = config.Store(tmp)
+            self.assertEqual(store.settings()["design"], "graphite")       # defaults in memory, so it starts
+            self.assertEqual(Path(tmp, "config.json.corrupt").read_text(encoding="utf-8"), "{ not json")
+            self.assertFalse(cfg.exists(), "the damaged file was written over with the defaults")
+
+    def test_an_unreadable_config_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp, "config.json")
+            good = json.dumps({"schema": config.SCHEMA_VERSION, "design": "amber"})
+            cfg.write_text(good, encoding="utf-8")
+            real = Path.read_text
+
+            def blocked(self, *args, **kwargs):
+                if self.name == "config.json":
+                    raise PermissionError(13, "in use by another process")
+                return real(self, *args, **kwargs)
+
+            with mock.patch.object(Path, "read_text", blocked):
+                store = config.Store(tmp)
+            self.assertEqual(store.settings()["design"], "graphite")
+            self.assertEqual(cfg.read_text(encoding="utf-8"), good, "an unreadable file was overwritten")
 
 
 if __name__ == "__main__":

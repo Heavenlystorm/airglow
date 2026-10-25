@@ -1,4 +1,4 @@
-"""Start with Windows via HKCU\...\Run (per-user, no admin needed)."""
+r"""Start with Windows via HKCU\...\Run (per-user, no admin needed)."""
 
 import os
 import sys

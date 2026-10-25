@@ -151,6 +151,12 @@ class Controller:
                 self.trial = {"before": {"scene": dict(self.base_scene), "curve": self.base_curve,
                                          "preset": self.active_preset,
                                          "overrides": {k: zones[k].get("override") for k in clear_zones if k in zones}}}
+            else:
+                # a second profile (or the Studio) while one is being tried: remember what this one clears as
+                # well, or Discard would restore the first set and leave these zones without their effect
+                before, zones = self.trial["before"], self.store.zones()
+                before["overrides"] = {**{k: zones[k].get("override") for k in clear_zones if k in zones},
+                                       **before["overrides"]}
             self.trial.update(name=name, fan_points=fan_points, kind=kind)
             for key in clear_zones:
                 self._set_override(key, None)
@@ -314,6 +320,8 @@ class Controller:
         return list(range(hub.FAN_PORTS))
 
     def _run_fans(self):
+        if self._stop.is_set():              # quitting: shutdown() hands the fans back, don't take them again
+            return
         cfg = self.store.settings()
         temp = fans.source_temp(self.sensors, cfg["temp_source"])
         curve = self.curve_points(self.effective_curve)
@@ -341,6 +349,15 @@ class Controller:
                 hub.set_fan_duty({p: duty for p in self._hub_ports(hub)})
             except (devices.DeviceError, OSError) as e:
                 log.warning("%s fans: %s", dev.name, e)
+        for dev in self.manager.natives.values():
+            hub = getattr(dev, "hub", None)
+            if hub is not None and dev.online and not getattr(hub, "FAN_PORTS", 0):
+                # lighting-only controllers (HUE 2, HUE 2 Ambient, N7 boards) have no fan ports, so the loop above
+                # skips them: without this their lost LED-info report is never re-asked and strips stay at 40 LEDs
+                try:
+                    hub.poll()
+                except (devices.DeviceError, OSError) as e:
+                    log.warning("%s: %s", dev.name, e)
         self._run_lhm_fans(duty, temp, cfg["fan_failsafe_duty"], grace=temp is None and not self._temp_seen
                            and time.monotonic() - self._started < self.STARTUP_GRACE, hottest=hottest)
 
@@ -348,6 +365,8 @@ class Controller:
         """Motherboard headers, pumps and cooler fans through LibreHardwareMonitor: the ones you chose follow the
         curve's speed or hold their own. While LHM isn't answering nothing is sent (each try would stall this
         loop), and everything is sent again once it's back."""
+        if self._stop.is_set():              # quitting: release_fans() already handed these back
+            return
         chosen = self.store.fan_channels()
         found = lhmfans.channels(self._flat)
         targets = {}
@@ -533,6 +552,12 @@ class Controller:
         if self._stop.is_set():
             return
         self._stop.set()
+        try:
+            # A trial's cleared zone effects live only in memory: put them back before we go, or the saved
+            # config keeps the trial's blanks for good.
+            self.end_trial()
+        except Exception:
+            log.exception("ending the trial failed")
         if self._thread:
             self._thread.join(timeout=self.TICK + 1)
         self.lhm.stop()
@@ -543,21 +568,23 @@ class Controller:
         log.info("controller stopped")
 
     # ------------------------------------------------------------ views
-    def snapshot(self):
+    def snapshot(self, devs=None):
         fan_devs = self._fan_devices()
         a = self.automations
         rules = {r["id"]: r for r in self.store.get_rules()}
-        devs = [d.info() for d in self.manager.all().values()]
+        light_rule, fan_rule = a.light_rule, a.fan_rule   # once each: evaluate() can clear them between readings
+        if devs is None:                          # the API passes the list it already built for the same event
+            devs = [d.info() for d in self.manager.all().values()]
         trial = self.trial                        # read once: the API thread can end the trial meanwhile
         return {
             "scene": self.base_scene,
             "effective": self.effective_scene,
             "active_preset": self.active_preset,
-            "trial": {"name": trial["name"], "fans": bool(trial.get("fan_points")),
+            "trial": {"name": trial.get("name", ""), "fans": bool(trial.get("fan_points")),
                       "kind": trial.get("kind", "profile")} if trial else None,
             "override": {
-                "lighting": a.light_rule["id"] if a.light_rule else None,
-                "fans": a.fan_rule["id"] if a.fan_rule else None,
+                "lighting": light_rule["id"] if light_rule else None,
+                "fans": fan_rule["id"] if fan_rule else None,
                 "active": sorted(a.active & set(rules)),
                 "paused_until": a.paused_until if a.paused else None,
                 "locked": self.locked and self.store.settings()["lights_off_on_lock"],

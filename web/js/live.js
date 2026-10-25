@@ -14,13 +14,21 @@ function desired() {
 export function sync() {
   const want = desired();
   if (want === null) { close(); return; }
-  if (source && want === withFrames) return;
+  // A stream that closed for good (EventSource gives up after a non-200) must be replaced, not reused: comparing
+  // the frames flag alone kept the dead one forever and the page went stale until a tab change.
+  if (source && source.readyState !== EventSource.CLOSED && want === withFrames) return;
   close();
   withFrames = want;
   source = new EventSource(`/api/stream?frames=${want ? 1 : 0}`);
   source.addEventListener("state", (e) => handlers.state(JSON.parse(e.data)));
   source.addEventListener("frames", (e) => emit("frames:live", JSON.parse(e.data)));
-  source.onerror = () => handlers.lost();                        // EventSource retries on its own
+  source.onerror = () => {
+    handlers.lost();                                             // EventSource retries on its own...
+    if (source && source.readyState === EventSource.CLOSED) {    // ...unless it gave up: let sync() start a new one
+      source = null;
+      withFrames = null;
+    }
+  };
 }
 
 function close() {

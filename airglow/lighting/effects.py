@@ -8,6 +8,7 @@ render(z, t, params, ctx) gets:
 and returns (N,3) floats 0..1. Brightness and colour order are applied later by the engine.
 """
 
+import functools
 import math
 import re
 
@@ -16,9 +17,14 @@ import numpy as np
 
 # ---------------------------------------------------------------- helpers
 
+@functools.lru_cache(maxsize=512)
 def hex_rgb(h):
+    """A parameter's colour as floats. Cached: effects call this for every zone on every frame, and the value only
+    changes when the setting does. Read-only, so a caller can't corrupt the shared array."""
     h = h.lstrip("#")
-    return np.array([int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)])
+    out = np.array([int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)])
+    out.setflags(write=False)
+    return out
 
 
 def hsv(h, s, v):

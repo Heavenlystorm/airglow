@@ -58,12 +58,13 @@ def listing():
     except RuntimeError:
         featured = []
     items = []
-    for e in index.get("profiles", []) if isinstance(index, dict) else []:
+    for e in (index.get("profiles") or []) if isinstance(index, dict) else []:
         if not isinstance(e, dict) or not isinstance(e.get("id"), str) or not profiles._ID.fullmatch(e["id"]):
             continue
         items.append({"id": e["id"], "name": str(e.get("name", e["id"]))[:40], "author": str(e.get("author", ""))[:40],
                       "description": str(e.get("description", ""))[:200], "added": str(e.get("added", ""))[:10],
-                      "badges": [b for b in e.get("badges", []) if b in ("music", "screen", "fans", "automations", "areas")]})
+                      "badges": [b for b in (e.get("badges") or []) if b in ("music", "screen", "fans",
+                                                                         "automations", "areas")]})
     items.sort(key=lambda e: e["added"], reverse=True)                                  # newest first...
     items.sort(key=lambda e: featured.index(e["id"]) if e["id"] in featured else len(featured))   # ...featured on top
     return {"profiles": items, "featured": [i for i in featured if any(e["id"] == i for e in items)]}

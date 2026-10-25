@@ -15,6 +15,9 @@ from ..openrgb import OpenRGBError
 from . import effects, geometry, studio
 from .inputs import AudioAnalyzer, ScreenSampler
 
+# a channel order's index list, built once instead of per zone per frame
+ORDER_INDEX = {name: list(idx) for name, idx in ORDERS.items()}
+
 log = logging.getLogger(__name__)
 
 
@@ -94,7 +97,9 @@ class Engine:
         self._probe = {}                 # zone key -> (mode, LEDs to light, deadline), from the setup guide
         self._probe_done = set()         # zones whose probe just ended: sent dark once, past the configured LEDs
         self._preview = None             # (scene, deadline): a profile drawn for the gallery, never sent to devices
+        self._preview_read = 0.0         # when the page last asked for preview frames (none: don't render them)
         self.preview_frames = {}
+        self._bad_zones = set()          # zones whose layout can't be drawn (logged once each)
         self._last = {}                  # zone key -> (bytes, time sent)
         self._dev_sent = {}              # device id -> time a frame was last sent to it (for Device.max_fps)
         self._geom = {}                  # zone key -> (layout snapshot, namespace)
@@ -161,15 +166,20 @@ class Engine:
         """Render a profile for the gallery's mini stage alongside the real frames, for a few seconds. None stops."""
         with self._lock:
             self._preview = (scene, time.monotonic() + self.PREVIEW_SECONDS) if scene else None
+            self._preview_read = time.monotonic() if scene else 0.0    # someone asked, so render at least once
             if not scene:
                 self.preview_frames = {}
         self._kick.set()
 
+    def mark_preview_read(self):
+        """The page asked for preview frames: it is worth rendering (and waking the loop for) them."""
+        self._preview_read = time.monotonic()
+        self._kick.set()
+
     def _render_preview(self, zones, now, t):
         scene, deadline = self._preview
-        if deadline <= now:
-            self._preview, self.preview_frames = None, {}
-            return
+        if deadline <= now or now - self._preview_read > 0.5:
+            return                       # nobody is looking: don't render a second copy of the whole rig
         out = {}
         for dev in list(self.manager.all().values()):
             if not dev.online:
@@ -255,7 +265,7 @@ class Engine:
         if own and zcfg.get("override"):               # an effect you gave this zone yourself wins
             eff_id, params = zcfg["override"]["effect"], zcfg["override"]["params"]
         elif scene.get("areas"):                       # a profile's effect for the area this zone sits in
-            area = scene["areas"].get(lightsetup.zone_spot(zcfg))
+            area = scene["areas"].get(z.spot)      # cached per zone by _geometry, not rescanned every frame
             if area:
                 eff_id, params = area["effect"], area["params"]
         eff = effects.EFFECTS.get(eff_id)
@@ -309,6 +319,7 @@ class Engine:
         zones = self.store.zones()
         frames = {}
         self._moving = False
+        seen = set()
         for dev in list(self.manager.all().values()):
             online = dev.online
             # (re)connected, or reloaded as a new object (OpenRGB's device list changed): send every zone again
@@ -328,6 +339,7 @@ class Engine:
             wrote = False
             for zone in dev.zones:
                 key = f"{dev.id}/{zone.id}"
+                seen.add(key)
                 zcfg = zones.get(key)
                 with self._lock:
                     probe = self._probe.get(key)
@@ -341,14 +353,26 @@ class Engine:
                         rgb, bri = self._probe_colors(probe[0], probe[1], zone.max_leds, now), 100
                     elif ended:                           # dark past the configured LEDs, then back to normal
                         rgb, bri = np.zeros((zone.max_leds, 3)), 100
-                    elif not zcfg or not zcfg.get("enabled") or geometry.total_leds(zcfg["layout"]) == 0:
+                    elif not zcfg:
                         continue
+                    elif not zcfg.get("enabled") and key not in self._identify:
+                        continue                  # identify works on a switched-off zone, like the probe does
                     else:
-                        rgb, bri = self.render_zone(key, zcfg, now, t)
+                        try:
+                            if geometry.total_leds(zcfg["layout"]) == 0:
+                                continue
+                            rgb, bri = self.render_zone(key, zcfg, now, t)
+                        except Exception:
+                            # one unusable zone must not stop every other zone's frame (and the whole loop)
+                            if key not in self._bad_zones:
+                                self._bad_zones.add(key)
+                                log.exception("zone %s can't be drawn; showing it dark", key)
+                            rgb, bri = np.zeros((max(zcfg["layout"].get("leds", 1) if isinstance(zcfg.get("layout"), dict)
+                                                     else 1, 1), 3)), 0
                 rgb_ints = self._to_bytes(rgb, bri)
                 frames[key] = rgb_ints                                      # preview shows true colours
                 order = zcfg.get("order", "RGB") if zcfg else "RGB"
-                ints = rgb_ints[:, list(ORDERS[order])] if order != "RGB" else rgb_ints
+                ints = rgb_ints[:, ORDER_INDEX[order]] if order != "RGB" else rgb_ints
                 raw = ints.tobytes()
                 prev = self._last.get(key)
                 if prev is None or prev[0] != raw:
@@ -385,11 +409,20 @@ class Engine:
                     dev.flush()
                 except (DeviceError, OpenRGBError, OSError) as e:
                     dev.error = str(e)
+        for key, probe in list(self._probe.items()):
+            if key not in seen and probe[2] <= now:
+                # its zone went away (unplugged, or OpenRGB reloaded the device): a stale probe would count as
+                # busy and hold the whole engine at 30 fps for the rest of the session
+                del self._probe[key]
+        for key in list(self._probe_done):
+            if key not in seen:
+                self._probe_done.discard(key)
         self._frames = (frames, None)
         studio.HOST.tick(t, self.audio.frame if self.audio.active else None)
+        if self._preview and self._preview[1] <= now:
+            self._preview, self.preview_frames = None, {}
         if self._preview:
-            with self._lock:
-                self._render_preview(zones, now, t)
+            self._render_preview(zones, now, t)      # builds its own dict: no lock, no tearing for the reader
         self.frame_id += 1
         self.last_frame = time.monotonic()
         self._identify = {k: d for k, d in self._identify.items() if d > now}

@@ -427,6 +427,45 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/../airglow/api.py")[0], 404)
         self.assertEqual(self.request("GET", "/%2e%2e/run.py")[0], 404)
 
+    def test_a_rejected_post_body_is_not_run_as_a_second_request(self):
+        # A page may POST here with a CORS-simple content type and no X-Airglow header. Its body must never be
+        # read as the next request on that keep-alive connection, or it could smuggle that header in.
+        import socket
+        before = self.ctrl.base_curve
+        inner_body = b'{"name": "silent"}'
+        smuggled = (b"POST /api/fan_curve HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nX-Airglow: 1\r\n"
+                    b"Content-Type: application/json\r\nContent-Length: %d\r\n\r\n" % (self.port, len(inner_body)))
+        smuggled += inner_body
+        outer = (b"POST /api/scene HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: text/plain\r\n"
+                 b"Content-Length: %d\r\n\r\n" % (self.port, len(smuggled))) + smuggled
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        try:
+            sock.sendall(outer)
+            sock.settimeout(2)
+            data = b""
+            try:
+                while True:
+                    chunk = sock.recv(65536)
+                    if not chunk:
+                        break
+                    data += chunk
+            except socket.timeout:
+                pass
+        finally:
+            sock.close()
+        self.assertIn(b"403", data)
+        self.assertEqual(data.count(b"HTTP/1.1"), 1, "the body was parsed as a second request")
+        self.assertEqual(self.ctrl.base_curve, before, "the smuggled request changed the fan curve")
+
+    def test_the_effect_frame_may_only_load_this_servers_scripts(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/runtime/frame.html", headers={"Host": f"127.0.0.1:{self.port}"})
+        resp = conn.getresponse()
+        csp = resp.getheader("Content-Security-Policy")
+        conn.close()
+        self.assertNotIn("127.0.0.1:*", csp, "an effect could load a script from any local port")
+        self.assertIn(f"127.0.0.1:{self.port}", csp)
+
     def test_non_object_body_is_a_400(self):
         status, r = self.request("POST", "/api/automations/pause", [1, 2])
         self.assertEqual(status, 400)

@@ -47,7 +47,7 @@ export function openWelcome() {
   };
   const sheet = $("#sheet");
   const finish = () => { done(); };
-  sheet.addEventListener("cancel", finish);
+  sheet.addEventListener("cancel", finish, { once: true });   // the sheet is shared: don't stack a listener per open
   $("#onb-close").addEventListener("click", finish);
   $("#onb-start").addEventListener("click", () => {
     done();
