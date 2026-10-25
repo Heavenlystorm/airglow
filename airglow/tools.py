@@ -402,6 +402,20 @@ def disable_openrgb_detectors(names, path=None):
     return True
 
 
+def _trusted_download(path):
+    """The setup job names files Airglow downloaded a moment ago. The job file itself sits in a folder other programs
+    can write, and this runs elevated, so only accept paths inside the downloads folder: an administrator's prompt
+    must never run (or copy) a binary chosen from somewhere else on the disk."""
+    try:
+        p = Path(path).resolve()
+        folder = downloads_dir().resolve()
+    except (OSError, TypeError):
+        raise SetupError("the setup job named a file that can't be read") from None
+    if folder not in p.parents or not p.is_file():
+        raise SetupError("the setup job pointed outside the downloads folder, so nothing was installed")
+    return p
+
+
 def install(job, root=None, run=subprocess.run):
     """The elevated part of setup. Returns the list of steps done; raises SetupError on the first failure."""
     s, root = spec(), Path(root or tools_dir())
@@ -411,6 +425,7 @@ def install(job, root=None, run=subprocess.run):
     done = []
 
     def staged(src, name):
+        src = _trusted_download(src)
         dst = stage / name
         shutil.copyfile(src, dst)
         return dst

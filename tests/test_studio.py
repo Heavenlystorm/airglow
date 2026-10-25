@@ -159,6 +159,13 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(second["fx_id"], "fx:me.aurora-wave-2")
         self.assertEqual(len(self.lib.all()), 2)
 
+    def test_a_file_whose_name_is_not_an_effect_id_is_not_listed(self):
+        # it could never be played or deleted (get() rejects the id), so it must not appear as a card at all
+        folder = self.lib._dir("mine", create=True)
+        (folder / "Aurora.html").write_text(builder(), encoding="utf-8")
+        self.assertEqual(self.lib.all(), [])
+        self.assertIsNone(self.lib.get("fx:Aurora"))
+
     def test_install_checks_the_hash_and_keeps_one_rollback(self):
         v1 = builder(author="jane-dev")
         with self.assertRaises(fxformat.FormatError):
@@ -365,6 +372,18 @@ class HostTests(unittest.TestCase):
             self.host.render(e, self.zone(f"z{i}"), 0, {})
         self.assertEqual(len(self.host.instances), studio.MAX_INSTANCES)
         self.assertEqual(next(iter(self.host.problems.values()))["reason"], "busy")
+
+    def test_a_busy_notice_does_not_turn_off_the_effect_that_is_live(self):
+        # A gallery preview asking for a fifth instance used to mark the *live* effect busy, and a busy problem
+        # stopped every zone using that effect from drawing at all.
+        z = self.zone("a")
+        self.host.render(self.eff, z, 0, {})
+        iid = next(iter(self.host.instances))
+        self.host.frames({"frames": {iid: base64.b64encode(bytes([200, 100, 50] * 3)).decode()}})
+        self.host.problems[self.eff.fx_id] = {"effect": self.eff.fx_id, "reason": "busy", "text": "only 4"}
+        colours = self.host.render(self.eff, z, 0, {})
+        self.assertGreater(float(colours.max()), 0.5, "a busy notice must not black the live effect")
+        self.assertNotIn(self.eff.fx_id, self.host.problems, "it is drawing again, so the notice is stale")
 
     def test_unused_effects_unload_and_the_host_stops(self):
         self.host.render(self.eff, self.zone("a"), 0, {})

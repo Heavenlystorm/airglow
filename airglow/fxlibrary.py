@@ -58,6 +58,9 @@ class Library:
             for origin in ORIGINS:
                 d = self._dir(origin, create=False)
                 files = sorted(d.glob("*.html"), key=lambda p: p.stat().st_mtime, reverse=True) if d.is_dir() else []
+                # get() only accepts a stem that is a valid effect id, so listing anything else made a card that
+                # could never be played or deleted ("Aurora.html" in the effects folder, or a stray "ME.FOO.HTML").
+                files = [p for p in files if fxformat.EFFECT_ID.fullmatch(p.stem)]
                 out += [e for e in (self._read(p, origin) for p in files) if e]
         return out
 

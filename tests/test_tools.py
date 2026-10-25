@@ -225,7 +225,9 @@ class InstallTests(unittest.TestCase):
                     "user_sid": "S-1-5-21-7", "openrgb_port": 6750, "lhm_password_sha256": "cd" * 32}
         patches = [mock.patch.object(tools, "spec", return_value=self.spec),
                    mock.patch.object(tools, "_processes", return_value=[]),
-                   mock.patch.object(tools, "pawnio_needed", return_value=False)]
+                   mock.patch.object(tools, "pawnio_needed", return_value=False),
+                   # install() only accepts files from the downloads folder (the job file is world-writable)
+                   mock.patch.object(tools, "downloads_dir", return_value=self.dir)]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -258,6 +260,14 @@ class InstallTests(unittest.TestCase):
         with self.assertRaisesRegex(tools.SetupError, "bytes|checksum"):
             tools.install(self.job, self.root, Commands())
         self.assertFalse((self.root / "OpenRGB").exists())
+        self.assertFalse((self.root / ".staging").exists())
+
+    def test_a_job_naming_a_file_outside_the_downloads_folder_is_refused(self):
+        outside = Path(tempfile.mkdtemp()) / "chosen-by-someone-else.exe"
+        outside.write_bytes(b"MZ")
+        job = {"tools": [], "files": {}, "user_sid": "S-1-5-21-7", "vcredist": str(outside)}
+        with self.assertRaisesRegex(tools.SetupError, "downloads folder"):
+            tools.install(job, self.root, Commands())
         self.assertFalse((self.root / ".staging").exists())
 
     def test_failed_task_registration_is_reported(self):
