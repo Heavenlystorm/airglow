@@ -1,6 +1,8 @@
-<p align="center"><img src="docs/airglow-icon.png" width="96" alt=""></p>
+<p align="center"><img src="docs/airglow-icon.png" width="96" alt="Airglow app icon"></p>
 
 # Airglow
+
+**Free, open-source RGB lighting, fan control and temperature monitoring for Windows 10 and 11.**
 
 [![Latest release](https://img.shields.io/github/v/release/Heavenlystorm/airglow)](https://github.com/Heavenlystorm/airglow/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Heavenlystorm/airglow/total?cachebust=3)](https://github.com/Heavenlystorm/airglow/releases)
@@ -9,13 +11,23 @@
 [![MIT licence](https://img.shields.io/github/license/Heavenlystorm/airglow)](LICENSE)
 [![r/AirglowRGB on Reddit](https://img.shields.io/badge/Reddit-r%2FAirglowRGB-ff4500?logo=reddit&logoColor=white)](https://www.reddit.com/r/AirglowRGB/)
 
-Airglow runs the RGB lighting, the fans and the temperature readouts of a Windows PC from one app. If you've ended up
-with NZXT CAM, Armoury Crate and an RGB program all running at once and fighting over the same LEDs, this replaces
-them. It's free and open source, there's no account, and it doesn't collect anything.
+Airglow is a free, open-source Windows app that runs the RGB lighting, the fans and the temperature readouts of a PC
+from one window. If you've ended up with NZXT CAM, Armoury Crate and an RGB program all running at once and fighting
+over the same LEDs, this replaces them. There's no account, and it doesn't collect anything.
 
-**Show off your setup, ask questions and share effects on [r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/).**
+**[Download for Windows](https://github.com/Heavenlystorm/airglow/releases/latest)** · **[Website](https://heavenlystorm.github.io/airglow/)** · **[Community](https://www.reddit.com/r/AirglowRGB/)**
 
-![The Overview: your lights, temperatures, load, power and fans on one screen](docs/screenshots/overview.png)
+**At a glance**
+- **RGB lighting** for fans, strips, memory, graphics cards, keyboards and mice — NZXT and ASUS controllers directly, and everything else through OpenRGB.
+- **Fan curves** for the processor, graphics card, coolant or whichever is hottest — NZXT hubs, motherboard headers and AIO pumps through LibreHardwareMonitor.
+- **Temperature and hardware monitoring** for CPU, GPU, memory, drives, power and network, with history graphs.
+- **Profiles, automations, screen ambience and music-reactive effects** in the same window.
+- **Six interface designs** and a **Cost per hour** tile at your own electricity tariff.
+- **MIT licensed, no account, no telemetry.** Windows 10 (1809+) and Windows 11.
+
+**Jump to:** [RGB lighting](#rgb-lighting) · [Effect Studio](#effect-studio) · [Fan control](#fan-control-and-automations) · [Install](#install-airglow-on-windows) · [Supported hardware](#supported-rgb-and-fan-hardware) · [Why Airglow](#why-airglow) · [FAQ](#frequently-asked-questions) · [Troubleshooting](#troubleshooting-rgb-and-fan-problems) · [Is it safe?](#is-it-safe) · [Build from source](#build-airglow-from-source)
+
+![Airglow Overview: RGB lighting, temperatures, power, memory and fan speeds at a glance](docs/screenshots/overview.png)
 
 Settings, General also holds six **interface designs** (Graphite, ASCII, Paper, Amber CRT, High contrast and Neon),
 each with a live preview, and the electricity price behind the **Cost per hour** tile, which turns the PC's current
@@ -39,7 +51,19 @@ power draw into what an hour costs. Your lights keep their real colours in every
 [Release notes](https://github.com/Heavenlystorm/airglow/releases/tag/v1.9.1) · [Changelog](CHANGELOG.md)
 </details>
 
-## Lighting
+## Why Airglow
+
+A mixed Windows PC usually ends up with NZXT CAM or Armoury Crate for one controller, iCUE or SignalRGB for the rest
+of the lighting, and FanControl for the fans. Each has its own profiles, startup entry and idea of which temperature
+matters. Airglow puts the three in one window: one profile list, one automation list, and one place for lighting, fans
+and sensors.
+
+It is not a cloud service and there is no account. For devices it does not drive directly, Airglow uses OpenRGB; for
+sensors and motherboard fans, LibreHardwareMonitor. If you already run those helpers, Airglow fits beside them. If you
+only need fan curves, FanControl is still the dedicated tool; if you only have one brand's lighting, the vendor app may
+be enough. Airglow is for the PC where the tools overlap.
+
+## RGB lighting
 Airglow draws your fans and strips where they actually sit in the case and lights them with the colours the hardware
 is showing right now. Setting that up takes a minute: each header blinks while you set it up, you pick the product
 (NZXT accessories are recognised) or count its LEDs with a slider, and drag it into place.
@@ -49,9 +73,9 @@ built in, from a plain colour to screen ambience and two that follow the music, 
 its own. Profiles save a whole look, optionally with a fan curve, and you can share them or try other people's
 before keeping them.
 
-![Lighting: the case as you set it up, with the effect list underneath](docs/screenshots/lighting.png)
+![Airglow RGB lighting editor: the case layout and effect list](docs/screenshots/lighting.png)
 
-## The Studio
+## Effect Studio
 If none of the built-in effects is quite what you want, make your own. Pick a starting point or press **Surprise me**,
 stack layers (gradients, plasma, waves, sparkles, a scanner, a comet around every fan, a chase, a pulse on the beat),
 choose how each one mixes in and which part of the case it lights, and watch the result as you go. With no lights set
@@ -63,7 +87,7 @@ it can retune it in one place. Tick "Show as a control" under any setting, inclu
 their effect panel; a control stays with its own layer when you reorder the stack. Any layer can follow the music, and
 undo/redo, autosave and Revert make experimenting cheap.
 
-![The Studio: layers on the left, your case in the middle, and the effect's palette and knobs on the right](docs/screenshots/studio.png)
+![Airglow Effect Studio: layers, live case preview, palette and controls](docs/screenshots/studio.png)
 
 **Share** first shows the check a reviewer would run — the reviewer list, strobing and frame time, and the exact file
 — then opens GitHub. Once the pull request is merged, everyone can find it in Studio, Community effects, see it on
@@ -72,7 +96,7 @@ rules and copyable recipes. Every effect, yours or someone else's, runs sandboxe
 files or the rest of Airglow. [docs/EFFECT-STUDIO.md](docs/EFFECT-STUDIO.md) has the format, and
 [effects/README.md](effects/README.md) explains sharing.
 
-![Ready to share: the check, the reviewer list and the exact file, before GitHub opens](docs/screenshots/studio-check.png)
+![Airglow effect check: reviewer list, strobing and frame time before sharing](docs/screenshots/studio-check.png)
 
 If you'd rather write code, switch the editor to Code. An effect is a small HTML file with a script that draws on a
 320 × 200 canvas, or simply answers "what colour is this LED right now?" — with `led.local`, `led.fan`, `led.area` and
@@ -81,11 +105,11 @@ If you'd rather write code, switch the editor to Code. An effect is a small HTML
 to start from, [type declarations](docs/effect-api.d.ts) for editors, and you can edit in VS Code with the preview
 reloading every time you save.
 
-![Code mode: the effect's file on the left, the preview in the middle, its controls on the right](docs/screenshots/studio-code.png)
+![Airglow Effect Studio code mode: effect file, live preview and controls](docs/screenshots/studio-code.png)
 
-![Community effects, each shown on your own case](docs/screenshots/community.png)
+![Airglow community RGB effects previewed on your own case](docs/screenshots/community.png)
 
-## Fans and automations
+## Fan control and automations
 Fan curves are a line you drag into shape, following the processor, the graphics card, whichever is hotter, or the
 coolant of a liquid cooler. Besides the fans on an NZXT hub, Airglow can drive the motherboard's own fan headers and
 the pump and fans of many liquid coolers through LibreHardwareMonitor: each one stays on its BIOS or cooler curve
@@ -99,9 +123,9 @@ turns the lights off while the PC sleeps (plenty of boards leave RGB on) and set
 
 | Fans | Automations |
 |---|---|
-| ![Fan curve editor](docs/screenshots/fans.png) | ![Automations](docs/screenshots/automations.png) |
+| ![Airglow fan curve editor for processor, graphics card and coolant temperatures](docs/screenshots/fans.png) | ![Airglow automation rules for lighting and fan profiles](docs/screenshots/automations.png) |
 
-## Installing
+## Install Airglow on Windows
 1. Download `Airglow-stable-Setup.exe` from the [latest release](../../releases/latest) and run it. It installs for
    your Windows user only, so there's no admin prompt, and it starts with Windows. The installer isn't code-signed yet,
    so SmartScreen may say "Windows protected your PC". Choose More info, then Run anyway, or see
@@ -153,7 +177,7 @@ runtime, which the installer would add for you.
   profiles when you switch profiles in Airglow.
 </details>
 
-## Supported hardware
+## Supported RGB and fan hardware
 | Connection | Devices |
 |---|---|
 | Directly over USB | NZXT Control Hub. ASUS Aura USB motherboard controller `0B05:19AF`. |
@@ -167,7 +191,7 @@ runtime, which the installer would add for you.
 Controllers Airglow drives directly come from device plugins, one file per family in
 [`airglow/plugins/`](airglow/plugins/). [CONTRIBUTING.md](CONTRIBUTING.md) explains how to add one.
 
-## Troubleshooting
+## Troubleshooting RGB and fan problems
 A device is missing or says "busy": another RGB program still has it open. Close it (check the tray too) and give it
 a few seconds.
 
@@ -202,7 +226,7 @@ made up for it (kept in `%APPDATA%\Airglow\lhm-auth.json` and left out of diagno
 The installer isn't signed yet. Releases are built by GitHub Actions straight from this repository, never on
 someone's PC, and you can always build it yourself (below) and compare.
 
-## Building from source
+## Build Airglow from source
 ```
 pip install -r requirements-dev.txt
 python -m unittest discover -s tests -t .     # no hardware needed
@@ -213,7 +237,7 @@ python tools\dev_server.py --demo             # the UI on http://127.0.0.1:8790 
 The installer is made with Velopack's `vpk` (`dotnet tool install -g vpk --version 1.2.161`). Releases are built when
 a version tag is pushed; [docs/RELEASING.md](docs/RELEASING.md) has the steps.
 
-## How it's put together
+## How Airglow is built
 - `airglow/devices.py`, `airglow/hw.py`: USB drivers for the NZXT and ASUS controllers and the device layer. The
   packet builders are plain functions, tested against captures from real hardware. Device plugins in
   `airglow/plugins/` decide which controllers get a driver.
@@ -233,6 +257,37 @@ a version tag is pushed; [docs/RELEASING.md](docs/RELEASING.md) has the steps.
 
 The NZXT and ASUS packet formats follow what liquidctl and OpenRGB document for these controllers (credits in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Airglow is its own implementation and includes none of their code.
+
+## Frequently asked questions
+
+### What is Airglow?
+Airglow is a free, open-source Windows app that combines RGB lighting control, fan curves, temperature monitoring and
+hardware readouts in one window. It supports Windows 10 (1809 or newer) and Windows 11.
+
+### Does Airglow work with NZXT CAM, Armoury Crate, iCUE or SignalRGB?
+Airglow is an alternative for the lighting and fan-control parts of those suites. It drives NZXT and ASUS USB
+controllers directly and uses OpenRGB for other RGB devices. Close the other RGB software while Airglow is running so
+two programs don't fight over the same LEDs; Airglow is not a full replacement for every vendor-specific feature.
+
+### Can Airglow control motherboard fans and AIO pumps?
+Yes. Through LibreHardwareMonitor, Airglow can drive motherboard fan headers and the pumps and fans of many AIO
+coolers, including NZXT Kraken, MSI CoreLiquid and Aquacomputer. Graphics-card fans stay with the card.
+
+### Does Airglow collect telemetry?
+No. There is no telemetry and no account. Airglow goes online only for the update check, the community galleries while
+you have them open, and downloading LibreHardwareMonitor and OpenRGB when you ask it to.
+
+### Does Airglow replace FanControl?
+Not exactly. FanControl is a dedicated fan tool with a different feature set. Airglow includes fan curves and can run
+alongside FanControl, switching profiles when you do; it is the better fit when you also want lighting and sensors in
+the same app.
+
+### How much does Airglow cost?
+Nothing. Airglow is MIT licensed and free. There is no paid tier, subscription or account.
+
+### Is Airglow safe?
+Yes: it listens only on 127.0.0.1, API writes need a header websites cannot send, and Studio effects run sandboxed.
+There is no telemetry. See [SECURITY.md](SECURITY.md).
 
 ## Contributing
 Bug reports and ideas are welcome on the [issues](https://github.com/Heavenlystorm/airglow/issues).

@@ -26,7 +26,7 @@ What's verified and what isn't is at the end.
 6. **Share**: your GitHub name, a description, tags and a licence. GitHub opens in your browser with the file filled
    in; press Propose changes, then Create pull request. That's the end of the 10 minutes.
 
-People who code switch the editor to **Code** (the layers become a small script they can change, and the generated
+People who code switch the editor to **Code** (the layers become a small script they can change, and the script
 block can be read back into layers even after reopening) or start from a code template, declare controls with
 `airglow.params({...})`, and can edit in VS Code with the preview reloading on every save. **Export .html** takes an
 effect out; importing one, or dropping it on the Studio, opens it.

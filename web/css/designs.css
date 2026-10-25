@@ -300,7 +300,7 @@
 
 /* ------------------------------------------------------------------ Paper
    A service manual in daylight: warm paper, graphite ink, hairlines, soft warm shadows. Not the cream + serif +
-   sage default that just swaps one AI look for another; the type and structure are still this product's. */
+   sage default that swaps one template for another; the type and structure are still this product's. */
 [data-design="paper"] {
   color-scheme: light;
   --ground: #e8e4db;

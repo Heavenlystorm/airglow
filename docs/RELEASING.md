@@ -37,8 +37,8 @@ user's settings stay in `%APPDATA%\Airglow`, which updates never touch.
   `Airglow.exe --after-setup <pid>`, which waits for Setup to exit and then starts in the tray, unless Setup already
   started it. A fresh silent install never starts Airglow. Only the in-app "Restart to update" quits cleanly first.
 
-> **Note for developers:** never run Setup.exe from the shell of a packaged (MSIX) app, such as the Claude desktop
-> app's terminal. Windows redirects that app's AppData and HKCU writes into the package
+> **Note for developers:** never run Setup.exe from the shell of a packaged (MSIX) app, such as a packaged terminal
+> app. Windows redirects that app's AppData and HKCU writes into the package
 > (`%LOCALAPPDATA%\Packages\<app>\LocalCache`), so Airglow ends up installed only inside that app's view: Explorer,
 > sign-in and the real "start with Windows" entry don't see it. Setup also can't find the running copy there ("0
 > matched directory" in the Velopack log) and fails with "Failed to remove existing application directory". Run
