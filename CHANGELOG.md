@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+- **Six interface designs.** Graphite, ASCII, Paper, Amber CRT, High contrast and Neon, chosen in Settings, General
+  with a live miniature of each. Every design is a full palette plus its own structure — character frames and block
+  meters in ASCII, hairline paper panels, scanlines and amber phosphor, 2px rules and thick focus rings, neon tubes —
+  not a hue rotation. Your lights keep their real colours in every design, the choice is kept per PC, and the Windows
+  title bar follows it.
+- **A Cost per hour tile.** The processor and graphics power Airglow already reads becomes €/h at the tariff you set.
+  It starts at the German household average of 37.97 ct/kWh (Destatis, first half of 2026), is editable in Settings,
+  and the reading can be pinned, graphed and picked in Add a tile like any other. Fresh installs get the tile on the
+  Overview; existing layouts add it with Customize, Add a tile, Cost per hour.
+
 ## 1.9.0
 - **The Studio works with no lights set up.** Previews and gallery cards draw a labelled sample case, so an effect
   can be made on a fresh PC; the starting points (code templates included) now show real live stills instead of a

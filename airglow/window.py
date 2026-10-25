@@ -9,7 +9,16 @@ from . import APP_NAME, paths
 
 log = logging.getLogger(__name__)
 
-BACKGROUND = "#121418"
+# design id -> (window/caption ground, caption text, dark title bar). The palette's ground, so a light design doesn't
+# sit in a black frame. test_designs keeps these ids in step with the design lists.
+TITLEBAR = {
+    "graphite": ("#17181a", "#e9e5da", True),
+    "ascii": ("#060806", "#d9ffd9", True),
+    "paper": ("#e8e4db", "#1c1d19", False),
+    "amber": ("#0c0903", "#ffd39a", True),
+    "contrast": ("#000000", "#ffffff", True),
+    "neon": ("#07070d", "#f1edff", True),
+}
 
 
 def _colorref(hex_color):
@@ -18,7 +27,8 @@ def _colorref(hex_color):
 
 
 class Window:
-    def __init__(self, url, start_hidden=False, on_first_hide=None):
+    def __init__(self, url, start_hidden=False, on_first_hide=None, design="graphite"):
+        self.design = design if design in TITLEBAR else "graphite"
         self.quitting = False
         self._on_first_hide = on_first_hide
         self._hidden_once = False
@@ -27,7 +37,7 @@ class Window:
         # start-up can deadlock pythonnet/WinForms (seen in the frozen build).
         self.win = webview.create_window(
             APP_NAME, url, width=1280, height=840, min_size=(1040, 720),
-            hidden=start_hidden, background_color=BACKGROUND, text_select=False,
+            hidden=start_hidden, background_color=TITLEBAR[self.design][0], text_select=False,
         )
         self.win.events.closing += self._closing
         self.win.events.shown += self._style_title_bar
@@ -43,16 +53,28 @@ class Window:
         return False          # keep running in the tray
 
     def _style_title_bar(self):
-        """Dark Windows 11 title bar in the app's own background colour."""
+        """Style the title bar as soon as there is a handle; the design is re-applied when it changes."""
         try:
-            hwnd = self._hwnd = self.win.native.Handle.ToInt64()
+            self._hwnd = self.win.native.Handle.ToInt64()
+        except Exception as e:  # cosmetic only
+            log.debug("title bar styling skipped: %s", e)
+            return
+        self.apply_design(self.design)
+
+    def apply_design(self, design):
+        """Match the Windows title bar to an interface design. Cosmetic: if DWM ignores it, the window still works."""
+        self.design = design if design in TITLEBAR else "graphite"
+        try:
+            hwnd = self._hwnd or self.win.native.Handle.ToInt64()
+            self._hwnd = hwnd
+            ground, text, dark = TITLEBAR[self.design]
             dwm = ctypes.windll.dwmapi
-            on = ctypes.c_int(1)
+            on = ctypes.c_int(1 if dark else 0)
             dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(on), ctypes.sizeof(on))          # immersive dark mode
-            color = _colorref(BACKGROUND)
+            color = _colorref(ground)
             dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))    # caption colour
-            text = _colorref("#e8eaed")
-            dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text), ctypes.sizeof(text))      # caption text
+            caption = _colorref(text)
+            dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(caption), ctypes.sizeof(caption))  # caption text
         except Exception as e:  # cosmetic only
             log.debug("title bar styling skipped: %s", e)
 

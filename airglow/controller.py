@@ -416,11 +416,23 @@ class Controller:
         hubs = self.hubs
         rpms = [h.fans[i]["rpm"] for h in hubs for i in h.connected_fans()]
         rpms += [c["rpm"] for c in self.fan_channels if c["mode"] == "curve" and c["rpm"]]
+        # What an hour at the current power draw costs. total_power is CPU + graphics; the rest of the PC, the PSU's
+        # losses and any energy accumulated over time are deliberately not estimated here.
+        watts = self.sensors.get("total_power")
+        if watts is None:                       # some LHM builds only report the two halves
+            parts = [self.sensors.get("cpu_power"), self.sensors.get("gpu_power")]
+            watts = round(sum(p for p in parts if p is not None), 1) if any(p is not None for p in parts) else None
+        price = self.store.settings().get("energy_price") or 0.0
+        cost = round(watts / 1000 * price, 3) if watts is not None else None
+        cost_meta = sensors._meta("app/energy_cost", "Cost per hour", "Quick picks", "cost", "€/h", cost, short="Cost")
+        cost_meta["source"] = "CPU + GPU"
+        cost_meta["needs_lhm"] = True
         return [
             sensors._meta("app/fan_duty", "Case fan speed", "Fans", "control", "%",
                           self.fan_duty if self.drives_fans else None, short="Fans"),
             sensors._meta("app/fan_rpm", "Case fan RPM", "Fans", "fan", "RPM",
                           round(sum(rpms) / len(rpms)) if rpms else None, short="Fan RPM"),
+            cost_meta,
         ]
 
     def _update_readings(self, flat):

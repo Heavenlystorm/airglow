@@ -10,6 +10,7 @@ import { R, fmt, level, loadCatalog, pushReadings } from "./readings.js";
 import { countTo, enter, moveMarker } from "./motion.js";
 import { initShortcuts } from "./help.js";
 import { startLive, sync as syncLive } from "./live.js";
+import { applyDesign } from "./design.js";
 
 const TABS = ["overview", "lighting", "studio", "fans", "automations", "devices", "settings"];
 const views = {};                 // loaded on first use: Overview should not wait for Studio, Fans, Settings or Devices
@@ -93,7 +94,7 @@ function renderPins() {
     const b = el.querySelector("b");
     b.className = level(id, meta, v);
     countTo(b, f.num);
-    el.querySelector("i").textContent = f.unit === "°C" || f.unit === "°F" ? "°" : f.unit === "%" ? "%" : ` ${f.unit}`;
+    el.querySelector("i").textContent = f.unit === "°C" || f.unit === "°F" ? "°" : f.unit === "%" ? "%" : f.unit.startsWith("/") ? f.unit : ` ${f.unit}`;
   }
 }
 
@@ -283,6 +284,7 @@ async function boot() {
       get("/api/automations"), get("/api/zones"), get("/api/history"), get("/api/overview"), loadCatalog(),
     ]);
     Object.assign(S, { state, effects, presets, curves, settings, rules, zones, overview });
+    applyDesign(S.settings?.settings?.design);
     S.history = history.filter((p) => p.t > Date.now() / 1000 - HISTORY_SECONDS);
     deviceKey = JSON.stringify([state.zones_rev, state.devices.map((d) => [d.id, d.online, d.zones.length])]);
   } catch (e) {

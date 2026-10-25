@@ -315,6 +315,8 @@ def fmt(meta, value, fahrenheit=False):
         return f"{value:.1f} GB"
     if unit == "V":
         return f"{value:.2f} V"
+    if unit == "€/h":
+        return f"€{value:.2f}/h"
     return f"{value:.0f} {unit}".strip()
 
 

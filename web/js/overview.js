@@ -162,7 +162,7 @@ function setPath(el, d) {
 // ------------------------------------------------------------ updating
 function unavailable(id) {
   const meta = R.meta[id];
-  const needsLhm = !/^(sys\/|app\/|auto\/(ram_load|ram_used|net_|disk_))/.test(id);
+  const needsLhm = meta?.needs_lhm ?? !/^(sys\/|app\/|auto\/(ram_load|ram_used|net_|disk_))/.test(id);
   if (needsLhm && !S.state?.sensors?.online) return "Needs LibreHardwareMonitor";
   if (!meta) return "Not found on this PC";
   return "No reading on this PC";
@@ -219,7 +219,7 @@ function updateSensor(el, t) {
     setPath(el.querySelector(".spark .line"), p.d);
     setPath(el.querySelector(".spark .area"), p.area);
     const lo10 = vals.length ? fmt(meta, Math.min(...vals)) : null, hi10 = vals.length ? fmt(meta, Math.max(...vals)) : null;
-    setHTML(el.querySelector(".minmax"), lo10 && vals.length > 3 ? `<span>${esc(lo10.num)}–${esc(hi10.num)}${esc(hi10.unit === "°C" || hi10.unit === "°F" ? "°" : " " + hi10.unit)}</span> over 10 min` : "");
+    setHTML(el.querySelector(".minmax"), lo10 && vals.length > 3 ? `<span>${esc(lo10.num)}–${esc(hi10.num)}${esc(hi10.unit === "°C" || hi10.unit === "°F" ? "°" : hi10.unit.startsWith("/") ? hi10.unit : " " + hi10.unit)}</span> over 10 min` : "");
   } else if (t.style === "ring") {
     el.querySelectorAll(".num").forEach((n) => countTo(n, f.num));
     el.querySelectorAll(".unit").forEach((u) => setHTML(u, esc(f.unit)));
