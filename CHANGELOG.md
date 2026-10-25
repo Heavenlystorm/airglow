@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.9.3
+The rest of the review's findings.
+
+- **A "too many Studio effects" notice no longer turns off the effect that is live.** Running a fifth Studio effect
+  marked the effect off by its id, and every zone using that id then drew nothing. The notice is advisory now, and
+  it clears as soon as the effect draws again.
+- **The elevated half of helper setup only runs files from Airglow's own downloads folder.** The job file it is
+  handed sits in a folder other programs can write, and it names the installers to copy and run; anything pointing
+  elsewhere on the disk is refused before a byte is copied.
+- **Effect files whose name isn't a valid effect id are no longer listed** - they appeared in the Studio but could
+  never be played or deleted.
+- **Dynamic Lighting:** if Windows refuses the colours for a device, that is reported on the device once, instead of
+  logging a traceback thirty times a second while the device stays dark.
+
 ## 1.9.2
 A bug-fix release after a full review of the app. No new features.
 

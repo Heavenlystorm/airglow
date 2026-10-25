@@ -100,7 +100,13 @@ class LampArrayDevice(Device):
             return
         self.error = None
         n = min(len(colors), len(self._indices))
-        self.lamps.set_colors_for_indices([Color(255, r, g, b) for r, g, b in colors[:n]], self._indices[:n])
+        try:
+            self.lamps.set_colors_for_indices([Color(255, r, g, b) for r, g, b in colors[:n]], self._indices[:n])
+        except Exception as e:
+            # A WinRT/COM failure here is not a DeviceError, so it would otherwise reach the writer's catch-all and
+            # log a traceback thirty times a second. Report it on the device and stop drawing it.
+            self.error = f"Windows wouldn't take the colours for this device ({e})"
+            log.warning("Dynamic Lighting %s: %s", self.name, self.error)
 
 
 class DynamicLightingBridge:

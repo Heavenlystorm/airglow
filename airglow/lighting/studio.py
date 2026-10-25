@@ -153,11 +153,15 @@ class EffectHost:
         """Colours for one zone (called by JsEffect.render on the lighting thread)."""
         key = getattr(z, "key", None) or str(id(z))
         with self._lock:
-            if eff.fx_id in self.problems:
+            problem = self.problems.get(eff.fx_id)
+            if problem and problem.get("reason") != "busy":
                 return np.zeros((z.n, 3))
             inst = self._instance(eff, params)
             if inst is None:
-                return np.zeros((z.n, 3))
+                return np.zeros((z.n, 3))      # no instance slot: dark just for this call
+            if problem:
+                # "busy" only means there was no slot a moment ago; it is drawing again, so drop the notice
+                self.problems.pop(eff.fx_id, None)
             self._last_active = self._clock()
             if inst.use(key, z, self._tick, self._last_active) and inst.loaded:
                 self._emit({"type": "points", "id": inst.id, "points": list(inst.points)})
