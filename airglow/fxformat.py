@@ -489,5 +489,5 @@ def scan(text):
     """Things a reviewer should look at. The sandbox stops all of them anyway; this makes intent visible."""
     flags = [msg for rx, msg in _FLAGS if rx.search(text)]
     if any(len(line) > 400 for line in text.splitlines()):
-        flags.append("has very long lines (minified or generated code is hard to review)")
+        flags.append("has very long lines (minified code is hard to review)")
     return flags
