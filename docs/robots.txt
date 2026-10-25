@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://heavenlystorm.github.io/airglow/sitemap.xml
