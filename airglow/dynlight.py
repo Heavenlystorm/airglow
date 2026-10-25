@@ -130,7 +130,10 @@ class DynamicLightingBridge:
             self.status = f"Couldn't list Dynamic Lighting devices ({e})"
             return
         for dev_id, (arr, name) in found.items():
-            if dev_id not in self.devices:
+            old = self.devices.get(dev_id)
+            if old is None or not old.online:
+                # a device that was re-plugged (or went to sleep) is a new WinRT object: the old one stays
+                # disconnected forever, so it has to be replaced, not kept
                 self.devices[dev_id] = LampArrayDevice(arr, name)
                 log.info("Dynamic Lighting device: %s (%d lamps)", name, arr.lamp_count)
         for gone in set(self.devices) - set(found):

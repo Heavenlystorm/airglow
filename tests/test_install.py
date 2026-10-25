@@ -230,8 +230,12 @@ class UninstallTests(unittest.TestCase):
 
 class ScoopPathTests(unittest.TestCase):
     def test_start_up_follows_scoops_current_link(self):
-        exe = r"C:\Users\me\scoop\apps\airglow\1.6.0\current\Airglow.exe"
-        self.assertEqual(autostart.stable_exe(exe), r"C:\Users\me\scoop\apps\airglow\current\current\Airglow.exe")
+        exe = r"C:\Users\me\scoop\apps\airglow\1.6.0\Airglow.exe"
+        self.assertEqual(autostart.stable_exe(exe), r"C:\Users\me\scoop\apps\airglow\current\Airglow.exe")
+
+    def test_a_path_already_through_current_is_left_alone(self):
+        exe = r"C:\Users\me\scoop\apps\airglow\current\Airglow.exe"
+        self.assertEqual(autostart.stable_exe(exe), exe)
 
     def test_other_paths_are_left_alone(self):
         exe = r"C:\Users\me\AppData\Local\Airglow\current\Airglow.exe"

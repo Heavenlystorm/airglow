@@ -236,14 +236,34 @@ def main(argv=None):
     try:
         Window.run(None)            # blocks until the window is destroyed (Quit)
     finally:
+        # Stop taking requests first, so nothing can change settings or drive hardware while it is being torn down.
+        try:
+            server.shutdown()
+            server.server_close()
+        except Exception:
+            log.exception("stopping the API failed")
         # Close the Studio host before anything else: the lighting thread keeps drawing a few more frames while it
         # stops, and a spawn there used to leave a fresh effect host running for a moment after Airglow quit.
-        studio.HOST.close()
-        updater.stop()
-        ctrl.shutdown()
-        server.shutdown()
-        tray.stop()
-        install.clear_running()
+        try:
+            studio.HOST.close()
+        except Exception:
+            log.exception("stopping the effect host failed")
+        try:
+            updater.stop()
+        except Exception:
+            log.exception("stopping the updater failed")
+        try:
+            ctrl.shutdown()
+        except Exception:
+            log.exception("stopping the controller failed")
+        try:
+            tray.stop()
+        except Exception:
+            log.exception("stopping the tray failed")
+        try:
+            install.clear_running()     # always: a leftover marker makes the next install think Setup killed us
+        except OSError:
+            log.exception("clearing the running marker failed")
         log.info("stopped")
     return 0
 

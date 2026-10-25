@@ -53,6 +53,16 @@ class Server(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", port), Handler)
         bound = self.server_address[1]          # differs from `port` when port=0 (tests)
         self.allowed_hosts = {f"127.0.0.1:{bound}", f"localhost:{bound}"}
+        # The effect frame runs with an opaque (sandboxed) origin, so 'self' does not match its own script: name
+        # this server's origin instead of the former http://127.0.0.1:* wildcard, which let an effect load code
+        # from any other local listener.
+        self.frame_csp = EFFECT_FRAME_CSP.replace("http://127.0.0.1:* http://localhost:*",
+                                                  f"http://127.0.0.1:{bound} http://localhost:{bound}")
+        self.frame_path = (paths.WEB_DIR / "runtime" / "frame.html").resolve()
+
+    def handle_error(self, request, client_address):
+        """A client that drops a keep-alive connection is normal; don't print a traceback for it."""
+        log.debug("connection error from %s", client_address, exc_info=True)
 
     def shutdown(self):
         self.stopping.set()
@@ -67,6 +77,7 @@ class Server(ThreadingHTTPServer):
 class Handler(BaseHTTPRequestHandler):
     server_version = f"Airglow/{__version__}"
     protocol_version = "HTTP/1.1"
+    timeout = 20                      # a stalled request or a half-sent body must not hold a thread forever
 
     def log_message(self, fmt, *args):
         log.debug("%s %s", self.address_string(), fmt % args)
@@ -77,6 +88,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
+        if self.close_connection:
+            self.send_header("Connection", "close")
         for key, value in (extra or {}).items():
             self.send_header(key, value)
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -85,8 +98,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _body(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        if n > MAX_BODY:
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ApiError(400, "request body must be JSON") from None
+        if n > MAX_BODY or n < 0:                 # -1 would make read() block until the peer hangs up
             raise ApiError(413, "request too large")
         try:
             body = json.loads(self.rfile.read(n) or b"{}")
@@ -97,6 +113,10 @@ class Handler(BaseHTTPRequestHandler):
         return body
 
     def _dispatch(self, method):
+        # Only the routes below consume a POST body. Any answer sent before that (403, 413, a 404 for an unknown
+        # POST path) must close the connection: on a keep-alive socket the unread body would otherwise be parsed
+        # as the next request, which let a web page smuggle one carrying the X-Airglow header it may not send.
+        body_read = method != "POST"
         try:
             if self.headers.get("Host") not in self.server.allowed_hosts:
                 raise ApiError(403, "forbidden host")
@@ -110,20 +130,31 @@ class Handler(BaseHTTPRequestHandler):
                 return self._host_stream(urllib.parse.parse_qs(parsed.query))
             if (method == "POST" and path == "/api/fx/host/frames"
                     and self.headers.get("Content-Type") == "application/octet-stream"):
-                return self._send(200, self._host_frames())
+                frames = self._host_frames()
+                body_read = True
+                return self._send(200, frames)
             if path.startswith("/api/"):
                 body = self._body() if method == "POST" else None
+                body_read = True
                 return self._send(200, route(self.server, method, path, body, urllib.parse.parse_qs(parsed.query)))
             if method == "GET":
                 return self._static(path)
             raise ApiError(404, "not found")
         except ApiError as e:
+            self._close_unread(body_read)
             self._send(e.status, {"error": str(e)})
         except ValueError as e:
+            self._close_unread(body_read)
             self._send(400, {"error": str(e)})
         except Exception:
             log.exception("API error on %s %s", method, self.path)
+            self._close_unread(body_read)
             self._send(500, {"error": "Airglow hit an internal error. Details are in the log folder (Settings, About)."})
+
+    def _close_unread(self, body_read):
+        """End the connection when a POST body was never consumed, so it can't be read as the next request."""
+        if not body_read:
+            self.close_connection = True
 
     def _stream(self, query):
         """Server-sent events: "state" every couple of seconds (what GET /api/state returns), and "frames" for the
@@ -149,7 +180,11 @@ class Handler(BaseHTTPRequestHandler):
             while not server.stopping.is_set():
                 now = time.monotonic()
                 if now - last_state >= STREAM_STATE_EVERY:
-                    send("state", route(server, "GET", "/api/state", None))
+                    try:
+                        payload = route(server, "GET", "/api/state", None)
+                        send("state", payload)
+                    except Exception:              # a transient failure (a device going away) is not a disconnect
+                        log.exception("state event failed")
                     last_state = now
                 if want_frames and ctrl.engine.frame_id != last_frame:
                     last_frame, zones = ctrl.engine.frame_id, ctrl.engine.frames
@@ -206,7 +241,7 @@ class Handler(BaseHTTPRequestHandler):
         ctype = TYPES.get(target.suffix.lower()) or mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype.endswith("javascript"):
             ctype += "; charset=utf-8"
-        csp = EFFECT_FRAME_CSP if rel == "runtime/frame.html" else CSP
+        csp = self.server.frame_csp if target == self.server.frame_path else CSP
         stat = target.stat()
         etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
         if self.headers.get("If-None-Match") == etag:
@@ -295,19 +330,22 @@ def _current_areas(ctrl, store):
 
 
 _COOLERS = {"at": -1e9, "found": []}
+_COOLERS_LOCK = threading.Lock()
 
 
 def _coolers():
     """USB-connected AIO coolers, rescanned at most every 30 s (the setup guide asks on every open)."""
-    if time.monotonic() - _COOLERS["at"] > 30:
-        _COOLERS.update(at=time.monotonic(), found=coolers.scan())
-    return _COOLERS["found"]
+    with _COOLERS_LOCK:                       # two requests must not scan the USB bus at the same time
+        if time.monotonic() - _COOLERS["at"] > 30:
+            found = coolers.scan()
+            _COOLERS.update(at=time.monotonic(), found=found)
+        return _COOLERS["found"]
 
 
-def _lit_vendors(ctrl, store):
+def _lit_vendors(store, devices):
     """Lower-case vendors of the devices with a zone switched on."""
     zones = store.zones()
-    return {(d.vendor or "").lower() for d in ctrl.manager.all().values()
+    return {(d.vendor or "").lower() for d in devices
             if any((zones.get(f"{d.id}/{z.id}") or {}).get("enabled") for z in d.zones)}
 
 
@@ -326,13 +364,15 @@ def route(server, method, path, body, query=None):
 
     if method == "GET":
         if path == "/api/state":
-            return {**ctrl.snapshot(), "temp_unit": store.settings()["temp_unit"], "zones_rev": store.zones_rev,
+            devices = list(ctrl.manager.all().values())     # once: merging the three device sources is not free
+            devs = [d.info() for d in devices]
+            return {**ctrl.snapshot(devs), "temp_unit": store.settings()["temp_unit"], "zones_rev": store.zones_rev,
                     "onboarded": store.state.get("onboarded", False),
                     "online_asked": store.state.get("online_asked", False),
                     "update": server.updater.status() if server.updater else None,
-                    "conflicts": conflicts.detect(_lit_vendors(ctrl, store)),
+                    "conflicts": conflicts.detect(_lit_vendors(store, devices)),
                     "studio": studio.HOST.status(),
-                    "setup_pending": lightsetup.pending_count(store, [d.info() for d in ctrl.manager.all().values()]),
+                    "setup_pending": lightsetup.pending_count(store, devs),
                     "readings": ctrl.readings_for(store.tracked_sensors())}
         if path == "/api/sensors":
             return {"sensors": list(ctrl.readings.values()), "lhm_online": bool(ctrl.sensors.get("online"))}
@@ -372,6 +412,7 @@ def route(server, method, path, body, query=None):
             except RuntimeError as e:
                 raise ApiError(502, str(e)) from None
         if path == "/api/preview/frames":
+            ctrl.engine.mark_preview_read()       # only render the preview while someone is looking at it
             return {"zones": ctrl.engine.preview_frames}
         if path == "/api/setup":
             return {"pending": _setup_pending(ctrl, store), "catalog": _catalog(), "spots": lightsetup.spots(),

@@ -55,7 +55,7 @@ export function paintTools() {
 
 export async function refreshTools() {
   clearTimeout(timer);
-  try { st = await get("/api/tools"); } catch { return; }
+  try { st = await get("/api/tools"); } catch { timer = setTimeout(refreshTools, 2000); return; }   // keep watching
   paintTools();
   const s = st.job.state;
   if (lastState && lastState !== s && s === "done") {

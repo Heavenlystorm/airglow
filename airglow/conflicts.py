@@ -79,19 +79,26 @@ def close(name):
     targets = {exe for exe, (n, _) in KNOWN.items() if n == name}
     if not targets:
         raise ValueError(f"'{name}' isn't a known RGB app")
-    failed, services = [], set()
+    failed, services, asked = [], set(), []
     for p in psutil.process_iter(["name", "exe"]):
         exe = (p.info.get("name") or "").lower()
         if exe in targets and exe in SERVICES:
             services.add(p.info["name"])
         elif exe in targets and _path_ok(exe, p.info.get("exe")):
             try:
-                p.terminate()
-                p.wait(timeout=4)
-                log.info("closed %s (pid %d) at the user's request", p.info["name"], p.pid)
-            except (psutil.AccessDenied, psutil.TimeoutExpired):
+                p.terminate()                    # ask every process first, then wait: the page gives us 8 s
+                asked.append(p)
+            except psutil.AccessDenied:
                 failed.append(p.info["name"])
             except psutil.NoSuchProcess:
                 pass
+    for p in asked:
+        try:
+            p.wait(timeout=1.5)
+            log.info("closed %s (pid %d) at the user's request", p.info["name"], p.pid)
+        except (psutil.AccessDenied, psutil.TimeoutExpired):
+            failed.append(p.info["name"])
+        except psutil.NoSuchProcess:
+            pass
     system._proc_cache = (0.0, frozenset())        # re-scan on the next check
     return {"failed": failed, "services": sorted(services)}

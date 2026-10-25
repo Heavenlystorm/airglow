@@ -189,6 +189,8 @@ def plan_header(store, key, zone, body, catalog):
         raise ValueError("pick where it sits")
     count = _int(body.get("count", 1), 1, MAX_UNITS, "How many")
     fans = item["fans"] * count if item["kind"] == "fan" else 1
+    if fans > 12:                                 # the layout validator takes at most 12 fans on one header
+        raise ValueError(f"that would be {fans} fans on one header, and a header takes at most 12")
     if item["leds"]:
         per = item["leds"]
         total = per * fans if item["kind"] in ("fan", "ring") else per * count

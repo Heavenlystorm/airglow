@@ -188,6 +188,8 @@ class NzxtControlHub(HidDevice):
                 p = self.read(64, 50)
                 if p:
                     self._handle(p)
+                else:
+                    time.sleep(0.01)               # non-blocking handle: give the hub a moment instead of spinning
         self.poll()
 
     def _ask_led_info(self):
@@ -270,6 +272,7 @@ class AsusAura(HidDevice):
             p = self.read(65, 100)
             if p and len(p) > 1 and p[1] == expect:
                 return p
+            time.sleep(0.01)                       # the handle is non-blocking, so read() doesn't wait for us
         return None
 
     def open(self):
@@ -285,21 +288,37 @@ class AsusAura(HidDevice):
             if cfg:
                 self.argb_channels, self.board_leds = aura_parse_config(cfg)
                 self.config_known = True
+            else:
+                # No answer: the setup guide offers three headers anyway, so drive them. Returning early from
+                # every write (as the zero counts did) left the zones looking on while nothing changed.
+                self.argb_channels, self.board_leds = 3, 1
+                self.error = "This board didn't report its ARGB headers; three are assumed"
+                log.warning("%s: no config reply, assuming %d ARGB headers", self.name, self.argb_channels)
             self.write([0xEC, 0x52, 0x53, 0x00, 0x01])
-            for ch in range(self.argb_channels + 1):              # 0 = mainboard, 1.. = ARGB
+            direct = set(range(self.argb_channels + 1))           # 0 = mainboard, 1.. = ARGB
+            if self.board_leds:
+                direct.add(self.MAINBOARD_DIRECT_IDX)             # the board's own LEDs go out on channel 4
+            for ch in sorted(direct):
                 self.write([0xEC, 0x35, ch, 0x00, 0x00, 0xFF])    # direct mode
 
     def set_board_colors(self, colors):
-        if not self.board_leds or not colors:
+        if not colors:
             return
+        if not self.board_leds:
+            self.board_leds = len(colors)          # the board never said: use what the layout asks for
         flat = [v for c in colors[: self.board_leds] for v in c]
         with self._lock:
             for p in aura_direct_packets(self.MAINBOARD_DIRECT_IDX, flat, min(len(colors), self.board_leds)):
                 self.write(p)
 
     def set_argb_colors(self, index, colors):
-        if not colors or not 0 <= index < self.argb_channels:
+        if not colors:
             return
+        if not 0 <= index < self.argb_channels:
+            if not self.config_known and index < 3:
+                self.argb_channels = index + 1     # the board never said: assume the header exists
+            else:
+                return
         colors = colors[: self.LEDS_PER_ARGB]
         flat = [v for c in colors for v in c]
         with self._lock:

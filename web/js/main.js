@@ -74,6 +74,7 @@ window.addEventListener("resize", () => moveMarker($(".tab-ink"), $(".tabs a[ari
 // Ctrl+1..7 switch tabs
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key >= "1" && e.key <= "7") {
+    if ($("#sheet").open) return;            // a dialog describes the view it was opened from: don't change it under it
     e.preventDefault();
     location.hash = "#" + TABS[+e.key - 1];
   }
@@ -257,9 +258,13 @@ async function applyState(state) {
   // device list or connection changed: reload zones so the stage and Devices stay accurate
   const key = JSON.stringify([S.state.zones_rev, S.state.devices.map((d) => [d.id, d.online, d.zones.length])]);
   if (key !== deviceKey) {
-    S.zones = await get("/api/zones");
-    deviceKey = key;                 // only once they arrived: a failed fetch is tried again with the next state
-    emit("zones");
+    try {
+      S.zones = await get("/api/zones");
+      deviceKey = key;               // only once they arrived: a failed fetch is tried again with the next state
+      emit("zones");
+    } catch {
+      // enriching the state is optional: never let it swallow the readings or claim the app is offline
+    }
   }
   renderBar();
   emit("state");
@@ -287,6 +292,7 @@ async function boot() {
     applyDesign(S.settings?.settings?.design);
     S.history = history.filter((p) => p.t > Date.now() / 1000 - HISTORY_SECONDS);
     deviceKey = JSON.stringify([state.zones_rev, state.devices.map((d) => [d.id, d.online, d.zones.length])]);
+    lastStateAt = Date.now();        // boot's own state counts: the watchdog must not fire before the stream speaks
   } catch (e) {
     if (!bootFailed) toast(`Couldn't reach Airglow: ${e.message}. Retrying.`, true);
     bootFailed = true;
@@ -307,11 +313,14 @@ async function boot() {
     frames: () => !$('[data-view="lighting"]').hidden || !$('[data-view="devices"]').hidden
       || (!$('[data-view="overview"]').hidden && !!document.querySelector(".tile-lighting")),
   });
-  setInterval(() => loadCatalog().catch(() => {}), 60000);     // new hardware, LHM started later
+  setInterval(() => {
+    if (document.visibilityState === "visible") loadCatalog().catch(() => {});   // not while in the tray
+  }, 60000);                                                   // new hardware, LHM started later
   // The stream normally reports errors, but a silent one (a server that stops sending without closing) would leave
   // old readings on screen with no hint. No update for 12 s while the window is showing means it died.
   setInterval(() => {
-    if (document.visibilityState === "hidden" || !connected || probing) return;
+    // no "!connected" here: lost() sets it, and the probe is exactly what has to run when the stream is silent
+    if (document.visibilityState === "hidden" || probing) return;
     if (Date.now() - lastStateAt < 12000) return;
     lost();
     probing = true;

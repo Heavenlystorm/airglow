@@ -56,6 +56,9 @@ class Instance:
         self.slices = {}               # zone key -> (start, count, z) in the point list
         self.points = []
         self.colors = None             # bytes, 3 per point, from the host
+        self.gen = 0                   # bumps whenever colors is replaced (the decoded copy below is reused)
+        self._decoded = None           # colors as a float array, built once per host frame, not once per zone
+        self._decoded_gen = -1
         self.used_tick = 0
         self.last_used = now
         self.failed = None             # {"reason", "message", "line"}
@@ -87,7 +90,11 @@ class Instance:
         c = self.colors
         if c is None or len(c) < (start + n) * 3:
             return np.zeros((n, 3))
-        return np.frombuffer(c, np.uint8, n * 3, start * 3).reshape(n, 3) / 255.0
+        if self._decoded_gen != self.gen:
+            # the host replaces all the colours once per frame; decoding them per zone was pure repetition
+            self._decoded = np.frombuffer(c, np.uint8).reshape(-1, 3) / 255.0
+            self._decoded_gen = self.gen
+        return self._decoded[start:start + n]
 
 
 def _points(z):
@@ -134,6 +141,8 @@ class EffectHost:
         self._loaded_since_start = set()  # effects sent to this host, for blaming the one that crashes it
         self._closing = False           # Airglow is quitting: never start a host again
         self.connected = False
+        self._log_since = 0.0           # start of the current 1 s window for effect console output
+        self._log_count = 0
 
     @property
     def library(self):
@@ -204,6 +213,9 @@ class EffectHost:
                                     "audio": _audio(audio) if wants_audio else None}
                 self._wake.notify_all()
             self._t_last = t
+            # The host lifecycle (kill/spawn, the memory walk) runs here, under the lock, because it touches the
+            # instance map and _emit, both shared with the render thread. It only does real work when a host
+            # dies, hangs or grows past its memory limit.
             self._watch(now)
 
     # ------------------------------------------------------------ the host page's side
@@ -212,7 +224,8 @@ class EffectHost:
         self._wake.notify_all()
 
     def check_token(self, token):
-        return isinstance(token, str) and secrets.compare_digest(token, self.token)
+        # compare_digest raises on non-ASCII strings, so check that first: a bad token is a 403, not a 500
+        return isinstance(token, str) and token.isascii() and secrets.compare_digest(token, self.token)
 
     def stream(self, send, stopping):
         """Feed the host page over SSE until it disconnects. send(event, data) raises OSError when it's gone."""
@@ -251,6 +264,7 @@ class EffectHost:
                 if inst and isinstance(b64, str):
                     try:
                         inst.colors = base64.b64decode(b64, validate=True)
+                        inst.gen += 1
                     except ValueError:
                         pass
             for iid, p in (body.get("problems") or {}).items():
@@ -260,8 +274,20 @@ class EffectHost:
                                p.get("line") if isinstance(p.get("line"), int) else None)
                     self._emit({"type": "unload", "id": iid})
         for line in (body.get("logs") or [])[:20]:
-            log.info("effect: %s", str(line)[:300])
+            self._log_effect_line(line)
         return {"ok": True}
+
+    def _log_effect_line(self, line):
+        """Effect console output goes to the log, but at a bounded rate and on one line: an effect must not be
+        able to cycle the log (or forge entries) by printing fast."""
+        now = self._clock()
+        if now - self._log_since >= 1.0:
+            self._log_since, self._log_count = now, 0
+        if self._log_count >= 5:
+            return
+        self._log_count += 1
+        text = str(line).replace("\r", " ").replace("\n", " ")[:200]
+        log.info("effect: %s", text)
 
     def packed_frames(self, data):
         """POST /api/fx/host/frames as application/octet-stream: for each instance, the id's length (1 byte), the id,
@@ -284,6 +310,7 @@ class EffectHost:
                 inst = self.instances.get(iid)
                 if inst:
                     inst.colors = colours
+                    inst.gen += 1
         return {"ok": True}
 
     # ------------------------------------------------------------ problems
@@ -408,9 +435,13 @@ class EffectHost:
         try:
             import psutil
             parent = psutil.Process(p.pid)
-            for child in parent.children(recursive=True):        # WebView2's own processes
-                child.kill()
+            try:
+                children = parent.children(recursive=True)        # WebView2's own processes
+            except Exception:
+                children = []                                    # its tree is already going away
             parent.kill()
+            for child in children:
+                child.kill()
         except Exception:  # already gone
             pass
 
@@ -490,11 +521,11 @@ def _provide(fx_id):
         if found is None:
             found = _effects[key] = JsEffect(eff)
             if len(_effects) > 64:
-                _effects.pop(next(iter(_effects)))
+                _effects.pop(next(iter(_effects), None), None)
     if fx_id != fxlibrary.DRAFT:
         _looked_up[fx_id] = (lib, lib.rev, now, found)
         if len(_looked_up) > 64:
-            _looked_up.pop(next(iter(_looked_up)))
+            _looked_up.pop(next(iter(_looked_up), None), None)
     return found
 
 

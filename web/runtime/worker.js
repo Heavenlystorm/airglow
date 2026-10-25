@@ -132,7 +132,9 @@ function sample(frame) {
 // what the Studio shows behind the LEDs: the canvas, or a coarse grid of point colours
 async function backdrop(frame) {
   if (R.def.render) return createImageBitmap(R.canvas);
-  const gw = 80, gh = 50, img = new ImageData(gw, gh);
+  // A coarse grid is enough for a backdrop (it is drawn blurred behind the LEDs); at 80x50 it was 4000 point()
+  // calls per backdrop, each walking the whole layer stack, for a rig with a few hundred LEDs.
+  const gw = 48, gh = 30, img = new ImageData(gw, gh);
   for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
     const c = R.def.point({ x: (x + 0.5) / gw, y: (y + 0.5) / gh, px: (x + 0.5) * W / gw, py: (y + 0.5) * H / gh, area: null, index: 100000 + y * gw + x }, frame) || [0, 0, 0];
     const o = (y * gw + x) * 4;
@@ -164,10 +166,11 @@ self.onmessage = async (e) => {
       const frame = { time: m.time, dt: m.dt, audio };
       const t0 = performance.now();
       const colors = sample(frame);
+      const bmp = m.backdrop ? await backdrop(frame) : null;   // part of this frame's work: count it
       const ms = performance.now() - t0;
       const msg = { type: "frame", colors, ms };
       const transfer = [colors.buffer];
-      if (m.backdrop) { msg.backdrop = await backdrop(frame); transfer.push(msg.backdrop); }
+      if (bmp) { msg.backdrop = bmp; transfer.push(bmp); }
       post(msg, transfer);
     } else if (m.type === "stop") {
       R.def?.dispose?.(R.ctx);

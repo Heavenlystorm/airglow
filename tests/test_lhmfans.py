@@ -115,14 +115,24 @@ class DriverTests(unittest.TestCase):
         self.drv.apply({BOARD: 40})
         self.assertEqual(self.rec.calls, [(BOARD, 40)] * 3)
 
-    def test_errors_are_kept_and_retried(self):
+    def test_errors_are_kept_and_retried_after_a_backoff(self):
         self.rec.fail = "Specified sensor can not be set"
         self.drv.apply({BOARD: 40})
         self.assertEqual(self.drv.errors[BOARD], "Specified sensor can not be set")
         self.rec.fail = None
+        self.drv.apply({BOARD: 40})                                   # still backing off: a refusal is not retried
+        self.assertEqual(self.rec.calls, [])                          # every two seconds, forever
+        self.drv._retry_at[BOARD] = 0.0                               # the backoff has passed
         self.drv.apply({BOARD: 40})
         self.assertEqual(self.rec.calls, [(BOARD, 40)])
         self.assertNotIn(BOARD, self.drv.errors)
+
+    def test_one_slow_channel_does_not_use_up_the_whole_tick(self):
+        ids = [f"/lpc/0/control/{i}" for i in range(10)]
+        self.drv.apply({sid: 40 for sid in ids})
+        self.assertLessEqual(len(self.rec.calls), self.drv.SENDS_PER_TICK)
+        self.drv.apply({sid: 40 for sid in ids})                      # the rest follow on the next tick
+        self.assertEqual(len({sid for sid, _ in self.rec.calls}), len(ids))
 
     def test_a_failed_send_still_hands_the_fan_back(self):
         """Regression (1.6.5): a speed change that failed made Airglow forget the fan, so "Leave alone", quitting

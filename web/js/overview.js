@@ -31,8 +31,16 @@ let saveTimer;
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
-    try { O.layout = await post("/api/overview", O.layout); S.overview = O.layout; emit("pins"); }
-    catch (e) { fail(e); }
+    try {
+      const next = await post("/api/overview", O.layout);
+      // Merge in place. Replacing O.layout would orphan the tile objects an open sheet, a drag or an undo toast
+      // still holds, and every later edit would be written to a copy nobody renders (a half-typed name was lost).
+      const known = new Map(O.layout.tiles.map((t) => [t.id, t]));
+      O.layout.tiles = next.tiles.map((t) => Object.assign(known.get(t.id) || {}, t));
+      O.layout.pins = next.pins;
+      S.overview = O.layout;
+      emit("pins");
+    } catch (e) { fail(e); }
   }, 350);
 }
 
@@ -612,9 +620,14 @@ function tileSheet(id, mode = "main", slot = 0) {
     flip(grid(), live);
     tileSheet(id);
   }));
-  $("#ts-label").addEventListener("input", (e) => { const v = e.target.value.trim(); if (v) t.label = v; else delete t.label; live(); });
+  $("#ts-label").addEventListener("input", (e) => {
+    const v = e.target.value.trim(), tile = tileById(id) || t;
+    if (v) tile.label = v; else delete tile.label;
+    live();
+  });
   $("#ts-pin").addEventListener("change", (e) => {
-    O.layout.pins = e.target.checked ? [...pins, t.sensors[0]].slice(0, 4) : pins.filter((p) => p !== t.sensors[0]);
+    const list = O.layout.pins, sid = t.sensors[0];
+    O.layout.pins = e.target.checked ? [...list, sid].slice(0, 4) : list.filter((p) => p !== sid);
     live();
   });
   $("#ts-remove").addEventListener("click", () => { closeSheet(); removeTile(id); });

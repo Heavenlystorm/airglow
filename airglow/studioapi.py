@@ -1,6 +1,7 @@
 """The Studio's part of the local API (/api/studio/...): your effects, the draft on your lights, sharing, the
 community gallery and the external editor. api.route() hands every /api/studio/ request here."""
 
+import logging
 import os
 import re
 import shutil
@@ -9,6 +10,8 @@ from pathlib import Path
 
 from . import fxformat, fxgallery, fxlibrary
 from .lighting import effects, studio
+
+log = logging.getLogger(__name__)
 
 
 class StudioError(Exception):
@@ -127,8 +130,9 @@ def _route(ctrl, hooks, method, path, body, query):
         source = _source(body)
         return {"source": source, "effect": _summary({**fxformat.validate(source), "fx_id": None, "origin": "draft"}, False)}
     if path == "/api/studio/check":
-        return {"effect": _summary({**fxformat.validate(_source(body)), "fx_id": None, "origin": "draft"}, False),
-                "flags": fxformat.scan(_source(body))}
+        source = _source(body)                   # serialising builder parts is the expensive half: do it once
+        return {"effect": _summary({**fxformat.validate(source), "fx_id": None, "origin": "draft"}, False),
+                "flags": fxformat.scan(source)}
     if path == "/api/studio/draft":                  # "Also on my lights"
         if not body.get("lights"):
             if ctrl.trial and ctrl.trial.get("kind") == "studio":
@@ -219,13 +223,21 @@ def _route(ctrl, hooks, method, path, body, query):
         f = folder / f"{fxformat.slug(eff['name'])}.html"
         f.write_text(source, encoding="utf-8", newline="\n")
         code = shutil.which("code")
-        try:
-            if code:
-                subprocess.Popen([code, str(f)], creationflags=0x08000000)
-            else:
+        opened = False
+        if code:
+            # VS Code's shim is a .cmd, which CreateProcess refuses: run it through the command processor.
+            argv = ([os.environ.get("COMSPEC", "cmd.exe"), "/c", code, str(f)]
+                    if code.lower().endswith((".cmd", ".bat")) else [code, str(f)])
+            try:
+                subprocess.Popen(argv, creationflags=0x08000000)
+                opened = True
+            except OSError as e:
+                log.warning("couldn't start %s (%s); opening the folder instead", code, e)
+        if not opened:
+            try:
                 os.startfile(str(folder))  # noqa: S606 - our own folder in Explorer
-        except OSError:
-            pass
-        return {"file": f.name, "path": str(f), "editor": "VS Code" if code else "Explorer",
+            except OSError:
+                pass
+        return {"file": f.name, "path": str(f), "editor": "VS Code" if opened else "Explorer",
                 "mtime": f.stat().st_mtime_ns}
     raise StudioError(404, "not found")

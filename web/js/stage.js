@@ -151,7 +151,14 @@ function glowFor(ctx, hex, r, peak = 0.55, spread = 4.2) {
   g.addColorStop(0, `rgba(${R},${G},${B},${peak})`);   // the LED's own brightness is the globalAlpha
   g.addColorStop(0.35, `rgba(${R},${G},${B},${peak * 0.29})`);
   g.addColorStop(1, `rgba(${R},${G},${B},0)`);
-  if (cache.size >= GLOW_MAX) cache.clear();
+  if (cache.size >= GLOW_MAX) {
+    // Drop the oldest quarter, not everything: a rainbow refills the map within two frames, and rebuilding a
+    // gradient per LED is exactly what this cache exists to avoid.
+    for (const k of cache.keys()) {
+      cache.delete(k);
+      if (cache.size < GLOW_MAX * 0.75) break;
+    }
+  }
   cache.set(key, g);
   return g;
 }
@@ -295,9 +302,17 @@ function zoneByKey(key) {
 }
 
 async function saveLayout(z, layout) {
+  return saveLayouts([{ z, layout }]);
+}
+
+// One gesture, one reload: a device's zones move together, and N concurrent GET /api/zones used to race, so
+// whichever answered last decided the state the page kept.
+async function saveLayouts(items) {
   try {
-    const r = await post(`/api/zones/${encodeURIComponent(z.key)}`, { ...z.config, layout });
-    z.config = r.config;
+    for (const { z, layout } of items) {
+      const r = await post(`/api/zones/${encodeURIComponent(z.key)}`, { ...z.config, layout });
+      z.config = r.config;
+    }
     S.zones = await get("/api/zones");
     renderOverlay();
     draw();
@@ -374,13 +389,15 @@ function onPointerUp() {
   st.drag = null;
   if (!d || !d.moved) { draw(); return; }
   if (d.mode === "move") {
+    const moved = [];
     for (const k of d.keys) {
       const z = zoneByKey(k);
       const L = { ...z.config.layout };
       L.x = Math.round(clamp(L.x + d.dx / U, 0, VB_W / U) * 100) / 100;
       L.y = Math.round(clamp(L.y + d.dy / U, 0, VB_H / U) * 100) / 100;
-      saveLayout(z, L);
+      moved.push({ z, layout: L });
     }
+    saveLayouts(moved);
     return;
   }
   const z = zoneByKey(d.key);

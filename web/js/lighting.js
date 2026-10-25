@@ -244,7 +244,7 @@ function renderZoneInspector(key) {
   const z = S.zones.zones.find((x) => x.key === key);
   if (!z) { selectedZone = null; return renderSceneInspector(); }
   const ov = z.config.override;
-  const eff = ov ? S.effects.find((e) => e.id === ov.effect) : null;
+  const eff = ov ? (S.effects.find((e) => e.id === ov.effect) || null) : null;   // the effect may be deleted
   const ins = $("#inspector");
   ins.innerHTML = `<div class="ins-block"><div class="ins-title"><h2>${esc(z.config.name)}</h2><button class="text-link" id="zone-done">Back to whole rig</button></div>
       <p class="ins-desc">${esc(z.device.name)}, ${z.positions.length} LED${z.positions.length === 1 ? "" : "s"}${z.config.enabled ? "" : ". This zone is switched off."}</p>
@@ -253,7 +253,8 @@ function renderZoneInspector(key) {
     <div class="ins-block"><div class="field"><div class="lab"><span>Lighting for this zone</span></div>
       <div class="seg" role="radiogroup" id="zone-mode"><button role="radio" data-mode="follow" aria-checked="${!ov}">Main effect</button><button role="radio" data-mode="own" aria-checked="${!!ov}">Its own effect</button></div></div>
       ${ov ? `<div class="field"><label class="lab" for="zone-effect"><span>Effect</span></label><select class="select" id="zone-effect">${S.effects.map((e) => `<option value="${e.id}"${e.id === ov.effect ? " selected" : ""}>${esc(e.name)}</option>`).join("")}</select></div>
-      <div class="ins-block" id="zone-fields">${eff.params.map((p) => fieldHTML(p, ov.params[p.id], "zp")).join("")}</div>` : `<p class="hint">Follows ${esc(effectName(S.state.scene.effect))} like the rest of the rig.</p>`}
+      <div class="ins-block" id="zone-fields">${eff ? eff.params.map((p) => fieldHTML(p, ov.params[p.id], "zp")).join("")
+        : '<p class="hint">That effect isn\'t on this PC any more. Pick another one to give this zone its own light.</p>'}</div>` : `<p class="hint">Follows ${esc(effectName(S.state.scene.effect))} like the rest of the rig.</p>`}
     </div>`;
   const saveZone = coalesce(async (cfg) => {
     const r = await post(`/api/zones/${encodeURIComponent(z.key)}`, cfg);
@@ -272,7 +273,7 @@ function renderZoneInspector(key) {
     try { const r = await post(`/api/zones/${encodeURIComponent(z.key)}`, { ...z.config, override: { effect: e.target.value, params: {} } }); z.config = r.config; renderZoneInspector(key); }
     catch (err) { fail(err); }
   });
-  if (ov) wireFields($("#zone-fields"), eff, ov.params, (params) => {
+  if (ov && eff) wireFields($("#zone-fields"), eff, ov.params, (params) => {
     z.config.override = { effect: ov.effect, params };
     saveZone({ ...z.config });
   });

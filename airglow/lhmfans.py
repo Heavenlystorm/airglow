@@ -68,7 +68,7 @@ def validate_id(sid):
     return sid
 
 
-def http_set(base_url, sensor_id, value, headers=None, timeout=1.5):
+def http_set(base_url, sensor_id, value, headers=None, timeout=0.6):
     """Ask LHM to set one control: value in percent, or None to give it back to its own control."""
     query = urllib.parse.urlencode({"action": "Set", "id": sensor_id, "value": "null" if value is None else f"{value:.0f}"})
     req = urllib.request.Request(f"{base_url.rstrip('/')}/Sensor?{query}", data=b"", method="POST",
@@ -88,6 +88,8 @@ class LhmFans:
     an LHM restart puts the hardware back on its own curve), and gives channels back when they're no longer ours."""
 
     RESEND = 30.0
+    RETRY_AFTER = 15.0          # a channel LHM refuses (or can't answer about) is tried again after this
+    SENDS_PER_TICK = 6          # bound one tick's work: a stalling LHM must not freeze the loop for a minute
 
     def __init__(self, base_url, headers=lambda: {}, send=http_set):
         self._base_url, self._headers, self._send = base_url, headers, send
@@ -95,6 +97,7 @@ class LhmFans:
         # still ours (handed back, and in the failsafe), and tried again next time
         self.sent = {}
         self.errors = {}        # sensor id -> last error text
+        self._retry_at = {}     # sensor id -> don't try again before this (no retry storm on a dead channel)
         # the controller's loop, the power events (failsafe at shutdown) and quitting all send
         self._lock = threading.RLock()
 
@@ -104,18 +107,25 @@ class LhmFans:
         with self._lock:
             self._apply(targets)
 
-    def _apply(self, targets):
+    def _apply(self, targets, force=False):
         now = time.monotonic()
         for sid in [s for s in self.sent if s not in targets]:
             self._release(sid)
+        budget = self.SENDS_PER_TICK
         for sid, duty in targets.items():
             last = self.sent.get(sid)
             if last and last[0] == duty and now - last[1] < self.RESEND:
                 continue
+            if not force and now < self._retry_at.get(sid, 0.0):
+                continue
+            if budget <= 0:
+                break               # the rest on the next tick, rather than 30 blocking POSTs in one go
+            budget -= 1
             try:
                 self._send(self._base_url(), sid, duty, self._headers())
                 self.sent[sid] = (duty, now)
                 self.errors.pop(sid, None)
+                self._retry_at.pop(sid, None)
             except OSError as e:
                 if self.errors.get(sid) != str(e):
                     log.warning("fan %s: %s", sid, e)
@@ -123,6 +133,7 @@ class LhmFans:
                 # an earlier speed may still be on it: keep it ours, so it's handed back (or set to the failsafe
                 # speed) even if no later send gets through; the unknown speed makes the next apply try again
                 self.sent[sid] = (None, float("-inf"))
+                self._retry_at[sid] = now + self.RETRY_AFTER
 
     def release(self, sid):
         with self._lock:
@@ -158,5 +169,5 @@ class LhmFans:
         with self._lock:
             targets = {sid: duty if d is None else max(d, duty) for sid, (d, _) in self.sent.items()}
             self.resend_all()
-            self._apply(targets)
+            self._apply(targets, force=True)      # the failsafe speed must go out now, backoff or not
             return len(targets)

@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.9.2
+A bug-fix release after a full review of the app. No new features.
+
+- **Security: a web page could drive your lights and fans.** A request that didn't carry Airglow's header was
+  refused before its body was read, and on a kept-alive connection that unread body was then parsed as the next
+  request - so a page could smuggle one that did carry the header, and reach settings, effects, fan speeds or the
+  helper setup. Refused requests now close the connection, and the effect frame may only load scripts from Airglow
+  itself rather than any program on this PC. Effect console output is rate-limited so an effect can't cycle the log.
+- **Your settings could be reset by one failed read.** A config file that was momentarily locked (an antivirus
+  scan, the search indexer) or half-written was treated as missing, and the defaults were then written over it.
+  A damaged file is now kept as `.corrupt`, writes are flushed to disk before they replace anything, and nothing is
+  rewritten after a read that failed.
+- **Renaming an Overview tile could lose the end of the name.** The tile settings sheet held a copy that was replaced
+  whenever the layout was saved; typing a little more wrote to the copy nobody shows.
+- **The window could stop updating until you switched tabs.** A closed live connection was reused, and the watchdog
+  that should have recovered it switched itself off after firing once. A failed zone refresh could also freeze every
+  tile behind a false "Airglow isn't responding".
+- **Lights that stayed at their default colours:** lighting-only NZXT controllers (HUE 2, HUE 2 Ambient, N7 boards)
+  never re-asked for their LED report, and an ASUS Aura board that didn't answer its config query accepted colours
+  and sent nothing. A re-plugged Dynamic Lighting device was never picked up until a restart.
+- **Fans:** a stalled LibreHardwareMonitor could hold up the fan loop for up to a minute, and a channel it refused was
+  retried every two seconds forever. Channels now back off, each pass is bounded, and the failsafe speed still goes
+  out immediately. OpenRGB being slow no longer drops every OpenRGB device.
+- **Studio:** the gallery preview no longer renders a second copy of the whole rig every frame (and no longer holds
+  the frame lock while it does), the backdrop grid is a quarter of the work and its time is counted in the frame
+  meter, a preview can no longer leave the lights on an effect that was marked "busy", and the hover preview stops
+  when you move off a card.
+- **Smaller fixes:** "Open in my editor" actually starts VS Code (its `.cmd` shim can't be spawned directly), the
+  zone inspector no longer breaks on an effect that was deleted, unavailable sensors stop drawing a flat line as if
+  they were still reporting, the notice bar is announced to screen readers, Ctrl+1-7 no longer changes the view under
+  an open dialog, and the tray poll stops converting every LED to hex while the window is hidden.
+- **Under the hood:** the test suite now runs every test in three modules that silently skipped their last class,
+  CI compiles and imports every module (a syntax error in the window or effect-host code used to ship green), and a
+  new check parses each browser module the way the browser does and verifies its imports resolve.
+
 ## 1.9.1
 - **Six interface designs.** Graphite, ASCII, Paper, Amber CRT, High contrast and Neon, chosen in Settings, General
   with a live miniature of each. Every design is a full palette plus its own structure — character frames and block

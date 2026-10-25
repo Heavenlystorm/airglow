@@ -54,8 +54,6 @@ class ParseEdgeCaseTests(unittest.TestCase):
         self.assertEqual(s["fans"], [])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class LhmPollerTests(unittest.TestCase):
@@ -94,3 +92,7 @@ class LhmPollerTests(unittest.TestCase):
         p.tree = {"old": 1}
         with self.assertLogs("airglow.sensors", "ERROR"):
             self.assertIsNone(p.poll())
+
+
+if __name__ == "__main__":
+    unittest.main()
