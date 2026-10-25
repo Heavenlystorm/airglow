@@ -182,9 +182,14 @@ class Handler(BaseHTTPRequestHandler):
                 if now - last_state >= STREAM_STATE_EVERY:
                     try:
                         payload = route(server, "GET", "/api/state", None)
-                        send("state", payload)
                     except Exception:              # a transient failure (a device going away) is not a disconnect
+                        payload = None
                         log.exception("state event failed")
+                    if payload is not None:
+                        # Outside the try on purpose: writing to a client that went away raises OSError, which the
+                        # handler below turns into the end of this stream. Catching it here logged a traceback and
+                        # kept looping on the same dead socket, once per state tick, for every closed page.
+                        send("state", payload)
                     last_state = now
                 if want_frames and ctrl.engine.frame_id != last_frame:
                     last_frame, zones = ctrl.engine.frame_id, ctrl.engine.frames

@@ -334,14 +334,18 @@ class Controller:
                 log.info("no temperatures yet (LibreHardwareMonitor starting?); fans at the curve's lowest speed "
                          "for up to %.0f s", self.STARTUP_GRACE)
             target = fans.lowest_duty(curve)
+            why = "lowest speed, no reading yet"
         else:
             target = fans.target_duty(curve, temp, cfg["fan_failsafe_duty"])
+            why = "the curve" if temp is not None else f"failsafe {cfg['fan_failsafe_duty']}%, no reading"
         # "full speed at 90 °C" holds for the hottest part, not only the one the curve follows (the coolant stays
         # cool while a processor whose pump has stopped overheats)
         hottest = fans.source_temp(self.sensors, "max")
         if hottest is not None and hottest >= SAFETY_TEMP:
             target = 100
+            why = f"full speed, {hottest:.0f} °C on the hottest part"
         duty = fans.step_toward(self.fan_duty, target, cfg["fan_max_step"])
+        self._fan_reason(duty, why, temp)
         self.fan_temp, self.fan_target, self.fan_duty = temp, round(target), duty
         for dev, hub in self._fan_devices():
             try:
@@ -386,6 +390,16 @@ class Controller:
         self.fan_channels = [{**ch, "mode": (chosen.get(ch["id"]) or {}).get("mode"),
                               "steady": (chosen.get(ch["id"]) or {}).get("duty"), "target": targets.get(ch["id"]),
                               "error": errors.get(ch["id"])} for ch in found]
+
+    def _fan_reason(self, duty, why, temp):
+        """Say why the fans are where they are whenever it changes materially, so "they run faster than I set"
+        can be answered from the log: which input asked for it."""
+        last = getattr(self, "_fan_reason_last", None)
+        if last and last[1] == why and abs(duty - last[0]) < 5:
+            return
+        self._fan_reason_last = (duty, why)
+        log.info("fans at %d%% (%s), temperature %s", duty, why,
+                 "unknown" if temp is None else f"{temp:.0f} °C")
 
     def failsafe(self, force=False):
         # Windows' shutdown notification, the shutdown itself and quitting all reach this within a second or two;
