@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.1
 - **Six interface designs.** Graphite, ASCII, Paper, Amber CRT, High contrast and Neon, chosen in Settings, General
   with a live miniature of each. Every design is a full palette plus its own structure — character frames and block
   meters in ASCII, hairline paper panels, scanlines and amber phosphor, 2px rules and thick focus rings, neon tubes —

@@ -33,8 +33,10 @@ power draw into what an hour costs. Your lights keep their real colours in every
 - **Undo/redo, autosave and Revert**, typed slider values and a reset, and a debug strip for code.
 - **Share runs the check**: the reviewer list, strobing and frame time, and the exact file, before GitHub opens.
 - Code effects declare controls with `airglow.params({...})`; `console.log` and clickable errors.
+- **Six interface designs** (Graphite, ASCII, Paper, Amber CRT, High contrast and Neon) and a **Cost per hour** tile
+  at your own tariff.
 
-[Release notes](https://github.com/Heavenlystorm/airglow/releases/tag/v1.9.0) · [Changelog](CHANGELOG.md)
+[Release notes](https://github.com/Heavenlystorm/airglow/releases/tag/v1.9.1) · [Changelog](CHANGELOG.md)
 </details>
 
 ## Lighting
