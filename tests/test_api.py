@@ -466,6 +466,18 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("127.0.0.1:*", csp, "an effect could load a script from any local port")
         self.assertIn(f"127.0.0.1:{self.port}", csp)
 
+    def test_a_client_that_leaves_ends_the_stream(self):
+        # 1.9.3 caught the write error together with the state build, so a closed page left the handler looping
+        # and logging a traceback every state tick, for every page that had ever been closed.
+        import socket
+        import time
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        sock.sendall(b"GET /api/stream?frames=0 HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % self.port)
+        sock.recv(4096)                       # the headers and the first event
+        sock.close()                          # the page went away
+        with self.assertNoLogs("airglow.api", level="ERROR"):
+            time.sleep(2.6)                   # a state event is due every 2 s: its write finds the closed socket
+
     def test_non_object_body_is_a_400(self):
         status, r = self.request("POST", "/api/automations/pause", [1, 2])
         self.assertEqual(status, 400)

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.4
+No fan speed was changed in this release.
+
+- **The log no longer fills with tracebacks when a page is closed.** 1.9.3 caught the write error together with
+  the state build, so a closed live-update connection logged "state event failed" with a stack trace every couple
+  of seconds for the rest of the session, and the handler for it never ended. A write to a closed client ends that
+  stream again, as it did before 1.9.3.
+- **The log now says why the fans are at the speed they are at** - "fans at 26% (the curve), temperature 43 °C",
+  or "(failsafe 30%, no reading)", "(full speed, 95 °C on the hottest part)", "(lowest speed, no reading yet)" -
+  whenever the speed changes by 5 points or more. If they ever run faster than you set them, the log will name the
+  input that asked for it.
+
 ## 1.9.3
 The rest of the review's findings.
 
