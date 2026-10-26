@@ -17,9 +17,10 @@ them. It's free and open source, there's no account, and it doesn't collect anyt
 
 ![The Overview: your lights, temperatures, load, power and fans on one screen](docs/screenshots/overview.png)
 
-Settings, General also holds six **interface designs** (Graphite, ASCII, Paper, Amber CRT, High contrast and Neon),
-each with a live preview, and the electricity price behind the **Cost per hour** tile, which turns the PC's current
-power draw into what an hour costs. Your lights keep their real colours in every design.
+Settings, General also holds twelve **interface designs** (Graphite, ASCII, Paper, Amber CRT, High contrast, Neon,
+Kiln, Lumen, Midnight, Spore, Rim and Darkroom), each with a live preview, and the electricity price behind the **Cost
+per hour** tile, which turns the PC's current power draw into what an hour costs. Your lights keep their real colours
+in every design.
 
 <details>
 <summary><b>What's new in 1.9</b></summary>

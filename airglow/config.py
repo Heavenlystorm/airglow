@@ -15,7 +15,8 @@ log = logging.getLogger(__name__)
 
 COLOR_ORDERS = ("RGB", "RBG", "BGR", "BRG", "GBR", "GRB")
 TEMP_SOURCES = ("max", "cpu", "gpu", "liquid")    # liquid: an AIO's or custom loop's coolant, when LHM reads one
-DESIGNS = ("graphite", "ascii", "paper", "amber", "contrast", "neon")   # interface designs; ids match web/js/design.js
+DESIGNS = ("graphite", "ascii", "paper", "amber", "contrast", "neon",
+           "kiln", "lumen", "midnight", "spore", "rim", "darkroom")   # interface designs; ids match web/js/design.js
 MIN_FAN_DUTY = 20          # below this some fans stall
 SAFETY_TEMP = 90           # at or above this the hub fans run at 100% whatever the curve says
 PERIPHERAL_TYPES = {"Keyboard", "Mouse", "Mouse mat", "Headset", "Headset stand", "Gamepad", "Microphone", "Keypad"}
