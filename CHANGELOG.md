@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.10.1
+A performance release for the two grained designs. No fan speed and no light is changed.
+
+- **Spore and Darkroom cost less to draw.** Their speckle was built at runtime by an SVG turbulence filter on a
+  pseudo-element, composited through `mix-blend-mode`: every tile carried a full-size noise raster and a layer of its
+  own, re-blended whenever the reading in the tile changed. The speck is now a 64px tile baked once
+  (`tools/make_grain.py`, `web/img/grain-*.png`) and painted as the panel's own background: no filter, no blend mode,
+  no extra layer. The texture is unchanged (measured: the same speck contrast on screen).
+- **The matte designs no longer blur what is behind a control.** Kiln, Lumen, Midnight, Spore, Rim and Darkroom drop
+  the two 6px backdrop blurs (`chip-btn`, `tile-tools`), which read as glass on paper, plaster and print anyway. A
+  blur over the live stage has to be recomposited every time the lights redraw.
+- **Measured on a 1280x800 window:** the renderer's main thread stays at about 1.2 ms per second of wall time on the
+  Overview in every design, and with an animated effect on screen the new designs no longer sit above Graphite (all
+  within run-to-run noise of each other, 4.4 to 5.6 % of one core). The idle UI was never the cost; the animated
+  stage is, and it costs the same in every design.
+
 ## 1.10.0
 - **Six more interface designs, each its own system rather than a recolour.** Settings, General now offers twelve:
   Graphite, ASCII, Paper, Amber CRT, High contrast and Neon are joined by **Kiln** (a near-black workshop, cream
