@@ -1,5 +1,5 @@
 /* Interface designs.
-   Six looks, each a complete palette and its own structural signature: not a hue rotation. Selectors are scoped to
+   Twelve looks, each a complete palette and its own structural signature: not a hue rotation. Selectors are scoped to
    [data-design="…"] on any element, so the same rules paint the live app (on <html>) and the miniature on a Settings
    card (on the card's preview). Every [data-design] element starts from the Graphite palette below, so a preview keeps
    its own design even when the sheet around it is in another one.
@@ -821,3 +821,808 @@
 [data-design="neon"] .fx[aria-checked="true"],
 [data-design="neon"] .gl-card[aria-selected="true"] { box-shadow: var(--bevel), 0 0 0 1px rgba(255, 47, 168, .5), 0 0 18px rgba(255, 47, 168, .16); }
 [data-design="neon"] .chart .l-1 { stroke-dasharray: 4 3; }
+
+/* ------------------------------------------------------------------ Kiln
+   A kiln door open a crack: a near-black workshop, cream ink, Sitka's cut serif over a plain UI sans, smoked wells
+   and pill controls, and heat only where something is hot. The ramp never types: a warm reading keeps its cream
+   figure and the curve takes the heat. Not a dark luxury page with an orange button. */
+[data-design="kiln"] {
+  color-scheme: dark;
+  --ground: #0b0605;
+  --panel: #170e0b;
+  --raised: #221814;
+  --hover: #2b1e19;
+  --well: #060302;
+  --line: #272220;
+  --line-soft: #1d1715;
+  --ink: #f2eadd;
+  --ink-2: #d5c8b9;
+  --ink-3: #b3a192;
+  --brass: #fe6a00;
+  --brass-hi: #ffcf66;
+  --brass-glow: rgba(254, 106, 0, .3);
+  --hot: #ff6a2b;
+  --warm: #ffa04a;
+  --ok: #d8cbb4;
+  --heat-2: #8a050d;
+  --heat-3: #e13b00;
+  --heat-4: #ff8a00;
+  --heat-5: #ffcf66;
+  --heat-6: #fff9db;
+
+  --display: "Sitka Display", "Sitka Text", Constantia, Georgia, serif;
+  --text: "Segoe UI", "Segoe UI Variable Text", system-ui, sans-serif;
+  --engrave: none;
+  --plate: var(--panel);
+  --bevel: none;
+  --r-stage: 12px;
+  --r-panel: 10px;
+  --r-ctl: 16px;
+
+  --edge: #272220;
+  --edge-strong: #352f2b;
+  --edge-panel: #272220;
+  --edge-stage: #050302;
+  --edge-deep: #1a1412;
+  --scope-bg: #060302;
+  --btn-top: #221814;
+  --btn-top-hover: #2b1e19;
+  --card-top: #170e0b;
+  --card-on-top: #221814;
+  --seg-on-top: #221814;
+  --layer-top: #170e0b;
+  --layer-on-top: #2b1e19;
+  --layer-on-bottom: #170e0b;
+  --power-top: #241a16;
+  --power-bottom: #140d0b;
+  --thumb-top: #ffcf66;
+  --thumb-bottom: #e08a4a;
+  --knob-top: #e8dccb;
+  --knob-bottom: #b3a192;
+  --knob-on-top: #ffcf66;
+  --knob-on-bottom: #fe6a00;
+  --notice-bg: #1d1109;
+  --notice-edge: #3a2114;
+  --notice-ink: #ffd9a8;
+  --why-bg: #120c0a;
+  --toast-top: #221814;
+  --primary-ink: #100704;
+  --primary-edge: #a8460a;
+  --primary-hover-top: #ff8a00;
+  --primary-highlight: rgba(255, 240, 210, .22);
+  --tools-bg: rgba(11, 6, 5, .95);
+  --chip-bg: rgba(6, 3, 2, .9);
+  --sample-bg: rgba(6, 3, 2, .9);
+  --highlight: rgba(242, 234, 221, .04);
+  --control-ring: #35302e;
+  --well-inner: inset 0 1px 2px rgba(0, 0, 0, .55);
+  --well-inner-soft: inset 0 1px 1px rgba(0, 0, 0, .45);
+  --shadow-1: none;
+  --shadow-2: 0 24px 48px -24px rgba(4, 2, 1, .8);
+  --shadow-3: 0 40px 80px -30px rgba(4, 2, 1, .85);
+
+  --data-line: var(--ink);
+  --data-spark: var(--ink-2);
+  --data-2: var(--ink-3);
+  --data-area: var(--ink);
+
+  --focus-w: 2px;
+  --focus-offset: 3px;
+  --focus-color: var(--brass);
+
+  --wdth: 92;
+  --wdth-condensed: 88;
+  --wdth-mark: 84;
+  --mono-stretch: 88%;
+
+  --code-bg: #060302;
+  --code-gutter: #0b0605;
+  --code-dim: #8a7a6c;
+  --code-ink: #f2eadd;
+  --code-keyword: #ffb066;
+  --code-def: #ffcf66;
+  --code-string: #c8b48a;
+  --code-number: #ff8a00;
+  --code-comment: #8a7a6c;
+  --code-tag: #ff8a5c;
+  --code-attribute: #ffcf66;
+  --code-property: #d5c8b9;
+  --code-selection: rgba(254, 106, 0, .2);
+  --code-active-line: rgba(242, 234, 221, .04);
+
+  --dsg-glow: 0 0 12px rgba(255, 138, 0, .28);
+  --dsg-knob-ring: 0 0 0 1px #35302e;
+}
+/* The cut serif is the voice: heads, every figure in a tile. It stays at one weight, so size carries the hierarchy. */
+[data-design="kiln"] :is(h1, h2, h3) { font-weight: 500; letter-spacing: -.02em; }
+[data-design="kiln"] .tile .num,
+[data-design="kiln"] .ro .big,
+[data-design="kiln"] .su-counter .num,
+[data-design="kiln"] .dsg-num { font-family: var(--display); font-weight: 500; letter-spacing: -.03em; font-variant-numeric: lining-nums tabular-nums; }
+[data-design="kiln"] .wordmark { font-weight: 500; letter-spacing: -.01em; }
+/* Ember is a fill, never a letter: a warm reading keeps its cream figure and lets the curve take the heat. */
+[data-design="kiln"] .tile[data-level="warm"] .num,
+[data-design="kiln"] .tile[data-level="hot"] .num { color: var(--ink); }
+[data-design="kiln"] .tile[data-level="warm"] .spark .line { stroke: var(--heat-4); }
+[data-design="kiln"] .tile[data-level="hot"] .spark .line { stroke: var(--heat-6); }
+[data-design="kiln"] .tile[data-level="warm"] .g-fill { stroke: var(--heat-4); }
+[data-design="kiln"] .tile[data-level="hot"] .g-fill { stroke: var(--heat-6); }
+[data-design="kiln"] .tile[data-level="warm"] .hbar .fill { background: var(--heat-4); }
+[data-design="kiln"] .tile[data-level="hot"] .hbar .fill { background: var(--heat-6); }
+/* A warm keyline on every well, like brickwork seen by the fire: a border, never a ramp fill. */
+[data-design="kiln"] .tile { overflow: hidden; border-color: color-mix(in srgb, var(--heat-2) 45%, var(--line)); }
+/* Pills on controls, smoked wells on fields: a control is a pebble, not a plate. */
+[data-design="kiln"] :is(.btn, .seg, .seg button, .chip-btn, .icon-btn, .power, .tab-ink, .tag, .dsg-btn) { border-radius: 999px; }
+[data-design="kiln"] :is(.pcard, .preset, .gl-card, .dsg-card, .sheet, .toast) { box-shadow: none; }
+[data-design="kiln"] .btn.primary { box-shadow: inset 0 1px 0 var(--primary-highlight); }
+/* The ramp still shows at miniature scale, on the meter: a range track, never a fill behind type. */
+[data-design="kiln"] .dsg-meter i { background: linear-gradient(90deg, var(--heat-2), var(--heat-4), var(--heat-6)); }
+
+/* ------------------------------------------------------------------ Lumen
+   A night console with a literary voice: violet-black ground, near-white ink, Sitka's serif set lowercase and a step
+   large over the plain sans, 10px hairline wells, a blueprint grid inside a chart, one molten brass signal. The
+   warmth is rationed and the violet never climbs into a field. */
+[data-design="lumen"] {
+  color-scheme: dark;
+  --ground: #060510;
+  --panel: #0d0b19;
+  --raised: #161324;
+  --hover: #1d1930;
+  --well: #030208;
+  --line: #262436;
+  --line-soft: #1a182a;
+  --ink: #f3f0f8;
+  --ink-2: #cfccd8;
+  --ink-3: #9c98aa;
+  --brass: #ffa54b;
+  --brass-hi: #ffd9a8;
+  --brass-glow: rgba(255, 165, 75, .26);
+  --hot: #f3798b;
+  --warm: #ffc27a;
+  --ok: #72d699;
+  --blueprint-rule: #1a1728;
+
+  --display: "Sitka Display", "Sitka Text", Georgia, serif;
+  --text: "Segoe UI", "Segoe UI Variable Text", system-ui, sans-serif;
+  --engrave: none;
+  --plate: var(--panel);
+  --bevel: none;
+  --r-stage: 10px;
+  --r-panel: 10px;
+  --r-ctl: 10px;
+
+  --edge: #262436;
+  --edge-strong: #3d3951;
+  --edge-panel: #262436;
+  --edge-stage: #060510;
+  --edge-deep: #161324;
+  --scope-bg: #030208;
+  --btn-top: #161324;
+  --btn-top-hover: #1d1930;
+  --card-top: #0d0b19;
+  --card-on-top: #161324;
+  --seg-on-top: #161324;
+  --layer-top: #0d0b19;
+  --layer-on-top: #1d1930;
+  --layer-on-bottom: #0d0b19;
+  --power-top: #1d1930;
+  --power-bottom: #0d0b19;
+  --thumb-top: #f3f0f8;
+  --thumb-bottom: #9c98aa;
+  --knob-top: #f3f0f8;
+  --knob-bottom: #9c98aa;
+  --knob-on-top: #ffd9a8;
+  --knob-on-bottom: #ffa54b;
+  --notice-bg: #1a1119;
+  --notice-edge: #3d2438;
+  --notice-ink: #ffd9c9;
+  --why-bg: #0a0913;
+  --toast-top: #161324;
+  --primary-ink: #090714;
+  --primary-edge: #a35f22;
+  --primary-hover-top: #ffc27a;
+  --primary-highlight: rgba(255, 240, 220, .25);
+  --tools-bg: rgba(6, 5, 16, .95);
+  --chip-bg: rgba(6, 5, 16, .9);
+  --sample-bg: rgba(3, 2, 8, .9);
+  --highlight: rgba(243, 240, 248, .035);
+  --control-ring: #3d3951;
+  --well-inner: inset 0 1px 2px rgba(0, 0, 0, .6);
+  --well-inner-soft: inset 0 1px 1px rgba(0, 0, 0, .5);
+  --shadow-1: none;
+  --shadow-2: 0 28px 64px -30px rgba(2, 1, 8, .8);
+  --shadow-3: 0 40px 90px -30px rgba(2, 1, 8, .85);
+
+  --data-line: var(--ink);
+  --data-spark: var(--ink-2);
+  --data-2: var(--brass);
+  --data-area: var(--ink);
+
+  --focus-w: 2px;
+  --focus-offset: 2px;
+  --focus-color: var(--brass);
+
+  --wdth: 90;
+  --wdth-condensed: 88;
+  --wdth-mark: 86;
+  --mono-stretch: 88%;
+
+  --code-bg: #030208;
+  --code-gutter: #060510;
+  --code-dim: #6a6678;
+  --code-ink: #f3f0f8;
+  --code-keyword: #ffa54b;
+  --code-def: #f3798b;
+  --code-string: #72d699;
+  --code-number: #ffc27a;
+  --code-comment: #6a6678;
+  --code-tag: #ffd9a8;
+  --code-attribute: #f3798b;
+  --code-property: #cfccd8;
+  --code-selection: rgba(255, 165, 75, .18);
+  --code-active-line: rgba(243, 240, 248, .03);
+
+  --dsg-glow: none;
+  --dsg-knob-ring: 0 0 0 1px #3d3951;
+}
+/* Lowercase is the register: heads, nav, tabs and labels. The serif sets a step large, one weight. */
+[data-design="lumen"] :is(h1, h2, h3, .wordmark, .tabs a, .tile-name, .tile-head, .set-group > h2, .set-row .label, .dsg-name, .tag, .why-chip) { text-transform: lowercase; }
+[data-design="lumen"] :is(h1, h2, h3) { font-weight: 400; letter-spacing: -.015em; }
+[data-design="lumen"] h1 { font-size: 31px; }
+[data-design="lumen"] .why-chip { letter-spacing: 0; font-weight: 500; }
+/* A chart in a well, over the blueprint grid: 48px pitch, never under running text. */
+[data-design="lumen"] .chart {
+  background-image: linear-gradient(var(--blueprint-rule) 1px, transparent 1px), linear-gradient(90deg, var(--blueprint-rule) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: -1px -1px;
+}
+[data-design="lumen"] :is(.btn, .seg, .seg button, .chip-btn, .icon-btn, .power, .tab-ink, .tag) { border-radius: 999px; }
+[data-design="lumen"] :is(.tile, .pcard, .preset, .gl-card, .dsg-card, .sheet, .toast) { box-shadow: none; }
+[data-design="lumen"] .btn.primary { box-shadow: none; }
+/* The blueprint grid survives into the miniature, inside its well. */
+[data-design="lumen"] .dsg-panel {
+  background-image: linear-gradient(var(--blueprint-rule) 1px, transparent 1px), linear-gradient(90deg, var(--blueprint-rule) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ------------------------------------------------------------------ Midnight
+   A cold night instrument whose blue is the ground itself: deep midnight blue to every edge, cool white ink,
+   Bahnschrift at its widest and lightest for heads and figures, surfaces cut square in steps of lighter blue, one
+   azure signal. No outline on a surface and no warm light anywhere. */
+[data-design="midnight"] {
+  color-scheme: dark;
+  --ground: #02071d;
+  --panel: #071129;
+  --raised: #0f1c37;
+  --hover: #132441;
+  --well: #01040f;
+  --line: #1c2a48;
+  --line-soft: #101b31;
+  --ink: #e7f0f9;
+  --ink-2: #bddcf7;
+  --ink-3: #98a9c1;
+  --brass: #6bcbf7;
+  --brass-hi: #a5e4ff;
+  --brass-glow: rgba(107, 203, 247, .24);
+  --hot: #3483ad;
+  --warm: #8fd8ff;
+  --ok: #6bcbf7;
+
+  --display: "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  --text: "Bahnschrift", "Segoe UI", system-ui, sans-serif;
+  --engrave: none;
+  --plate: var(--panel);
+  --bevel: none;
+  --r-stage: 0;
+  --r-panel: 0;
+  --r-ctl: 0;
+
+  --edge: #1c2a48;
+  --edge-strong: #364868;
+  --edge-panel: #1c2a48;
+  --edge-stage: #02071d;
+  --edge-deep: #0f1c37;
+  --scope-bg: #01040f;
+  --btn-top: #0f1c37;
+  --btn-top-hover: #132441;
+  --card-top: #071129;
+  --card-on-top: #0f1c37;
+  --seg-on-top: #0f1c37;
+  --layer-top: #071129;
+  --layer-on-top: #0f1c37;
+  --layer-on-bottom: #071129;
+  --power-top: #0f1c37;
+  --power-bottom: #071129;
+  --thumb-top: #e7f0f9;
+  --thumb-bottom: #98a9c1;
+  --knob-top: #e7f0f9;
+  --knob-bottom: #98a9c1;
+  --knob-on-top: #a5e4ff;
+  --knob-on-bottom: #6bcbf7;
+  --notice-bg: #0a1830;
+  --notice-edge: #1c3a58;
+  --notice-ink: #cbe9ff;
+  --why-bg: #050d22;
+  --toast-top: #0f1c37;
+  --primary-ink: #040c22;
+  --primary-edge: #2a6a8f;
+  --primary-hover-top: #a5e4ff;
+  --primary-highlight: rgba(220, 240, 255, .3);
+  --tools-bg: rgba(2, 7, 29, .95);
+  --chip-bg: rgba(2, 7, 29, .9);
+  --sample-bg: rgba(1, 4, 15, .9);
+  --highlight: rgba(231, 240, 249, .03);
+  --control-ring: #364868;
+  --well-inner: inset 0 1px 3px rgba(0, 0, 0, .55);
+  --well-inner-soft: inset 0 1px 2px rgba(0, 0, 0, .45);
+  --shadow-1: none;
+  --shadow-2: 0 24px 48px -24px rgba(1, 3, 12, .8);
+  --shadow-3: 0 40px 80px -30px rgba(1, 3, 12, .85);
+
+  --data-line: var(--ink);
+  --data-spark: var(--brass);
+  --data-2: var(--ink-3);
+  --data-area: var(--brass);
+
+  --focus-w: 2px;
+  --focus-offset: 2px;
+  --focus-color: var(--brass);
+
+  --wdth: 100;
+  --wdth-condensed: 96;
+  --wdth-mark: 100;
+  --mono-stretch: 90%;
+
+  --code-bg: #01040f;
+  --code-gutter: #02071d;
+  --code-dim: #5d718f;
+  --code-ink: #e7f0f9;
+  --code-keyword: #6bcbf7;
+  --code-def: #a5e4ff;
+  --code-string: #8fd8ff;
+  --code-number: #bddcf7;
+  --code-comment: #5d718f;
+  --code-tag: #6bcbf7;
+  --code-attribute: #a5e4ff;
+  --code-property: #bddcf7;
+  --code-selection: rgba(107, 203, 247, .2);
+  --code-active-line: rgba(231, 240, 249, .03);
+
+  --dsg-glow: none;
+  --dsg-knob-ring: none;
+}
+/* The wide light cut is the voice; a figure that is the point takes it too. */
+[data-design="midnight"] :is(h1, h2, h3) { font-weight: 300; letter-spacing: .005em; }
+[data-design="midnight"] .tile .num,
+[data-design="midnight"] .ro .big,
+[data-design="midnight"] .su-counter .num,
+[data-design="midnight"] .dsg-num { font-family: var(--display); font-weight: 300; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+[data-design="midnight"] .wordmark { font-weight: 300; letter-spacing: .06em; }
+/* Square at radius 0 to every corner of the instrument. */
+[data-design="midnight"] :is(.btn, .seg, .seg button, .switch span, .switch span::after, .text, select.select, .chip-btn, .icon-btn, .tile, .sheet, .pcard, .preset, .picker, .gl-card, .toast, .power, .tab-ink, .tag, .dsg-card, .dsg-preview, .dsg-panel, .dsg-btn, .dsg-switch, .dsg-switch::after, .thumb, .why-dot, .dot, ::-webkit-scrollbar-thumb) { border-radius: 0; }
+[data-design="midnight"] input[type=range]::-webkit-slider-thumb { border-radius: 0; }
+/* Depth is a step of lighter blue, never an outline, never a shadow. */
+[data-design="midnight"] :is(.tile, .pcard, .preset, .gl-card, .dsg-card) { border-color: transparent; box-shadow: none; }
+[data-design="midnight"] .tile:hover { background: var(--raised); border-color: transparent; }
+[data-design="midnight"] .dsg-card[aria-checked="true"] { box-shadow: none; }
+
+/* ------------------------------------------------------------------ Spore
+   A cellar at night: coffee-black ground warmed toward brown, a speck grain on its wells, parchment Cambria over
+   the plain sans, soft pills, and one oyster-pink fill. Close and handmade because the warmth sits in the ground,
+   the grain and the figures. Never a second hue, never a glow. */
+[data-design="spore"] {
+  color-scheme: dark;
+  --ground: #0f0a06;
+  --panel: #19120e;
+  --raised: #271d17;
+  --hover: #2f231b;
+  --well: #0a0604;
+  --line: #372f28;
+  --line-soft: #241c16;
+  --ink: #efe7d8;
+  --ink-2: #d3c9bb;
+  --ink-3: #9d9388;
+  --brass: #e89f92;
+  --brass-hi: #f6c3ba;
+  --brass-glow: rgba(232, 159, 146, .2);
+  --hot: #c16d45;
+  --warm: #e8b98f;
+  --ok: #c9c0a4;
+  --grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.6 0 0 0 0 0.55 0 0 0 0 0.45 0 0 0 0.35 0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+
+  --display: "Cambria", Georgia, "Sitka Text", serif;
+  --text: "Segoe UI", "Segoe UI Variable Text", system-ui, sans-serif;
+  --engrave: none;
+  --plate: var(--panel);
+  --bevel: none;
+  --r-stage: 14px;
+  --r-panel: 14px;
+  --r-ctl: 999px;
+
+  --edge: #372f28;
+  --edge-strong: #463c33;
+  --edge-panel: #372f28;
+  --edge-stage: #0f0a06;
+  --edge-deep: #271d17;
+  --scope-bg: #0a0604;
+  --btn-top: #271d17;
+  --btn-top-hover: #2f231b;
+  --card-top: #19120e;
+  --card-on-top: #271d17;
+  --seg-on-top: #271d17;
+  --layer-top: #19120e;
+  --layer-on-top: #271d17;
+  --layer-on-bottom: #19120e;
+  --power-top: #2b201a;
+  --power-bottom: #140d09;
+  --thumb-top: #f6c3ba;
+  --thumb-bottom: #c99a90;
+  --knob-top: #efe7d8;
+  --knob-bottom: #9d9388;
+  --knob-on-top: #f6c3ba;
+  --knob-on-bottom: #e89f92;
+  --notice-bg: #241611;
+  --notice-edge: #43291f;
+  --notice-ink: #f6d9d1;
+  --why-bg: #140d09;
+  --toast-top: #271d17;
+  --primary-ink: #0f0a06;
+  --primary-edge: #a2685e;
+  --primary-hover-top: #f6c3ba;
+  --primary-highlight: rgba(255, 245, 235, .25);
+  --tools-bg: rgba(15, 10, 6, .95);
+  --chip-bg: rgba(10, 6, 4, .9);
+  --sample-bg: rgba(10, 6, 4, .9);
+  --highlight: rgba(239, 231, 216, .035);
+  --control-ring: #463c33;
+  --well-inner: inset 0 1px 3px rgba(0, 0, 0, .5);
+  --well-inner-soft: inset 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-1: none;
+  --shadow-2: 0 16px 40px rgba(8, 5, 3, .5);
+  --shadow-3: 0 28px 64px rgba(8, 5, 3, .55);
+
+  --data-line: var(--ink);
+  --data-spark: var(--ink-2);
+  --data-2: var(--ink-3);
+  --data-area: var(--ink);
+
+  --focus-w: 2px;
+  --focus-offset: 2px;
+  --focus-color: var(--brass-hi);
+
+  --wdth: 92;
+  --wdth-condensed: 88;
+  --wdth-mark: 84;
+  --mono-stretch: 88%;
+
+  --code-bg: #0a0604;
+  --code-gutter: #0f0a06;
+  --code-dim: #7b7064;
+  --code-ink: #efe7d8;
+  --code-keyword: #e89f92;
+  --code-def: #e8b98f;
+  --code-string: #c9c0a4;
+  --code-number: #f6c3ba;
+  --code-comment: #7b7064;
+  --code-tag: #d3c9bb;
+  --code-attribute: #f6c3ba;
+  --code-property: #e8b98f;
+  --code-selection: rgba(232, 159, 146, .18);
+  --code-active-line: rgba(239, 231, 216, .03);
+
+  --dsg-glow: none;
+  --dsg-knob-ring: 0 0 0 1px #463c33;
+}
+/* One soft serif at one weight: hierarchy is size, never bolding. */
+[data-design="spore"] :is(h1, h2, h3) { font-weight: 400; letter-spacing: -.012em; }
+[data-design="spore"] .tile .num,
+[data-design="spore"] .ro .big,
+[data-design="spore"] .su-counter .num,
+[data-design="spore"] .dsg-num { font-family: var(--display); font-weight: 400; letter-spacing: -.01em; font-variant-numeric: lining-nums; }
+[data-design="spore"] .wordmark { font-weight: 400; letter-spacing: -.01em; }
+/* The speck grain, screened over a well and nothing else: never a sheet, so it never sits under running text. */
+[data-design="spore"] .tile { position: relative; isolation: isolate; }
+[data-design="spore"] .tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: .14;
+  mix-blend-mode: screen;
+  background-image: var(--grain-image);
+  background-size: 200px 200px;
+}
+[data-design="spore"] :is(.btn, .seg, .seg button, .chip-btn, .icon-btn, .power, .tab-ink, .tag, .dsg-btn) { border-radius: 999px; }
+/* Fields take the heavier edge; cards keep a hairline so the grain reads. */
+[data-design="spore"] :is(.text, select.select) { border-width: 1.5px; border-color: var(--ink-3); }
+[data-design="spore"] :is(.pcard, .preset, .gl-card, .dsg-card, .toast) { box-shadow: none; }
+[data-design="spore"] .btn.primary { box-shadow: none; }
+/* The speck grain reads in the miniature too, on its well. */
+[data-design="spore"] .dsg-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .5;
+  mix-blend-mode: screen;
+  background-image: var(--grain-image);
+  background-size: 120px 120px;
+}
+
+/* ------------------------------------------------------------------ Rim
+   An instrument at night: warm black paper, warm off-white ink, the plain sans at a medium weight for every head,
+   the mono for every measurement, square surfaces parted by hairlines with corner ticks, an orange signal and a
+   sky-blue second. Exact because every edge is hard. Not a starfield, not a halo. */
+[data-design="rim"] {
+  color-scheme: dark;
+  --ground: #030201;
+  --panel: #080604;
+  --raised: #100d09;
+  --hover: #17130e;
+  --well: #010100;
+  --line: #24211c;
+  --line-soft: #14110e;
+  --ink: #efebe4;
+  --ink-2: #cecac3;
+  --ink-3: #9c9890;
+  --brass: #f97c3d;
+  --brass-hi: #ffb08a;
+  --brass-glow: rgba(249, 124, 61, .22);
+  --hot: #f97c3d;
+  --warm: #ffb08a;
+  --ok: #6db0f4;
+
+  --display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --text: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, monospace;
+  --engrave: none;
+  --plate: var(--panel);
+  --bevel: none;
+  --r-stage: 0;
+  --r-panel: 0;
+  --r-ctl: 0;
+
+  --edge: #24211c;
+  --edge-strong: #3a3630;
+  --edge-panel: #24211c;
+  --edge-stage: #030201;
+  --edge-deep: #141110;
+  --scope-bg: #010100;
+  --btn-top: #100d09;
+  --btn-top-hover: #17130e;
+  --card-top: #080604;
+  --card-on-top: #100d09;
+  --seg-on-top: #100d09;
+  --layer-top: #080604;
+  --layer-on-top: #100d09;
+  --layer-on-bottom: #080604;
+  --power-top: #17130e;
+  --power-bottom: #080604;
+  --thumb-top: #efebe4;
+  --thumb-bottom: #9c9890;
+  --knob-top: #efebe4;
+  --knob-bottom: #9c9890;
+  --knob-on-top: #ffb08a;
+  --knob-on-bottom: #f97c3d;
+  --notice-bg: #1c120a;
+  --notice-edge: #3e2614;
+  --notice-ink: #ffd2b0;
+  --why-bg: #0b0806;
+  --toast-top: #100d09;
+  --primary-ink: #070201;
+  --primary-edge: #b4531f;
+  --primary-hover-top: #ffb08a;
+  --primary-highlight: rgba(255, 240, 230, .25);
+  --tools-bg: rgba(3, 2, 1, .95);
+  --chip-bg: rgba(3, 2, 1, .9);
+  --sample-bg: rgba(1, 1, 0, .9);
+  --highlight: rgba(239, 235, 228, .03);
+  --control-ring: #3a3630;
+  --well-inner: inset 0 1px 2px rgba(0, 0, 0, .6);
+  --well-inner-soft: inset 0 1px 1px rgba(0, 0, 0, .5);
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-3: none;
+
+  --data-line: var(--ink);
+  --data-spark: #6db0f4;
+  --data-2: var(--ink-3);
+  --data-area: var(--ink);
+
+  --focus-w: 2px;
+  --focus-offset: 3px;
+  --focus-color: var(--brass);
+
+  --wdth: 88;
+  --wdth-condensed: 84;
+  --wdth-mark: 80;
+  --mono-stretch: 88%;
+
+  --code-bg: #010100;
+  --code-gutter: #030201;
+  --code-dim: #6b6862;
+  --code-ink: #efebe4;
+  --code-keyword: #f97c3d;
+  --code-def: #6db0f4;
+  --code-string: #b8c9a8;
+  --code-number: #ffb08a;
+  --code-comment: #6b6862;
+  --code-tag: #ffb08a;
+  --code-attribute: #6db0f4;
+  --code-property: #cecac3;
+  --code-selection: rgba(249, 124, 61, .2);
+  --code-active-line: rgba(239, 235, 228, .03);
+
+  --dsg-glow: none;
+  --dsg-knob-ring: none;
+}
+[data-design="rim"] :is(h1, h2, h3) { font-weight: 500; letter-spacing: -.035em; }
+[data-design="rim"] .wordmark { font-weight: 500; letter-spacing: -.03em; }
+/* A measurement is mono, tabular, and sits under a hairline: the rule does the dividing, not a card edge. */
+[data-design="rim"] .tile .num,
+[data-design="rim"] .ro .big,
+[data-design="rim"] .su-counter .num,
+[data-design="rim"] .lg .num,
+[data-design="rim"] .dsg-num { font-family: var(--mono); font-stretch: var(--mono-stretch); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+[data-design="rim"] .tile {
+  position: relative;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: none;
+}
+/* Two 12px corner ticks on opposite corners, just inside the frame. */
+[data-design="rim"] .tile::before,
+[data-design="rim"] .tile::after { content: ""; position: absolute; width: 10px; height: 10px; border: 0 solid var(--ink-3); pointer-events: none; z-index: 2; }
+[data-design="rim"] .tile::before { top: 0; left: 0; border-top-width: 1px; border-left-width: 1px; }
+[data-design="rim"] .tile::after { right: 0; bottom: 0; border-right-width: 1px; border-bottom-width: 1px; }
+[data-design="rim"] :is(.btn, .seg, .seg button, .switch span, .switch span::after, .text, select.select, .chip-btn, .icon-btn, .power, .tab-ink, .tag, .toast, .dsg-card, .dsg-preview, .dsg-panel, .dsg-btn, .dsg-switch, .dsg-switch::after, .why-dot, .dot) { border-radius: 0; }
+[data-design="rim"] input[type=range]::-webkit-slider-thumb { border-radius: 0; }
+[data-design="rim"] :is(.pcard, .preset, .gl-card, .sheet) { box-shadow: none; }
+[data-design="rim"] .btn { background: none; border-color: var(--line); }
+[data-design="rim"] .btn.primary { background: var(--brass); border-color: var(--brass); color: var(--primary-ink); box-shadow: none; }
+/* The corner ticks survive into the miniature: two L shapes on the well. */
+[data-design="rim"] .dsg-panel::before,
+[data-design="rim"] .dsg-panel::after { content: ""; position: absolute; width: 8px; height: 8px; border: 0 solid var(--ink-3); pointer-events: none; }
+[data-design="rim"] .dsg-panel::before { top: 2px; left: 2px; border-top-width: 1px; border-left-width: 1px; }
+[data-design="rim"] .dsg-panel::after { right: 2px; bottom: 2px; border-right-width: 1px; border-bottom-width: 1px; }
+
+/* ------------------------------------------------------------------ Darkroom
+   A print room with the lights off: warm print-black ground a step above a print's own black, fibre-white ink,
+   hairline condensed capitals over the plain sans, a speck grain, full-width rules and one amber safelight. The
+   size is the drama; the colour stays ink. */
+[data-design="darkroom"] {
+  color-scheme: dark;
+  --ground: #090604;
+  --panel: #100c0a;
+  --raised: #1b1613;
+  --hover: #241d19;
+  --well: #050302;
+  --line: #2f2a27;
+  --line-soft: #1f1a17;
+  --ink: #e9e4dc;
+  --ink-2: #c2bdb5;
+  --ink-3: #918b85;
+  --brass: #ec8d38;
+  --brass-hi: #ffc07e;
+  --brass-glow: rgba(236, 141, 56, .2);
+  --hot: #ec8d38;
+  --warm: #c06e41;
+  --ok: #d8d2c8;
+  --grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 9 -4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+
+  --display: "Bahnschrift", "Segoe UI", sans-serif;
+  --text: "Segoe UI", "Segoe UI Variable Text", system-ui, sans-serif;
+  --engrave: none;
+  --plate: var(--panel);
+  --bevel: none;
+  --r-stage: 0;
+  --r-panel: 0;
+  --r-ctl: 0;
+
+  --edge: #2f2a27;
+  --edge-strong: #3d3835;
+  --edge-panel: #2f2a27;
+  --edge-stage: #090604;
+  --edge-deep: #1b1613;
+  --scope-bg: #050302;
+  --btn-top: #1b1613;
+  --btn-top-hover: #241d19;
+  --card-top: #100c0a;
+  --card-on-top: #1b1613;
+  --seg-on-top: #1b1613;
+  --layer-top: #100c0a;
+  --layer-on-top: #1b1613;
+  --layer-on-bottom: #100c0a;
+  --power-top: #241d19;
+  --power-bottom: #100c0a;
+  --thumb-top: #e9e4dc;
+  --thumb-bottom: #918b85;
+  --knob-top: #e9e4dc;
+  --knob-bottom: #918b85;
+  --knob-on-top: #ffc07e;
+  --knob-on-bottom: #ec8d38;
+  --notice-bg: #241609;
+  --notice-edge: #4a2c12;
+  --notice-ink: #ffd8ae;
+  --why-bg: #0d0907;
+  --toast-top: #1b1613;
+  --primary-ink: #090604;
+  --primary-edge: #a8611f;
+  --primary-hover-top: #ffc07e;
+  --primary-highlight: rgba(255, 245, 230, .25);
+  --tools-bg: rgba(9, 6, 4, .95);
+  --chip-bg: rgba(5, 3, 2, .9);
+  --sample-bg: rgba(5, 3, 2, .9);
+  --highlight: rgba(233, 228, 220, .03);
+  --control-ring: #3d3835;
+  --well-inner: inset 0 1px 2px rgba(0, 0, 0, .6);
+  --well-inner-soft: inset 0 1px 1px rgba(0, 0, 0, .5);
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-3: none;
+
+  --data-line: var(--ink);
+  --data-spark: var(--ink-2);
+  --data-2: var(--ink-3);
+  --data-area: var(--ink);
+
+  --focus-w: 2px;
+  --focus-offset: 3px;
+  --focus-color: var(--brass);
+
+  --wdth: 75;
+  --wdth-condensed: 75;
+  --wdth-mark: 75;
+  --mono-stretch: 85%;
+
+  --code-bg: #050302;
+  --code-gutter: #090604;
+  --code-dim: #6f6a64;
+  --code-ink: #e9e4dc;
+  --code-keyword: #ec8d38;
+  --code-def: #c2bdb5;
+  --code-string: #b8b2a9;
+  --code-number: #ffc07e;
+  --code-comment: #6f6a64;
+  --code-tag: #ffc07e;
+  --code-attribute: #c06e41;
+  --code-property: #d8d2c8;
+  --code-selection: rgba(236, 141, 56, .18);
+  --code-active-line: rgba(233, 228, 220, .03);
+
+  --dsg-glow: none;
+  --dsg-knob-ring: none;
+}
+/* The hairline condensed capital at scale is the look: 300, uppercase, one colour. */
+[data-design="darkroom"] :is(h1, h2, h3) { font-weight: 300; text-transform: uppercase; letter-spacing: .005em; line-height: 1.05; }
+[data-design="darkroom"] .wordmark { font-weight: 300; text-transform: uppercase; letter-spacing: .1em; }
+[data-design="darkroom"] .tile .num,
+[data-design="darkroom"] .ro .big,
+[data-design="darkroom"] .su-counter .num,
+[data-design="darkroom"] .dsg-num { font-family: var(--display); font-weight: 300; letter-spacing: -.005em; }
+/* A sheet of rows: the ground, a full-width hairline, no frame and no shadow. */
+[data-design="darkroom"] :is(.tile, .pcard, .preset, .gl-card) { border: 0; background: var(--panel); box-shadow: none; position: relative; isolation: isolate; }
+[data-design="darkroom"] .tile-head { border-bottom: 1px solid var(--line); }
+[data-design="darkroom"] :is(.tile, .pcard, .preset, .gl-card)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: .07;
+  background-image: var(--grain-image);
+  background-size: 200px 200px;
+}
+[data-design="darkroom"] :is(.btn, .seg, .seg button, .switch span, .text, select.select, .chip-btn, .icon-btn, .power, .tab-ink, .tag, .toast, .dsg-card, .dsg-preview, .dsg-panel, .dsg-btn, .dsg-switch, .dsg-switch::after, .why-dot, .dot) { border-radius: 0; }
+[data-design="darkroom"] input[type=range]::-webkit-slider-thumb { border-radius: 0; }
+/* The safelight is scarce: the one filled control, a chosen chip, nothing else. */
+[data-design="darkroom"] .btn { border-color: var(--ink-3); background: none; }
+[data-design="darkroom"] .btn.primary { background: var(--brass); border-color: var(--brass); color: var(--primary-ink); box-shadow: none; }
+[data-design="darkroom"] .btn.primary:hover:not(:disabled) { background: var(--brass-hi); }
+[data-design="darkroom"] .tag { border-color: var(--line); }
+/* Capitals and the full-width rule, kept at card scale. */
+[data-design="darkroom"] .dsg-label { text-transform: uppercase; letter-spacing: .04em; }
+[data-design="darkroom"] .dsg-panel { border-top-color: var(--line); }

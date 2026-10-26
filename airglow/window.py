@@ -18,6 +18,12 @@ TITLEBAR = {
     "amber": ("#0c0903", "#ffd39a", True),
     "contrast": ("#000000", "#ffffff", True),
     "neon": ("#07070d", "#f1edff", True),
+    "kiln": ("#0b0605", "#f2eadd", True),
+    "lumen": ("#060510", "#f3f0f8", True),
+    "midnight": ("#02071d", "#e7f0f9", True),
+    "spore": ("#0f0a06", "#efe7d8", True),
+    "rim": ("#030201", "#efebe4", True),
+    "darkroom": ("#090604", "#e9e4dc", True),
 }
 
 

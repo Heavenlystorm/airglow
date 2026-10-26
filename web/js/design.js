@@ -8,6 +8,12 @@ export const DESIGNS = [
   { id: "amber", name: "Amber CRT", blurb: "A P3 amber display: scanlines, square corners, glow on the numbers only." },
   { id: "contrast", name: "High contrast", blurb: "Black and white with a warning yellow, 2px rules and thick focus rings." },
   { id: "neon", name: "Neon", blurb: "Neon tube signage: flat ink-blue panels, magenta accents, cyan data." },
+  { id: "kiln", name: "Kiln", blurb: "A kiln door open a crack: near-black, cream serif figures, heat in the curves." },
+  { id: "lumen", name: "Lumen", blurb: "A night console with a literary voice: violet-black, lowercase serif heads, brass." },
+  { id: "midnight", name: "Midnight", blurb: "Midnight blue to every edge: wide light heads, square surfaces, one azure signal." },
+  { id: "spore", name: "Spore", blurb: "A cellar at night: coffee-black, parchment serif, grained wells, oyster-pink fill." },
+  { id: "rim", name: "Rim", blurb: "An instrument at night: warm black, hairline rules, every measurement in mono." },
+  { id: "darkroom", name: "Darkroom", blurb: "A print room unlit: warm black, hairline condensed capitals, one amber safelight." },
 ];
 
 export const DESKTOP = "graphite";

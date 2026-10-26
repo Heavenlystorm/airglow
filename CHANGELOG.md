@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.10.0
+- **Six more interface designs, each its own system rather than a recolour.** Settings, General now offers twelve:
+  Graphite, ASCII, Paper, Amber CRT, High contrast and Neon are joined by **Kiln** (a near-black workshop, cream
+  serif figures and one ember accent; a curve turns ember, then white-hot, when its chip runs warm), **Lumen**
+  (violet-black, lowercase serif headings over a plain sans, a blueprint grid inside the charts, one brass line),
+  **Midnight** (midnight blue to every edge, square surfaces, wide light heads and figures, one azure signal),
+  **Spore** (coffee-black with a speck grain on the tiles, a soft serif, one oyster-pink fill), **Rim** (warm black,
+  a hairline above each tile with corner ticks, every measurement in mono, an orange signal and a sky-blue second)
+  and **Darkroom** (print-black, hairline condensed capitals, film grain, one amber safelight).
+- **The structure changes with the type.** Kiln and Spore set their readings in a serif; Midnight and Rim cut every
+  corner square; Darkroom rules a hairline under each tile head; Rim and Darkroom grain their wells. Each design
+  keeps its one accent for what is selected or switched on, and the six designs that came before are unchanged.
+- **The gallery previews carry each design's own mark**, not just its colours: Kiln's heat ramp on the meter,
+  Spore's grain, Rim's corner ticks, Lumen's grid, Darkroom's capitals.
+- **Your lights keep their real colours** in all twelve, and the window's title bar takes the design's ground.
+
 ## 1.9.4
 No fan speed was changed in this release.
 
