@@ -1228,7 +1228,7 @@
   --hot: #c16d45;
   --warm: #e8b98f;
   --ok: #c9c0a4;
-  --grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.6 0 0 0 0 0.55 0 0 0 0 0.45 0 0 0 0.35 0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+  --grain-image: url("../img/grain-warm.png");
 
   --display: "Cambria", Georgia, "Sitka Text", serif;
   --text: "Segoe UI", "Segoe UI Variable Text", system-ui, sans-serif;
@@ -1320,36 +1320,17 @@
 [data-design="spore"] .su-counter .num,
 [data-design="spore"] .dsg-num { font-family: var(--display); font-weight: 400; letter-spacing: -.01em; font-variant-numeric: lining-nums; }
 [data-design="spore"] .wordmark { font-weight: 400; letter-spacing: -.01em; }
-/* The speck grain, screened over a well and nothing else: never a sheet, so it never sits under running text. */
-[data-design="spore"] .tile { position: relative; isolation: isolate; }
-[data-design="spore"] .tile::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: .14;
-  mix-blend-mode: screen;
-  background-image: var(--grain-image);
-  background-size: 200px 200px;
-}
+/* The speck grain: a 64px tile (tools/make_grain.py) painted as the panel's own background, its alpha already at
+   the strength this design wants. No filter to rasterise, no blend mode, no extra layer to recomposite when the
+   reading in the tile redraws. */
+[data-design="spore"] .tile { background-image: var(--grain-image); }
 [data-design="spore"] :is(.btn, .seg, .seg button, .chip-btn, .icon-btn, .power, .tab-ink, .tag, .dsg-btn) { border-radius: 999px; }
 /* Fields take the heavier edge; cards keep a hairline so the grain reads. */
 [data-design="spore"] :is(.text, select.select) { border-width: 1.5px; border-color: var(--ink-3); }
 [data-design="spore"] :is(.pcard, .preset, .gl-card, .dsg-card, .toast) { box-shadow: none; }
 [data-design="spore"] .btn.primary { box-shadow: none; }
-/* The speck grain reads in the miniature too, on its well. */
-[data-design="spore"] .dsg-panel::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: .5;
-  mix-blend-mode: screen;
-  background-image: var(--grain-image);
-  background-size: 120px 120px;
-}
+/* The same tile on the miniature's well. */
+[data-design="spore"] .dsg-panel { background-image: var(--grain-image); }
 
 /* ------------------------------------------------------------------ Rim
    An instrument at night: warm black paper, warm off-white ink, the plain sans at a medium weight for every head,
@@ -1511,7 +1492,7 @@
   --hot: #ec8d38;
   --warm: #c06e41;
   --ok: #d8d2c8;
-  --grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 9 -4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  --grain-image: url("../img/grain-white.png");
 
   --display: "Bahnschrift", "Segoe UI", sans-serif;
   --text: "Segoe UI", "Segoe UI Variable Text", system-ui, sans-serif;
@@ -1606,16 +1587,8 @@
 /* A sheet of rows: the ground, a full-width hairline, no frame and no shadow. */
 [data-design="darkroom"] :is(.tile, .pcard, .preset, .gl-card) { border: 0; background: var(--panel); box-shadow: none; position: relative; isolation: isolate; }
 [data-design="darkroom"] .tile-head { border-bottom: 1px solid var(--line); }
-[data-design="darkroom"] :is(.tile, .pcard, .preset, .gl-card)::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  opacity: .07;
-  background-image: var(--grain-image);
-  background-size: 200px 200px;
-}
+/* The grain is the same background tile as Spore's: a well keeps it, a small card does not pay for a layer. */
+[data-design="darkroom"] .tile { background-image: var(--grain-image); }
 [data-design="darkroom"] :is(.btn, .seg, .seg button, .switch span, .text, select.select, .chip-btn, .icon-btn, .power, .tab-ink, .tag, .toast, .dsg-card, .dsg-preview, .dsg-panel, .dsg-btn, .dsg-switch, .dsg-switch::after, .why-dot, .dot) { border-radius: 0; }
 [data-design="darkroom"] input[type=range]::-webkit-slider-thumb { border-radius: 0; }
 /* The safelight is scarce: the one filled control, a chosen chip, nothing else. */
@@ -1626,3 +1599,13 @@
 /* Capitals and the full-width rule, kept at card scale. */
 [data-design="darkroom"] .dsg-label { text-transform: uppercase; letter-spacing: .04em; }
 [data-design="darkroom"] .dsg-panel { border-top-color: var(--line); }
+
+/* ------------------------------------------------------------------ the matte skins do not blur
+   Six designs are paper, plaster and print, not glass, so the two backdrop blurs are dropped: a blur over the live
+   stage has to be recomposed every time the lights change, which is the most expensive thing this window does. */
+[data-design="kiln"] :is(.chip-btn, .tile-tools),
+[data-design="lumen"] :is(.chip-btn, .tile-tools),
+[data-design="midnight"] :is(.chip-btn, .tile-tools),
+[data-design="spore"] :is(.chip-btn, .tile-tools),
+[data-design="rim"] :is(.chip-btn, .tile-tools),
+[data-design="darkroom"] :is(.chip-btn, .tile-tools) { backdrop-filter: none; }
