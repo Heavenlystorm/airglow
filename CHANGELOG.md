@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.10.3
 - Repeated sensor or fan-control failures now trigger the runtime failsafe even when intervening controller ticks
   succeed. Thermal protection also overrides a steady fan or pump speed during the startup grace period.
 - Returning fan channels to hardware control uses bounded retries, so failed handbacks cannot monopolize the
