@@ -394,11 +394,11 @@ function payload(doc) {
 }
 
 // ------------------------------------------------------------ undo and redo
-function snapDoc() {
-  if (!E.doc) return "null";
-  return JSON.stringify({ name: E.doc.name, description: E.doc.description, tags: E.doc.tags, remix_of: E.doc.remix_of,
-                          mode: E.doc.mode, layers: E.doc.layers, master: E.doc.master, expose: E.doc.expose,
-                          source: E.doc.source, values: E.doc.values });
+function snapDoc(doc = E.doc) {
+  if (!doc) return "null";
+  return JSON.stringify({ name: doc.name, description: doc.description, tags: doc.tags, remix_of: doc.remix_of,
+                          mode: doc.mode, layers: doc.layers, master: doc.master, expose: doc.expose,
+                          source: doc.source, values: doc.values });
 }
 
 function histReset() {
@@ -1034,13 +1034,7 @@ function scheduleSave() {
 
 async function quietSave() {
   if (!E.doc?.fx_id || !E.doc.dirty) return;
-  const before = snapDoc();
-  try {
-    const r = await post("/api/studio/save", { ...payload(E.doc), fx_id: E.doc.fx_id });
-    E.doc.fx_id = r.effect.fx_id;
-    if (snapDoc() === before) { E.doc.dirty = false; forgetDraft(); }
-    setSavedLabel();
-  } catch { /* keep the draft; the next edit tries again */ }
+  return save({ quiet: true });
 }
 
 const syncLights = coalesce(async () => {
@@ -1347,22 +1341,37 @@ async function openInEditor() {
 }
 
 // ------------------------------------------------------------ save, use, share, check
-async function save({ quiet = false } = {}) {
+let saveTail = Promise.resolve();             // manual and automatic saves write in the order they were requested
+const saveRevisions = new WeakMap();
+function save({ quiet = false } = {}) {
   const d = E.doc;
-  if (!d) return null;
-  const before = snapDoc();
-  try {
-    const r = await post("/api/studio/save", { ...payload(d), fx_id: d.fx_id });
-    d.fx_id = r.effect.fx_id;
-    if (snapDoc() === before) { d.dirty = false; forgetDraft(); }
-    if (!quiet) E.saved = before;          // Revert goes back to this deliberate save
-    setSavedLabel();
-    if (!quiet) {
-      S.effects = await get("/api/effects");
-      emit("refresh");
-    }
-    return r.effect;
-  } catch (e) { if (!quiet) fail(e); return null; }
+  if (!d) return Promise.resolve(null);
+  clearTimeout(E.auto);
+  const before = snapDoc(d), body = structuredClone(payload(d));
+  const revision = (saveRevisions.get(d) || 0) + 1;
+  saveRevisions.set(d, revision);
+  const run = saveTail.then(async () => {
+    try {
+      // A first save may have assigned this document an id while this request waited its turn.
+      const r = await post("/api/studio/save", { ...body, fx_id: d.fx_id });
+      d.fx_id = r.effect.fx_id;
+      // Even a matching snapshot is not clean while a different one is still queued behind it.
+      const latest = saveRevisions.get(d) === revision;
+      if (latest) d.dirty = snapDoc(d) !== before;
+      if (E.doc === d) {
+        if (latest && !d.dirty) forgetDraft();
+        if (!quiet) E.saved = before;       // Revert goes back to this deliberate save
+        setSavedLabel();
+      }
+      if (!quiet) {
+        S.effects = await get("/api/effects");
+        emit("refresh");
+      }
+      return E.doc === d ? r.effect : null; // do not continue Use/Share in an editor opened during this save
+    } catch (e) { if (!quiet) fail(e); return null; }
+  });
+  saveTail = run;
+  return run;
 }
 
 async function revert() {
@@ -1399,7 +1408,12 @@ async function useIt() {
 
 async function shareIt(fxId) {
   let eff = null;
-  if (E.doc && !fxId) { eff = E.doc.dirty || !E.doc.fx_id ? await save() : null; fxId = eff?.fx_id || E.doc.fx_id; if (!fxId) return; }
+  if (E.doc && !fxId) {
+    const d = E.doc;
+    if (d.dirty || !d.fx_id) { eff = await save(); if (!eff || E.doc !== d) return; }
+    fxId = eff?.fx_id || d.fx_id;
+    if (!fxId) return;
+  }
   const e = (H.lib?.effects || []).find((x) => x.fx_id === fxId) || E.doc || {};
   const desc = e.description || "";
   openSheet(`<form class="body" id="sh-form"><h2>Share ${esc(e.name)}</h2>
