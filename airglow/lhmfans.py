@@ -93,11 +93,12 @@ class LhmFans:
 
     def __init__(self, base_url, headers=lambda: {}, send=http_set):
         self._base_url, self._headers, self._send = base_url, headers, send
-        # sensor id -> (duty, monotonic time sent) for every channel Airglow drives; (None, -inf) after a failed send:
-        # still ours (handed back, and in the failsafe), and tried again next time
+        # sensor id -> (duty, monotonic time sent) for every channel Airglow drives; None means the speed is unknown:
+        # still ours (handed back, and in the failsafe). Failed hand-backs keep their attempt time for fair retries.
         self.sent = {}
         self.errors = {}        # sensor id -> last error text
         self._retry_at = {}     # sensor id -> don't try again before this (no retry storm on a dead channel)
+        self._release_retry_at = {}  # handing back is a different command: try it once even after a failed speed
         # the controller's loop, the power events (failsafe at shutdown) and quitting all send
         self._lock = threading.RLock()
 
@@ -109,13 +110,21 @@ class LhmFans:
 
     def _apply(self, targets, force=False):
         now = time.monotonic()
-        for sid in [s for s in self.sent if s not in targets]:
-            self._release(sid)
         budget = self.SENDS_PER_TICK
-        # Oldest sends go first, so a changing curve cannot keep spending every tick on the same six channels.
-        pending = sorted(targets.items(), key=lambda item: (
-            not (force or item[1] >= 100), self.sent.get(item[0], (None, float("-inf")))[1]))
+        # Releases share the ordinary write budget. Oldest sends go first so neither changing curves nor a
+        # group of failed hand-backs can starve the other channels; thermal protection always goes first.
+        pending = {sid: None for sid in self.sent if sid not in targets}
+        pending.update(targets)
+        pending = sorted(pending.items(), key=lambda item: (
+            not (item[1] is not None and (force or item[1] >= 100)),
+            self.sent.get(item[0], (None, float("-inf")))[1]))
         for sid, duty in pending:
+            if duty is None:
+                if budget > 0 and now >= self._release_retry_at.get(sid, 0.0):
+                    budget -= 1
+                    self._release(sid)
+                continue
+            self._release_retry_at.pop(sid, None)  # selected again: a later hand-back is a new request
             urgent = force or duty >= 100       # thermal protection and shutdown must reach every channel now
             last = self.sent.get(sid)
             if last and last[0] == duty and now - last[1] < self.RESEND:
@@ -145,6 +154,7 @@ class LhmFans:
             self._release(sid)
 
     def _release(self, sid):
+        self._retry_at.pop(sid, None)
         try:
             self._send(self._base_url(), sid, None, self._headers())
         except OSError as e:
@@ -152,11 +162,13 @@ class LhmFans:
             if self.errors.get(sid) != text:
                 log.warning("fan %s: %s", sid, text)
             self.errors[sid] = text
-            self.sent[sid] = (None, float("-inf"))     # still ours: the next apply tries again
+            failed_at = time.monotonic()
+            self.sent[sid] = (None, failed_at)       # unattempted hand-backs go before expired retries
+            self._release_retry_at[sid] = failed_at + self.RETRY_AFTER
             return
         self.sent.pop(sid, None)
         self.errors.pop(sid, None)
-        self._retry_at.pop(sid, None)
+        self._release_retry_at.pop(sid, None)
         log.info("fan %s handed back to its own control", sid)
 
     def release_all(self):
