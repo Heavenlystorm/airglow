@@ -112,15 +112,20 @@ class LhmFans:
         for sid in [s for s in self.sent if s not in targets]:
             self._release(sid)
         budget = self.SENDS_PER_TICK
-        for sid, duty in targets.items():
+        # Oldest sends go first, so a changing curve cannot keep spending every tick on the same six channels.
+        pending = sorted(targets.items(), key=lambda item: (
+            not (force or item[1] >= 100), self.sent.get(item[0], (None, float("-inf")))[1]))
+        for sid, duty in pending:
+            urgent = force or duty >= 100       # thermal protection and shutdown must reach every channel now
             last = self.sent.get(sid)
             if last and last[0] == duty and now - last[1] < self.RESEND:
                 continue
-            if not force and now < self._retry_at.get(sid, 0.0):
+            if not urgent and now < self._retry_at.get(sid, 0.0):
                 continue
-            if budget <= 0:
-                break               # the rest on the next tick, rather than 30 blocking POSTs in one go
-            budget -= 1
+            if not urgent:
+                if budget <= 0:
+                    continue                   # an emergency target later in the list still has to go out
+                budget -= 1
             try:
                 self._send(self._base_url(), sid, duty, self._headers())
                 self.sent[sid] = (duty, now)
@@ -151,6 +156,7 @@ class LhmFans:
             return
         self.sent.pop(sid, None)
         self.errors.pop(sid, None)
+        self._retry_at.pop(sid, None)
         log.info("fan %s handed back to its own control", sid)
 
     def release_all(self):

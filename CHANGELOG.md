@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.10.2
+- Fan failsafe commands reach every selected LibreHardwareMonitor channel, including setups with more than six
+  channels. Full-speed thermal protection bypasses normal retry backoff, and changing curves no longer starve
+  later channels.
+- An unreadable settings file stays protected during automatic device discovery and later saves. Restart Airglow
+  to load it again; a damaged file that was safely set aside can still be replaced with new settings.
+- Overview saves run one at a time. Older responses no longer overwrite names, tiles or pins edited while a save
+  is pending.
+
 ## 1.10.1
 A performance release for the two grained designs. No fan speed and no light is changed.
 

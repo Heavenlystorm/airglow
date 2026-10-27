@@ -359,6 +359,39 @@ class DamagedFileTests(unittest.TestCase):
             self.assertEqual(store.settings()["design"], "graphite")
             self.assertEqual(cfg.read_text(encoding="utf-8"), good, "an unreadable file was overwritten")
 
+            # Startup continues with device discovery, and later the user may try to change a setting.
+            from tests.fakes import FakeNzxt
+            self.assertTrue(store.ensure_zones([FakeNzxt().info()]))
+            self.assertTrue(store.zones())
+            self.assertFalse(store.ensure_zones([FakeNzxt().info()]))
+            with self.assertRaisesRegex(ValueError, "Restart Airglow"):
+                store.update_settings({"temp_unit": "F"})
+            self.assertEqual(cfg.read_text(encoding="utf-8"), good)
+            store.save_state(active_preset=None)             # an unrelated readable file can still be saved
+            self.assertTrue(Path(tmp, "state.json").exists())
+            self.assertEqual(config.Store(tmp).settings()["design"], "amber")
+
+    def test_a_failed_quarantine_cannot_be_overwritten_by_discovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp, "config.json")
+            cfg.write_text("{ damaged", encoding="utf-8")
+            with mock.patch.object(Path, "replace", side_effect=PermissionError("locked")):
+                store = config.Store(tmp)
+            from tests.fakes import FakeNzxt
+            store.ensure_zones([FakeNzxt().info()])
+            self.assertEqual(cfg.read_text(encoding="utf-8"), "{ damaged")
+            with self.assertRaisesRegex(ValueError, "original file has been kept"):
+                store.update_settings({"design": "amber"})
+
+    def test_a_quarantined_file_allows_new_settings_without_losing_the_original(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp, "config.json")
+            cfg.write_text("{ damaged", encoding="utf-8")
+            store = config.Store(tmp)
+            store.update_settings({"design": "amber"})
+            self.assertEqual(json.loads(cfg.read_text(encoding="utf-8"))["design"], "amber")
+            self.assertEqual(Path(tmp, "config.json.corrupt").read_text(encoding="utf-8"), "{ damaged")
+
 
 if __name__ == "__main__":
     unittest.main()

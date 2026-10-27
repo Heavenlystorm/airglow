@@ -27,21 +27,32 @@ window.addEventListener("resize", () => { measureRev++; });
 document.fonts?.ready.then(() => { measureRev++; if (visible()) renderOverview(); });
 
 // ------------------------------------------------------------ persistence
-let saveTimer;
+let saveTimer, saveRevision = 0, saving = false;
 function save() {
+  saveRevision++;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    try {
-      const next = await post("/api/overview", O.layout);
-      // Merge in place. Replacing O.layout would orphan the tile objects an open sheet, a drag or an undo toast
-      // still holds, and every later edit would be written to a copy nobody renders (a half-typed name was lost).
-      const known = new Map(O.layout.tiles.map((t) => [t.id, t]));
-      O.layout.tiles = next.tiles.map((t) => Object.assign(known.get(t.id) || {}, t));
-      O.layout.pins = next.pins;
-      S.overview = O.layout;
-      emit("pins");
-    } catch (e) { fail(e); }
-  }, 350);
+  saveTimer = setTimeout(flushOverview, 350);
+}
+
+async function flushOverview() {
+  saveTimer = null;
+  if (saving) return;                 // the in-flight save will pick up edits when it finishes
+  saving = true;
+  const revision = saveRevision;
+  try {
+    const next = await post("/api/overview", O.layout);
+    if (revision !== saveRevision) return;      // this response predates edits still waiting to be saved
+    // Keep tile references held by an open sheet, a drag or an undo toast intact.
+    const known = new Map(O.layout.tiles.map((t) => [t.id, t]));
+    O.layout.tiles = next.tiles.map((t) => Object.assign(known.get(t.id) || {}, t));
+    O.layout.pins = next.pins;
+    S.overview = O.layout;
+    emit("pins");
+  } catch (e) { fail(e); }
+  finally {
+    saving = false;
+    if (revision !== saveRevision && !saveTimer) saveTimer = setTimeout(flushOverview, 0);
+  }
 }
 
 const tileById = (id) => O.layout.tiles.find((t) => t.id === id);
