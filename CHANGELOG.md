@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+- Repeated sensor or fan-control failures now trigger the runtime failsafe even when intervening controller ticks
+  succeed. Thermal protection also overrides a steady fan or pump speed during the startup grace period.
+- Returning fan channels to hardware control uses bounded retries, so failed handbacks cannot monopolize the
+  controller loop or delay emergency speed commands behind every removed channel.
+- A failed configuration-file write leaves the live configuration unchanged, and a later save cannot silently persist the
+  rejected change.
+- Studio saves stay attached to the effect that started them. Switching effects during autosave cannot assign
+  the old effect's file identity to the new one, and pending saves are ordered.
+- Rapid automation edits are saved in order without discarding earlier toggles or additions.
+- Gallery previews wait for the previous frame request before asking for another, and stop scheduling work when
+  the preview ends.
+- Disconnected sensors are removed from history after their last reading leaves the history window, while
+  returning sensors keep their timestamps aligned.
+
 ## 1.10.2
 - Fan failsafe commands reach every selected LibreHardwareMonitor channel, including setups with more than six
   channels. Full-speed thermal protection bypasses normal retry backoff, and changing curves no longer starve

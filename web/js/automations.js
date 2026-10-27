@@ -51,10 +51,35 @@ const STARTERS = [
 
 const newId = () => "rule-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 
+let rulesTail = Promise.resolve(), rulesRevision = 0, rulesPending = 0, rulesDraft = null, rulesSaved = null;
+const currentRules = () => rulesPending ? rulesDraft : S.rules;
+
+function writeRules(rules) {
+  if (!rulesPending) rulesSaved = structuredClone(S.rules);
+  const revision = ++rulesRevision, body = structuredClone(rules);
+  rulesPending++;
+  S.rules = rulesDraft = structuredClone(body);       // the next gesture must start from these pending edits
+  renderAutomations();
+  const run = rulesTail.then(async () => {
+    try {
+      rulesSaved = await post("/api/automations", { rules: body });
+      if (revision === rulesRevision) rulesDraft = rulesSaved;
+    } catch (err) {
+      if (revision === rulesRevision) rulesDraft = structuredClone(rulesSaved);
+      throw err;
+    } finally {
+      S.rules = rulesDraft;                         // an old reply or background refresh cannot replace newer edits
+      rulesPending--;
+      renderAutomations();
+    }
+  });
+  rulesTail = run.catch(() => {});                  // a failed request must not prevent the next complete list
+  return run;
+}
+
 async function saveRules(rules, msg) {
   try {
-    S.rules = await post("/api/automations", { rules });
-    renderAutomations();
+    await writeRules(rules);
     emit("refresh");
     if (msg) toast(msg);
     return true;
@@ -78,10 +103,11 @@ export async function pauseAutomations(minutes) {
 
 export function renderAutomations() {
   if (!S.state) return;
+  const rules = currentRules();
   const o = S.state.override || {};
   const active = new Set(o.active || []);
   const paused = !!o.paused_until;
-  setHTML($("#rules"), S.rules.map((r, i) => {
+  setHTML($("#rules"), rules.map((r, i) => {
     const isActive = active.has(r.id) && r.enabled;
     const lights = r.id === o.lighting, fans = r.id === o.fans;
     const winning = lights || fans;
@@ -92,18 +118,18 @@ export function renderAutomations() {
       <div class="tools">
         <label class="switch" title="${r.enabled ? "Switch off" : "Switch on"}"><input type="checkbox" data-toggle${r.enabled ? " checked" : ""} aria-label="Automation on"><span></span></label>
         <button class="icon-btn" data-up ${i === 0 ? "disabled" : ""} title="Move up (higher priority)"><svg><use href="#i-up"/></svg></button>
-        <button class="icon-btn" data-down ${i === S.rules.length - 1 ? "disabled" : ""} title="Move down"><svg><use href="#i-down"/></svg></button>
+        <button class="icon-btn" data-down ${i === rules.length - 1 ? "disabled" : ""} title="Move down"><svg><use href="#i-down"/></svg></button>
         <button class="btn quiet" data-edit>Edit</button>
         <button class="icon-btn" data-del title="Delete"><svg><use href="#i-trash"/></svg></button>
       </div></li>`;
   }).join(""));
   const until = paused ? new Date(o.paused_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
   $("#auto-pause").textContent = `Resume automations (paused until ${until})`;
-  $("#auto-pause").hidden = !S.rules.length || !paused;
-  $("#auto-pause-for").hidden = !S.rules.length || paused;
-  const used = new Set(S.rules.map((r) => JSON.stringify([r.when.type, r.then.type])));
+  $("#auto-pause").hidden = !rules.length || !paused;
+  $("#auto-pause-for").hidden = !rules.length || paused;
+  const used = new Set(rules.map((r) => JSON.stringify([r.when.type, r.then.type])));
   const starters = STARTERS.filter((s) => !used.has(JSON.stringify([s.rule.when.type, s.rule.then.type])));
-  setHTML($("#starters"), starters.length ? `<h2>${S.rules.length ? "More ideas" : "Start with one of these"}</h2>
+  setHTML($("#starters"), starters.length ? `<h2>${rules.length ? "More ideas" : "Start with one of these"}</h2>
     <div class="starter-grid">${starters.map((s) => `<button class="starter" data-starter="${STARTERS.indexOf(s)}"><strong>${esc(s.title)}</strong>${esc(typeof s.text === "function" ? s.text() : s.text)}</button>`).join("")}</div>` : "");
 }
 
@@ -165,8 +191,8 @@ async function openBuilder(rule, isNew) {
       if (r.when.type === "idle") r.when.minutes ??= 10;
       if (r.when.type === "temp_above") { r.when.temp ??= 80; r.when.source ??= "max"; }
       if (r.then.type === "dim") r.then.brightness ??= 20;
-      const next = isNew ? [...S.rules, r] : S.rules.map((x) => (x.id === r.id ? r : x));
-      try { S.rules = await post("/api/automations", { rules: next }); closeSheet(); renderAutomations(); emit("refresh"); toast(isNew ? "Automation added" : "Automation saved"); }
+      const next = isNew ? [...currentRules(), r] : currentRules().map((x) => (x.id === r.id ? r : x));
+      try { await writeRules(next); closeSheet(); emit("refresh"); toast(isNew ? "Automation added" : "Automation saved"); }
       catch (err2) { render(err2.message); }
     });
   };
@@ -180,8 +206,8 @@ export function initAutomations() {
   $("#rules").addEventListener("click", async (e) => {
     const li = e.target.closest("[data-id]");
     if (!li) return;
-    const i = S.rules.findIndex((r) => r.id === li.dataset.id);
-    const rules = structuredClone(S.rules);
+    const i = currentRules().findIndex((r) => r.id === li.dataset.id);
+    const rules = structuredClone(currentRules());
     if (e.target.closest("[data-up]") && i > 0) { [rules[i - 1], rules[i]] = [rules[i], rules[i - 1]]; saveRules(rules); }
     else if (e.target.closest("[data-down]") && i < rules.length - 1) { [rules[i + 1], rules[i]] = [rules[i], rules[i + 1]]; saveRules(rules); }
     else if (e.target.closest("[data-edit]")) openBuilder(rules[i], false);
@@ -194,7 +220,7 @@ export function initAutomations() {
           action: {
             label: "Undo",
             onClick: () => {
-              const next = [...S.rules];
+              const next = [...currentRules()];
               next.splice(Math.min(index, next.length), 0, removed);
               saveRules(next, "Automation restored");
             },
@@ -206,7 +232,7 @@ export function initAutomations() {
   $("#rules").addEventListener("change", (e) => {
     if (!e.target.matches("[data-toggle]")) return;
     const id = e.target.closest("[data-id]").dataset.id;
-    saveRules(S.rules.map((r) => (r.id === id ? { ...r, enabled: e.target.checked } : r)));
+    saveRules(currentRules().map((r) => (r.id === id ? { ...r, enabled: e.target.checked } : r)));
   });
   $("#starters").addEventListener("click", (e) => {
     const b = e.target.closest("[data-starter]");
@@ -215,7 +241,7 @@ export function initAutomations() {
     const rule = { id: newId(), enabled: true, ...structuredClone(s.rule) };
     if (rule.then.type === "preset" && !S.presets.some((p) => p.id === rule.then.preset)) rule.then.preset = S.presets[0]?.id;
     if (s.needsInput) openBuilder(rule, true);
-    else saveRules([...S.rules, rule], `Added: ${s.title}`);
+    else saveRules([...currentRules(), rule], `Added: ${s.title}`);
   });
   $("#auto-add").addEventListener("click", () => openBuilder({ id: newId(), enabled: true, when: { type: "app_running", exe: "" }, then: { type: "preset", preset: S.presets[0]?.id } }, true));
   $("#auto-pause").addEventListener("click", () => pauseAutomations(0));
