@@ -19,7 +19,7 @@ class SensorHistory:
                 # a sensor that went away (an unplugged device, an LHM restart) must not keep its slot for the
                 # life of the process: drop it once a whole window has gone by without a reading
                 misses = self._misses.get(sid, 0) + 1
-                if misses > self.size:
+                if misses >= self.size:
                     self.series.pop(sid, None)
                     self._misses.pop(sid, None)
                 else:
@@ -30,7 +30,8 @@ class SensorHistory:
                     q = self.series[sid] = collections.deque([None] * (len(self.t) - 1), maxlen=self.size)
                 v = values.get(sid)
                 q.append(None if v is None else round(v, 2))
-                self._misses[sid] = 0
+                if sid in values:
+                    self._misses[sid] = 0
 
     def get(self, ids):
         with self._lock:

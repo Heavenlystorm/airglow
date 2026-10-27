@@ -141,26 +141,67 @@ function shareSheet(p, back) {
 }
 
 // ------------------------------------------------------------ gallery
-const G = { list: null, filter: new Set(), picked: null, profile: null, timer: null, keep: null };
+const G = { list: null, filter: new Set(), picked: null, profile: null, timer: null, keep: null, preview: null, gen: 0 };
+let previewWrites = Promise.resolve(), previewFrame = Promise.resolve();
+const previewVisible = (gen) => gen === G.gen && G.preview && document.visibilityState !== "hidden"
+  && $("#sheet")?.open && $("#gl-stage");
+
+function writePreview(body, gen) {
+  const run = previewWrites.then(() => {
+    if (gen !== undefined && !previewVisible(gen)) return;
+    return post("/api/preview", body);
+  }).catch(() => {});
+  previewWrites = run;
+  return run;
+}
+
+function pausePreview() {
+  G.gen++;
+  clearTimeout(G.timer); G.timer = null;
+  clearTimeout(G.keep); G.keep = null;
+  writePreview({});                 // serialized after a pending start, so closing cannot leave it running
+}
 
 function stopPreview() {
-  clearInterval(G.timer); G.timer = null;
-  clearInterval(G.keep); G.keep = null;
-  post("/api/preview", {}).catch(() => {});
+  G.preview = null;
+  pausePreview();
 }
 
 async function startPreview(profile) {
-  stopPreview();
-  const send = () => post("/api/preview", { profile }).catch(() => {});
+  pausePreview();
+  G.preview = profile;
+  const gen = G.gen;
+  const send = () => writePreview({ profile }, gen);
+  const keep = async () => {
+    if (!previewVisible(gen)) return;
+    await send();
+    if (previewVisible(gen)) G.keep = setTimeout(keep, 5000);
+  };
+  const frame = async () => {
+    // A previous selection may still have a frame in flight. New selections wait for it too.
+    await previewFrame;
+    if (!previewVisible(gen)) return;
+    const pending = get("/api/preview/frames");
+    previewFrame = pending.catch(() => {});
+    try {
+      const result = await pending;
+      const c = previewVisible(gen);
+      if (c) paintMini(c, result.zones);
+    } catch { /* next frame */ }
+    if (previewVisible(gen)) G.timer = setTimeout(frame, 90);
+  };
   await send();
-  G.keep = setInterval(send, 5000);
-  G.timer = setInterval(async () => {
-    const c = $("#gl-stage");
-    if (!c) { stopPreview(); return; }
-    if (document.visibilityState === "hidden") return;      // closed to the tray: nothing to draw, nothing to fetch
-    try { paintMini(c, (await get("/api/preview/frames")).zones); } catch { /* next frame */ }
-  }, 90);
+  if (!previewVisible(gen)) return;
+  G.keep = setTimeout(keep, 5000);
+  G.timer = setTimeout(frame, 90);
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!G.preview) return;
+  if (document.visibilityState === "hidden") pausePreview();
+  else if ($("#sheet")?.open && $("#gl-stage")) startPreview(G.preview);
+  else stopPreview();
+});
 
 export async function openGallery() {
   G.filter.clear(); G.picked = null; G.profile = null;

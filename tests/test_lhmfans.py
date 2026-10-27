@@ -194,17 +194,92 @@ class DriverTests(unittest.TestCase):
         self.drv.release_all()
         self.assertEqual(self.rec.calls[-1], (BOARD, None))
 
-    def test_a_failed_hand_back_is_tried_again(self):
+    def test_a_failed_hand_back_is_tried_again_after_backoff(self):
         self.drv.apply({BOARD: 40})
         self.rec.fail = "timed out"
-        with self.assertLogs("airglow.lhmfans", "WARNING") as logs:
+        with self.assertLogs("airglow.lhmfans", "WARNING") as logs, \
+                mock.patch.object(lhmfans.time, "monotonic", return_value=100):
             self.drv.apply({})
-            self.drv.apply({})                                        # tried again, logged once
+            self.drv.apply({})                                        # backing off, logged once
         self.assertEqual(len(logs.records), 1)
         self.rec.fail = None
-        self.drv.apply({})
+        with mock.patch.object(lhmfans.time, "monotonic", return_value=114):
+            self.drv.apply({})
+        self.assertEqual(self.rec.calls, [(BOARD, 40)])
+        with mock.patch.object(lhmfans.time, "monotonic", return_value=115):
+            self.drv.apply({})
         self.assertEqual(self.rec.calls[-1], (BOARD, None))
         self.assertEqual((self.drv.sent, self.drv.errors), ({}, {}))
+
+    def test_failed_hand_backs_are_bounded_and_do_not_starve_later_channels(self):
+        ids = [f"/lpc/0/control/{i}" for i in range(lhmfans.MAX_CHANNELS)]
+        self.drv.sent = {sid: (40, 0) for sid in ids}
+        send = mock.Mock(side_effect=OSError("timed out"))
+        self.drv._send = send
+        with mock.patch.object(lhmfans.time, "monotonic", return_value=100), \
+                self.assertLogs("airglow.lhmfans", "WARNING"):
+            for _ in range(6):
+                before = send.call_count
+                self.drv.apply({})
+                self.assertLessEqual(send.call_count - before, self.drv.SENDS_PER_TICK)
+        self.assertEqual([c.args[1] for c in send.call_args_list], ids)  # each tried once, including the last one
+        with mock.patch.object(lhmfans.time, "monotonic", return_value=114):
+            self.drv.apply({})
+        self.assertEqual(send.call_count, len(ids))
+        with mock.patch.object(lhmfans.time, "monotonic", return_value=115):
+            self.drv.apply({})
+        self.assertEqual(send.call_count, len(ids) + self.drv.SENDS_PER_TICK)
+
+    def test_hand_backs_and_speed_changes_share_one_budget(self):
+        released = [f"/lpc/0/control/{i}" for i in range(5)]
+        targets = {f"/cooler/control/{i}": 45 for i in range(5)}
+        self.drv.sent = {sid: (40, 0) for sid in released}
+        with mock.patch.object(lhmfans.time, "monotonic", return_value=100):
+            self.drv.apply(targets)
+        self.assertEqual(len(self.rec.calls), self.drv.SENDS_PER_TICK)
+        with mock.patch.object(lhmfans.time, "monotonic", return_value=102):
+            self.drv.apply(targets)
+        self.assertEqual(dict(self.rec.calls), {**dict.fromkeys(released), **targets})
+        self.assertEqual(set(self.drv.sent), set(targets))
+
+    def test_slow_hand_backs_reach_all_channels_before_retrying_the_first(self):
+        ids = [f"/lpc/0/control/{i}" for i in range(lhmfans.MAX_CHANNELS)]
+        self.drv.sent = {sid: (40, 0) for sid in ids}
+        clock, attempts = [100.0], []
+
+        def timeout(_base, sid, _duty, _headers):
+            attempts.append(sid)
+            clock[0] += 0.6                       # an actual timeout consumes the backoff of earlier channels
+            raise OSError("timed out")
+
+        self.drv._send = timeout
+        with mock.patch.object(lhmfans.time, "monotonic", side_effect=lambda: clock[0]), \
+                self.assertLogs("airglow.lhmfans", "WARNING"):
+            for _ in range(6):
+                before = len(attempts)
+                self.drv.apply({})
+                self.assertLessEqual(len(attempts) - before, self.drv.SENDS_PER_TICK)
+                clock[0] += 2.0
+        self.assertEqual(attempts[:len(ids)], ids)
+        self.assertGreater(len(attempts), len(ids))  # early backoffs did expire; they did not monopolize the budget
+
+    def test_thermal_protection_runs_before_hand_backs(self):
+        released = [f"/lpc/0/control/{i}" for i in range(10)]
+        self.drv.sent = {sid: (40, 0) for sid in released}
+        self.drv.apply({"/cooler/control/0": 100})
+        self.assertEqual(self.rec.calls[0], ("/cooler/control/0", 100))
+        self.assertEqual(len(self.rec.calls), 1 + self.drv.SENDS_PER_TICK)
+
+    def test_shutdown_hand_back_bypasses_release_backoff(self):
+        self.drv.apply({BOARD: 40})
+        self.rec.fail = "timed out"
+        with self.assertLogs("airglow.lhmfans", "WARNING"):
+            self.drv.apply({})
+        self.rec.fail = None
+        self.drv.release_all()
+        self.assertEqual(self.rec.calls[-1], (BOARD, None))
+        self.assertEqual(self.drv.sent, {})
+        self.assertEqual(self.drv._release_retry_at, {})
 
 
 class FakeLhm:
@@ -341,6 +416,22 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.ctrl.fan_duty, 100)
         self.assertEqual(self.sent()[BOARD], 100)
         self.assertEqual(self.sent()["/hid/nzxt-kraken/0/control/0"], 100)
+
+    def test_startup_grace_never_suppresses_a_hot_parts_pump_override(self):
+        pump = "/hid/nzxt-kraken/0/control/0"
+        self.store.update_settings({"temp_source": "gpu"})
+        self.store.set_fan_channel(pump, {"mode": "steady", "duty": 20})
+        self.temps.update(gpu_temp=None)
+        self.ctrl.tick()
+        self.assertIsNone(self.ctrl.fan_temp)
+        self.assertFalse(self.ctrl._temp_seen)
+        self.assertEqual(self.sent()[pump], 20)               # quiet grace while the known CPU is cool
+        self.temps["cpu_temp"] = 95.0
+        self.ctrl.tick()
+        self.ctrl.tick()
+        self.assertFalse(self.ctrl._temp_seen)               # selected GPU reading is still unavailable
+        self.assertEqual(self.ctrl.fan_duty, 100)
+        self.assertEqual(self.sent()[pump], 100)
 
     def test_thermal_protection_retries_a_channel_after_a_transient_failure(self):
         self.store.set_fan_channel(BOARD, {"mode": "curve"})

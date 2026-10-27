@@ -91,6 +91,37 @@ class HistoryTests(unittest.TestCase):
             h.add(t, {"a": float(t)})
         self.assertEqual(h.get(["a"])["series"]["a"], [7.0, 8.0, 9.0])
 
+    def test_disappeared_sensor_expires_after_its_history_window(self):
+        h = SensorHistory(size=3)
+        h.add(0, {"gone": 1.0, "present": 2.0})
+        h.add(1, {"present": 3.0})
+        h.add(2, {"present": 4.0})
+        self.assertEqual(h.get(["gone"])["series"]["gone"], [1.0, None, None])
+        h.add(3, {"present": 5.0})
+        self.assertNotIn("gone", h.series)
+        self.assertNotIn("gone", h._misses)
+        self.assertEqual(h.get(["present"])["series"]["present"], [3.0, 4.0, 5.0])
+
+    def test_returning_sensor_resets_expiry_and_lines_up_after_reappearance(self):
+        h = SensorHistory(size=3)
+        h.add(0, {"a": 1.0})
+        h.add(1, {})
+        h.add(2, {"a": 2.0})
+        h.add(3, {})
+        h.add(4, {})
+        self.assertEqual(h.get(["a"])["series"]["a"], [2.0, None, None])
+        h.add(5, {})
+        self.assertNotIn("a", h.series)
+        h.add(6, {"a": 3.0})
+        self.assertEqual(h.get(["a"]), {"t": [4, 5, 6], "series": {"a": [None, None, 3.0]}})
+
+    def test_sensor_churn_does_not_accumulate_expired_histories(self):
+        h = SensorHistory(size=3)
+        for t in range(100):
+            h.add(t, {str(t): float(t)})
+        self.assertEqual(set(h.series), {"97", "98", "99"})
+        self.assertEqual(set(h._misses), set(h.series))
+
 
 class LayoutTests(unittest.TestCase):
     def setUp(self):
