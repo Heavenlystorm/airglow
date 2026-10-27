@@ -475,6 +475,7 @@ class Store:
         self.dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._load_failed = False            # a file that exists but could not be read: never write over it
+        self._protected_files = set()         # unread originals stay protected until a fresh Store loads them
         self.config = self._load_config()
         self.presets = self._load_presets()
         self.state = self._load_state()
@@ -506,6 +507,7 @@ class Store:
                 problem = e
         log.error("could not read %s (%s); starting from defaults and leaving the file alone", name, problem)
         self._load_failed = True
+        self._protected_files.add(name)
         return copy.deepcopy(default)
 
     def _quarantine(self, path, error):
@@ -516,11 +518,15 @@ class Store:
         try:
             path.replace(broken)
         except OSError:
+            self._protected_files.add(path.name)
             log.exception("couldn't move the damaged %s aside", path.name)
 
     def _write(self, name, data):
         """Write the file whole, so a crash leaves either the old contents or the new ones, never half a file.
         The expensive part (the write and its fsync) happens outside the lock, so readers don't wait for it."""
+        if name in self._protected_files:
+            raise ValueError(f"{name} could not be read at startup. Restart Airglow before saving changes; "
+                             "the original file has been kept.")
         tmp = self.dir / f"{name}.{os.getpid()}.{threading.get_ident()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(json.dumps(data, indent=2, ensure_ascii=False))
@@ -789,7 +795,10 @@ class Store:
                         "auto": True}
         if new:
             self.config["zones"] = {**existing, **new}
-            self._write("config.json", self.config)
+            # Discovery must still work in memory after a failed load, without replacing the unread original
+            # or throwing on every controller tick (which would prevent temperature polling and fan control).
+            if "config.json" not in self._protected_files:
+                self._write("config.json", self.config)
             self.zones_rev += 1
         return bool(new)
 

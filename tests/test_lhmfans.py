@@ -6,6 +6,7 @@ import unittest
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 from airglow import config, fans, lhmfans, sensors
 from airglow.controller import Controller
@@ -133,6 +134,44 @@ class DriverTests(unittest.TestCase):
         self.assertLessEqual(len(self.rec.calls), self.drv.SENDS_PER_TICK)
         self.drv.apply({sid: 40 for sid in ids})                      # the rest follow on the next tick
         self.assertEqual(len({sid for sid, _ in self.rec.calls}), len(ids))
+
+    def test_changing_curve_does_not_starve_later_channels(self):
+        ids = [f"/lpc/0/control/{i}" for i in range(10)]
+        with mock.patch.object(lhmfans.time, "monotonic", return_value=100):
+            self.drv.apply({sid: 30 for sid in ids})
+        with mock.patch.object(lhmfans.time, "monotonic", return_value=102):
+            self.drv.apply({sid: 35 for sid in ids})
+        self.assertEqual({sid for sid, _ in self.rec.calls}, set(ids))
+        self.assertEqual([self.drv.sent[sid][0] for sid in ids[6:]], [35] * 4)
+
+    def test_failsafe_reaches_every_owned_channel_in_one_call(self):
+        ids = [f"/lpc/0/control/{i}" for i in range(lhmfans.MAX_CHANNELS)]
+        for _ in range(6):
+            self.drv.apply({sid: 20 for sid in ids})
+        self.rec.calls.clear()
+        self.assertEqual(self.drv.failsafe(60), len(ids))
+        self.assertEqual(dict(self.rec.calls), dict.fromkeys(ids, 60))
+
+    def test_full_speed_bypasses_backoff_after_a_transient_error(self):
+        self.drv.apply({BOARD: 20})
+        self.rec.fail = "timed out"
+        self.drv.apply({BOARD: 25})
+        self.rec.fail = None
+        self.rec.calls.clear()
+        self.drv.apply({BOARD: 100})
+        self.assertEqual(self.rec.calls, [(BOARD, 100)])
+        self.assertNotIn(BOARD, self.drv.errors)
+
+    def test_full_speed_reaches_all_channels_even_after_normal_budget_is_spent(self):
+        normal = {f"/lpc/0/control/{i}": 40 for i in range(6)}
+        urgent = {f"/cooler/control/{i}": 100 for i in range(10)}
+        self.drv.apply({**normal, **urgent})
+        self.assertEqual(dict(self.rec.calls), {**normal, **urgent})
+
+    def test_failsafe_preserves_a_faster_speed(self):
+        self.drv.apply({BOARD: 100})
+        self.drv.failsafe(60)
+        self.assertTrue(all(duty == 100 for _, duty in self.rec.calls))
 
     def test_a_failed_send_still_hands_the_fan_back(self):
         """Regression (1.6.5): a speed change that failed made Airglow forget the fan, so "Leave alone", quitting
@@ -302,6 +341,16 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.ctrl.fan_duty, 100)
         self.assertEqual(self.sent()[BOARD], 100)
         self.assertEqual(self.sent()["/hid/nzxt-kraken/0/control/0"], 100)
+
+    def test_thermal_protection_retries_a_channel_after_a_transient_failure(self):
+        self.store.set_fan_channel(BOARD, {"mode": "curve"})
+        self.rec.fail = "timed out"
+        self.ctrl.tick()
+        self.rec.fail = None
+        self.temps["cpu_temp"] = 95.0
+        self.ctrl.tick()
+        self.ctrl.tick()
+        self.assertEqual(self.sent()[BOARD], 100)
 
     def test_settings_are_saved_and_checked(self):
         self.store.set_fan_channel(BOARD, {"mode": "steady", "duty": 55})
