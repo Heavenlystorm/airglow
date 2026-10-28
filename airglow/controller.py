@@ -404,7 +404,9 @@ class Controller:
             if c["mode"] == "curve":
                 targets[ch["id"]] = duty
             else:
-                targets[ch["id"]] = c["duty"] if grace else fans.steady_duty(c["duty"], temp, failsafe, hottest)
+                # Startup grace waives the missing-reading floor, never the full-speed thermal override.
+                minimum = c["duty"] if grace else failsafe
+                targets[ch["id"]] = fans.steady_duty(c["duty"], temp, minimum, hottest)
         if self._flat:
             self.lhm_fans.apply(targets)
         else:
@@ -548,7 +550,8 @@ class Controller:
             while not self._stop.is_set():
                 try:
                     self.tick()
-                    if self._ticks % 2 == 1:       # lightweight ticks don't prove sensors/fans recovered
+                    # Even ticks skip sensors and fans, so they cannot prove a failed fan cycle recovered.
+                    if self._ticks % 2 == 1:
                         failures = 0
                 except Exception:
                     failures += 1

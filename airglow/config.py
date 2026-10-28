@@ -552,7 +552,7 @@ class Store:
 
     def _write(self, name, data):
         """Write the file whole, so a crash leaves either the old contents or the new ones, never half a file.
-        The expensive part (the write and its fsync) happens outside the lock, so readers don't wait for it."""
+        Callers hold the store lock until both the saved and live copies have been updated."""
         if name in self._protected_files:
             raise ValueError(f"{name} could not be read at startup. Restart Airglow before saving changes; "
                              "the original file has been kept.")
@@ -573,6 +573,12 @@ class Store:
                         pass
                     raise
                 time.sleep(wait)
+
+    def _save_config(self, changes):
+        """With the store lock held, persist a candidate before making it visible to readers."""
+        candidate = {**self.config, **changes}
+        self._write("config.json", candidate)
+        self.config = candidate
 
     def _upgrade(self):
         """Files are converted while loading (see _migrate_preset and _load_state); once that happened, save them
@@ -694,17 +700,14 @@ class Store:
     def update_settings(self, patch):
         clean = validate_settings(patch)
         with self._lock:
-            self.config.update(clean)
-            self._write("config.json", self.config)
+            self._save_config(clean)
         return clean
 
     def reset_settings(self):
         """Put the settings back to their defaults. Everything someone built up stays: zones, presets, fan curves,
         the overview and the automations. The port is left alone too (it would need a restart to change)."""
         with self._lock:
-            for key in RESETTABLE_SETTINGS:
-                self.config[key] = copy.deepcopy(DEFAULT_CONFIG[key])
-            self._write("config.json", self.config)
+            self._save_config({key: copy.deepcopy(DEFAULT_CONFIG[key]) for key in RESETTABLE_SETTINGS})
         return self.settings()
 
     def openrgb_enabled(self):
@@ -724,8 +727,7 @@ class Store:
             raise ValueError(f"unknown fan curve '{name}'")
         clean = validate_curve(points)
         with self._lock:
-            self.config["fan_curves"][name] = clean
-            self._write("config.json", self.config)
+            self._save_config({"fan_curves": {**self.config["fan_curves"], name: clean}})
         return clean
 
     def reset_curve(self, name):
@@ -739,8 +741,7 @@ class Store:
     def set_zone(self, key, cfg, max_leds):
         clean = validate_zone(cfg, max_leds)
         with self._lock:
-            self.config["zones"] = {**self.config["zones"], key: clean}
-            self._write("config.json", self.config)
+            self._save_config({"zones": {**self.config["zones"], key: clean}})
             self.zones_rev += 1
         return clean
 
@@ -760,8 +761,7 @@ class Store:
                 if len(channels) >= lhmfans.MAX_CHANNELS:
                     raise ValueError(f"Airglow drives up to {lhmfans.MAX_CHANNELS} fans this way")
                 channels[sid] = clean
-            self.config["fan_channels"] = channels
-            self._write("config.json", self.config)
+            self._save_config({"fan_channels": channels})
         return clean
 
     # -- device plugin settings
@@ -785,8 +785,7 @@ class Store:
         from .lighting.effects import clean_values
         with self._lock:
             clean = clean_values(schema, {**self.config["device_params"].get(device_id, {}), **(values or {})})
-            self.config["device_params"] = {**self.config["device_params"], device_id: clean}
-            self._write("config.json", self.config)
+            self._save_config({"device_params": {**self.config["device_params"], device_id: clean}})
         return clean
 
     def ensure_zones(self, devices):
@@ -915,8 +914,8 @@ class Store:
     def set_overview(self, overview):
         clean = validate_overview(overview)
         with self._lock:
-            self.overview = clean
             self._write("overview.json", clean)
+            self.overview = clean
         return clean
 
     def reset_overview(self):
@@ -930,5 +929,6 @@ class Store:
     # -- state
     def save_state(self, **changes):
         with self._lock:
-            self.state.update(changes)
-            self._write("state.json", self.state)
+            candidate = {**self.state, **changes}
+            self._write("state.json", candidate)
+            self.state = candidate

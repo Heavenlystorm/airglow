@@ -77,7 +77,14 @@ Owner: root. Files: tools.py, api.py, config.py if required, automation.py, hist
 - Catalogue validation: **7 effects** and **4 profiles** passed.
 - Independent review found and closed four further edge cases: same-name NZXT revisions, device-identity persistence failure, repeated/reopened editor saves, and profile activation writes failing after installation. Final independent review had no remaining actionable findings.
 - Added 31 Python tests and 19 JavaScript tests relative to the audit baseline. Regression coverage includes failures, retries, restarts, disconnections and delayed responses.
-- `git diff --check` passed. Changes are local on `codex/fix-audit-findings`; no commit, push, deployment or real hardware operation was performed.
+- `git diff --check` passed. At audit completion, changes were local on `codex/fix-audit-findings`; no commit, push, deployment or real hardware operation had been performed.
+
+## Release integration
+
+- The user subsequently requested a new GitHub release. Remote `main` already included version 1.10.3, so the release version is **1.10.4**.
+- Preserved the remote fixes for fan handbacks, startup thermal protection, Store write ordering, automation saves, gallery preview polling and exact sensor-history expiry.
+- Combined release verification: **554 Python tests** and **36 JavaScript tests** passed, plus all 27 browser modules, catalogue validators, Python parsing/imports and plugin loading.
+- CI runs all four explicit JavaScript regression suites. Publication follows the existing tag-triggered GitHub Actions release workflow after the pushed commit passes CI.
 
 ## Verification limits
 
