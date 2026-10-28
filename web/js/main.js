@@ -68,6 +68,7 @@ async function route() {
   else if (view === "studio") await m.renderStudio(arg);
 }
 window.addEventListener("hashchange", () => { route().catch(fail); });
+on("studio:open", (req) => { loadView("studio").then((m) => m.openStudio(req)).catch(fail); });
 
 window.addEventListener("resize", () => moveMarker($(".tab-ink"), $(".tabs a[aria-current]"), true));
 

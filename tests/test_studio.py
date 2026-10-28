@@ -11,7 +11,7 @@ from unittest import mock
 
 import numpy as np
 
-from airglow import fxformat, fxgallery, fxlibrary
+from airglow import fxformat, fxgallery, fxlibrary, studioapi
 from airglow.lighting import effects, studio
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -22,9 +22,18 @@ def builder(**kw):
 
 
 CODE = "airglow.effect({ render(ctx, frame) { ctx.canvas.getContext('2d').fillRect(0, 0, 10, 10); } });"
+NUMBER_SOURCE = ('<title>Number</title><meta name="airglow-effect" content="1">'
+                 '<meta property="speed" type="number" min="0" max="5" step="0.5" default="1">'
+                 f'<script>{CODE}</script>')
 
 
 class FormatTests(unittest.TestCase):
+    def test_numeric_control_metadata_must_be_finite(self):
+        for field, valid in (("min", "0"), ("max", "5"), ("step", "0.5"), ("default", "1")):
+            for invalid in ("nan", "inf", "-inf", "1e999"):
+                with self.subTest(field=field, value=invalid), self.assertRaises(fxformat.FormatError):
+                    fxformat.validate(NUMBER_SOURCE.replace(f'{field}="{valid}"', f'{field}="{invalid}"'))
+
     def test_builder_round_trip(self):
         eff = fxformat.validate(builder(author="jane-dev", tags=["ambient"], license="MIT"))
         self.assertEqual((eff["id"], eff["kind"], eff["tags"], eff["license"]), ("jane-dev.aurora-wave", "layers", ["ambient"], "MIT"))
@@ -159,6 +168,30 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(second["fx_id"], "fx:me.aurora-wave-2")
         self.assertEqual(len(self.lib.all()), 2)
 
+    def test_duplicate_long_names_keep_valid_stable_ids(self):
+        saved = [self.lib.save_mine(builder(name="a" * 40)) for _ in range(12)]
+        self.assertEqual(saved[0]["fx_id"], "fx:me." + "a" * 40)
+        self.assertEqual(saved[1]["fx_id"], "fx:me." + "a" * 38 + "-2")
+        self.assertEqual(saved[9]["fx_id"], "fx:me." + "a" * 37 + "-10")
+        self.assertEqual(len({e["fx_id"] for e in self.lib.all()}), 12)
+        for eff in saved:
+            self.assertIsNotNone(self.lib.get(eff["fx_id"]))
+        renamed = self.lib.save_mine(builder(name="New name"), saved[9]["fx_id"])
+        self.assertEqual(renamed["fx_id"], saved[9]["fx_id"])
+
+    def test_nonfinite_import_cannot_poison_catalogue_json(self):
+        source = NUMBER_SOURCE.replace('step="0.5"', 'step="nan"')
+        (self.lib._dir("mine") / "me.bad-number.html").write_text(source, encoding="utf-8")
+        self.lib.save_mine(builder())
+        with mock.patch.object(studio.HOST, "_library", self.lib), mock.patch.object(fxlibrary, "LIBRARY", self.lib):
+            catalogue = effects.catalog()
+            listing = studioapi._route(None, {}, "GET", "/api/studio/effects", {}, {})
+            json.dumps({"catalogue": catalogue, "studio": listing}, allow_nan=False)
+            self.assertNotIn("fx:me.bad-number", [e["id"] for e in catalogue])
+            self.assertEqual([e["fx_id"] for e in listing["effects"]], ["fx:me.aurora-wave"])
+        with self.assertRaises(fxformat.FormatError):
+            self.lib.save_mine(source)
+
     def test_a_file_whose_name_is_not_an_effect_id_is_not_listed(self):
         # it could never be played or deleted (get() rejects the id), so it must not appear as a card at all
         folder = self.lib._dir("mine", create=True)
@@ -204,6 +237,51 @@ class LibraryTests(unittest.TestCase):
         off = self.lib.apply_revocations([{"id": "jane-dev.aurora-wave", "sha256": [sha], "reason": "Strobes"}])
         self.assertEqual(off[0]["reason"], "Strobes")
         self.assertIsNone(self.lib.get("fx:jane-dev.aurora-wave"))
+
+    def test_revoked_rollback_is_quarantined_even_when_current_version_is_allowed(self):
+        v1 = builder(author="jane-dev")
+        sha = hashlib.sha256(v1.encode()).hexdigest()
+        self.lib.install(v1, sha)
+        v2 = v1.replace('"density": 30', '"density": 80')
+        current = self.lib.install(v2, hashlib.sha256(v2.encode()).hexdigest())
+        self.assertEqual(self.lib.apply_revocations([
+            {"id": current["id"], "sha256": [sha], "reason": "Strobes"}]), [])
+        self.assertEqual(self.lib.get(current["fx_id"])["sha256"], current["sha256"])
+        with self.assertRaises(fxformat.FormatError):
+            self.lib.rollback(current["fx_id"])
+        self.assertEqual(Path(current["path"] + ".prev.revoked").read_text(encoding="utf-8"), v1)
+
+    def test_revocation_also_quarantines_prior_versions_without_a_current_file(self):
+        v1 = builder(author="jane-dev")
+        self.lib.install(v1, hashlib.sha256(v1.encode()).hexdigest())
+        v2 = v1.replace('"density": 30', '"density": 80')
+        current = self.lib.install(v2, hashlib.sha256(v2.encode()).hexdigest())
+        self.lib.apply_revocations([{"id": current["id"], "sha256": [current["sha256"]], "reason": "Bad v2"}])
+        self.assertTrue(Path(current["path"] + ".prev").exists())
+        self.lib.apply_revocations([{"id": current["id"], "sha256": [], "reason": "All versions"}])
+        self.assertFalse(Path(current["path"] + ".prev").exists())
+        self.assertEqual(Path(current["path"] + ".prev.revoked").read_text(encoding="utf-8"), v1)
+
+    def test_revocations_see_a_replaced_rollback_with_the_same_size_and_timestamp(self):
+        write = fxlibrary._write
+
+        def same_mtime(path, text):
+            write(path, text)
+            os.utime(path, ns=(1_700_000_000 * 10**9,) * 2)
+
+        v1 = builder(author="jane-dev")
+        v2 = v1.replace('"density": 30', '"density": 80')
+        v3 = v1.replace('"density": 30', '"density": 90')
+        with mock.patch.object(fxlibrary, "_write", same_mtime):
+            for source in (v1, v2):
+                self.lib.install(source, hashlib.sha256(source.encode()).hexdigest())
+            self.lib.apply_revocations([])  # reads and caches the previous version
+            current = self.lib.install(v3, hashlib.sha256(v3.encode()).hexdigest())
+            self.lib.apply_revocations([
+                {"id": current["id"], "sha256": [hashlib.sha256(v2.encode()).hexdigest()], "reason": "Bad v2"}])
+        with self.assertRaises(fxformat.FormatError):
+            self.lib.rollback(current["fx_id"])
+        self.assertEqual(self.lib.get(current["fx_id"])["sha256"], current["sha256"])
 
     def test_bad_files_are_skipped_and_ids_checked(self):
         (Path(self.tmp.name) / "mine").mkdir()

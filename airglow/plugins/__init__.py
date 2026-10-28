@@ -28,6 +28,8 @@ and optionally:
     Product.openrgb_detector
                   the name of OpenRGB's detector for a product. When Airglow's helper setup installs OpenRGB, it
                   switches off the detectors of controllers Airglow lights on this PC, so OpenRGB never opens them.
+    Product.openrgb_skip
+                  product-specific OpenRGB name fragments, overriding the plugin's OPENRGB_SKIP when set.
     PARAMETERS    per-device settings, in the same schema as effect parameters (types range, choice, toggle,
                   color). The Devices tab draws them; saved values reach the device through Device.set_params().
 
@@ -56,6 +58,7 @@ class Product:
     openrgb_detector: str | None = None # OpenRGB's detector for this controller, switched off when Airglow sets
                                         # OpenRGB up and lights it itself (several products can share one)
     facts: dict = field(default_factory=dict)    # anything model-specific the plugin needs (channel counts, ...)
+    openrgb_skip: tuple[str, ...] | None = None
 
 
 class PluginError(ValueError):

@@ -63,6 +63,9 @@ class AuraDevice(Device):
     def close(self):
         self.aura.close()
 
+    def update_hid_path(self, path):
+        self.aura.update_path(path)
+
     def write_zone(self, zone_id, colors):
         if zone_id == "board":
             if not self.params.get("board_leds", True):

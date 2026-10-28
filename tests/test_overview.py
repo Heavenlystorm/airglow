@@ -74,6 +74,27 @@ class CatalogTests(unittest.TestCase):
 
 
 class HistoryTests(unittest.TestCase):
+    def test_disappeared_sensors_expire_after_the_history_window(self):
+        h = SensorHistory(size=3)
+        h.add(1, {"gone": 10, "live": 20})
+        for t in range(2, 6):
+            h.add(t, {"live": 20})
+        self.assertEqual(h.get(["gone", "live"])["series"], {"live": [20, 20, 20]})
+        self.assertNotIn("gone", h._misses)
+
+    def test_returning_sensor_resets_its_absence_window(self):
+        h = SensorHistory(size=3)
+        h.add(1, {"a": 10})
+        h.add(2, {})
+        h.add(3, {})
+        h.add(4, {"a": 20})
+        h.add(5, {})
+        h.add(6, {})
+        self.assertEqual(h.get(["a"])["series"], {"a": [20, None, None]})
+        h.add(7, {})
+        h.add(8, {})
+        self.assertNotIn("a", h.get(["a"])["series"])
+
     def test_series_line_up_with_timestamps(self):
         h = SensorHistory(size=4)
         h.add(1, {"a": 1.0})

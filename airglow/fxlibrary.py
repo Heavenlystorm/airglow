@@ -103,9 +103,11 @@ class Library:
                     raise fxformat.FormatError("that isn't one of your effects")
                 path = Path(old["path"])
             else:
-                stem, n = f"me.{fxformat.slug(eff['name'])}", 2
+                slug = fxformat.slug(eff["name"])
+                stem, n = f"me.{slug}", 2
                 while (mine / f"{stem}.html").exists() or (self.root / "community" / f"{stem}.html").exists():
-                    stem, n = f"me.{fxformat.slug(eff['name'])}-{n}", n + 1
+                    suffix = f"-{n}"
+                    stem, n = f"me.{slug[:40 - len(suffix)]}{suffix}", n + 1
                 path = mine / f"{stem}.html"
             _write(path, source)
             self._cache.pop(path, None)   # a same-size edit inside one file-time tick keeps (mtime, size)
@@ -137,6 +139,7 @@ class Library:
             path = self._dir("community") / f"{eff['id']}.html"
             if path.exists():
                 os.replace(path, str(path) + ".prev")
+                self._cache.pop(Path(str(path) + ".prev"), None)
             _write(path, source)
             self._cache.pop(path, None)
             self.rev += 1
@@ -144,28 +147,35 @@ class Library:
 
     def apply_revocations(self, revoked):
         """Turn off installed community effects the gallery has revoked (all versions, or the listed ones).
-        Their files are kept as .revoked, so nothing is lost if a revocation is lifted. Returns what was turned off."""
+        Include rollback copies; keep files as .revoked so nothing is lost. Returns active effects turned off."""
         out = []
         with self._lock:
-            for eff in self.all():
-                if eff["origin"] != "community":
+            folder = self._dir("community", create=False)
+            changed = False
+            for path in [*folder.glob("*.html"), *folder.glob("*.html.prev")]:
+                if not fxformat.EFFECT_ID.fullmatch(path.name.removesuffix(".prev").removesuffix(".html")):
+                    continue
+                eff = self._read(path, "community")
+                if not eff:
                     continue
                 hit = next((r for r in revoked if r["id"] == eff["id"] and (not r["sha256"] or eff["sha256"] in r["sha256"])), None)
                 if hit:
-                    os.replace(eff["path"], eff["path"] + ".revoked")
-                    self._cache.pop(Path(eff["path"]), None)
+                    os.replace(path, str(path) + ".revoked")
+                    self._cache.pop(path, None)
+                    changed = True
                     log.warning("community effect %s revoked: %s", eff["id"], hit["reason"])
-                    out.append({"fx_id": eff["fx_id"], "name": eff["name"], "reason": hit["reason"]})
-            if out:
+                    if path.suffix == ".html":
+                        out.append({"fx_id": eff["fx_id"], "name": eff["name"], "reason": hit["reason"]})
+            if changed:
                 self.rev += 1
         return out
 
     def rollback(self, fx_id):
-        eff = self.get(fx_id)
-        prev = Path(eff["path"] + ".prev") if eff else None
-        if not prev or not prev.exists():
-            raise fxformat.FormatError("there's no earlier version to go back to")
         with self._lock:
+            eff = self.get(fx_id)
+            prev = Path(eff["path"] + ".prev") if eff else None
+            if not prev or not prev.exists():
+                raise fxformat.FormatError("there's no earlier version to go back to")
             os.replace(prev, eff["path"])
             self._cache.pop(Path(eff["path"]), None)
             self.rev += 1

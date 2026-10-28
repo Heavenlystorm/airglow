@@ -461,6 +461,35 @@ class SetupFlowTests(unittest.TestCase):
         self.assertEqual(self.store.settings()["lhm_url"], tools.LHM_URL)
         self.assertFalse((self.data / "downloads").exists())
 
+    def test_partial_failure_keeps_durable_credentials_and_reuses_them_on_retry(self):
+        seen = []
+
+        def partial(args):
+            job = json.loads(Path(args[1]).read_text(encoding="utf-8"))
+            auth = json.loads(tools.auth_file().read_text(encoding="utf-8")) if tools.auth_file().exists() else None
+            seen.append((job["lhm_password_sha256"], auth))
+            # LHM has installed its password; the following OpenRGB step fails.
+            Path(args[1]).with_name("setup-result.json").write_text(
+                json.dumps({"ok": False, "error": "OpenRGB task failed"}), encoding="utf-8")
+            return 1
+
+        with mock.patch.object(tools, "run_elevated", side_effect=partial):
+            for _ in range(2):
+                tools.start_setup(self.ctrl, self.store)
+                self.assertEqual(self.wait()["state"], "failed")
+        self.assertIsNotNone(seen[0][1], "the password must be on disk before LHM can start using it")
+        self.assertEqual(seen[0], seen[1], "retry must not replace a working helper's credential")
+        auth = json.loads(tools.auth_file().read_text(encoding="utf-8"))
+        self.assertEqual(hashlib.sha256(auth["password"].encode()).hexdigest(), seen[0][0])
+
+    def test_cancelled_repair_keeps_existing_credentials(self):
+        original = json.dumps({"user": tools.LHM_USER, "password": "existing-password"})
+        tools.auth_file().write_text(original, encoding="utf-8")
+        with mock.patch.object(tools, "run_elevated", return_value=None):
+            tools.start_setup(self.ctrl, self.store)
+            self.assertEqual(self.wait()["state"], "cancelled")
+        self.assertEqual(tools.auth_file().read_text(encoding="utf-8"), original)
+
     def test_installing_openrgb_switches_off_the_detectors_for_what_airglow_lights(self):
         from airglow.plugins import nzxt_hue2
         hub = SimpleNamespace(id="nzxt-hub", lighting=True, product=nzxt_hue2.PRODUCTS[0])
@@ -488,7 +517,7 @@ class SetupFlowTests(unittest.TestCase):
             tools.start_setup(self.ctrl, self.store)
             snap = self.wait()
         self.assertEqual((snap["state"], snap["error"]), ("failed", "disk full"))
-        self.assertFalse(tools.auth_file().exists())
+        self.assertTrue(tools.auth_file().exists())  # a partial install may already be using this credential
 
     def test_the_elevated_copy_only_writes_its_result_next_to_the_job_file(self):
         jobs = Path(self.tmp.name) / "jobs"

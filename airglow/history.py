@@ -30,7 +30,8 @@ class SensorHistory:
                     q = self.series[sid] = collections.deque([None] * (len(self.t) - 1), maxlen=self.size)
                 v = values.get(sid)
                 q.append(None if v is None else round(v, 2))
-                self._misses[sid] = 0
+                if sid in values:
+                    self._misses[sid] = 0
 
     def get(self, ids):
         with self._lock:

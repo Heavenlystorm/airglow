@@ -185,7 +185,9 @@ class TrialTests(unittest.TestCase):
         self.ctrl.try_profile(profiles.scene_of(self.shared), "Neon", fan_points=self.shared["fans"]["curve"], clear_zones=[key])
         self.assertEqual(self.ctrl.base_scene["effect"], "gradient")
         self.assertEqual(self.ctrl.effective_curve, "trial")
-        self.assertIsNone(self.store.zones()[key]["override"])
+        self.assertEqual(self.store.zones()[key]["override"], mine)
+        self.ctrl.engine.tick()
+        self.assertEqual(self.strip.last("z1"), [(0, 230, 0)] * 8)
         self.ctrl.tick()
         self.assertEqual(self.ctrl.fan_target, 50)                        # the tried curve at 70 °C
         self.ctrl.end_trial()
@@ -193,6 +195,29 @@ class TrialTests(unittest.TestCase):
         self.assertEqual(self.ctrl.base_curve, before_curve)
         self.assertEqual(self.store.zones()[key]["override"], mine)
         self.assertIsNone(self.ctrl.trial)
+
+    def test_trial_override_clear_never_reaches_disk_even_if_the_device_vanishes(self):
+        key = "strip/z1"
+        mine = {"effect": "solid", "params": {"color": "#abcdef"}}
+        self.store.set_zone(key, {**self.store.zones()[key], "override": mine}, 16)
+        self.ctrl.try_profile(profiles.scene_of(self.shared), "Neon", clear_zones=[key])
+        self.assertEqual(config.Store(self.tmp.name).zones()[key]["override"], mine)
+        del self.manager.natives["strip"]
+        self.ctrl.end_trial()
+        self.assertEqual(self.store.zones()[key]["override"], mine)
+        self.assertEqual(config.Store(self.tmp.name).zones()[key]["override"], mine)
+
+    def test_keep_persists_cleared_overrides_even_after_the_device_vanishes(self):
+        key = "strip/z1"
+        mine = {"effect": "solid", "params": {"color": "#abcdef"}}
+        self.store.set_zone(key, {**self.store.zones()[key], "override": mine}, 16)
+        self.ctrl.try_profile(profiles.scene_of(self.shared), "Neon", clear_zones=[key])
+        self.assertEqual(config.Store(self.tmp.name).zones()[key]["override"], mine)
+        del self.manager.natives["strip"]
+        preset = config.validate_preset(profiles.to_preset(self.shared, "neon"), set(self.store.curves()))
+        self.store.set_presets(self.store.get_presets() + [preset])
+        self.ctrl.end_trial(keep_preset=preset)
+        self.assertIsNone(config.Store(self.tmp.name).zones()[key]["override"])
 
     def test_keep_switches_to_the_installed_profile_and_its_curve(self):
         self.ctrl.try_profile(profiles.scene_of(self.shared), "Neon", fan_points=self.shared["fans"]["curve"])

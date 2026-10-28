@@ -45,6 +45,7 @@ const ED = { W: 900, H: 400, L: 52, R: 884, T: 16, B: 362, tMin: 20, tMax: 100 }
 const ex = (t) => ED.L + ((t - ED.tMin) / (ED.tMax - ED.tMin)) * (ED.R - ED.L);
 const ey = (d) => ED.B - (d / 100) * (ED.B - ED.T);
 const E = { curve: null, draft: null, sel: null, drag: null, drawn: "" };
+const curveSaves = new Map();
 const saved = () => S.curves.curves[E.curve];
 const dirty = () => E.draft && JSON.stringify(E.draft) !== JSON.stringify(saved());
 
@@ -167,8 +168,26 @@ function wireEditor() {
   $("#curve-discard").addEventListener("click", () => { E.draft = null; E.sel = null; renderEditor(); });
   $("#curve-reset").addEventListener("click", () => { E.draft = S.curves.defaults[E.curve].map((p) => p.slice()); E.sel = null; renderEditor(); if (dirty()) toast("Default curve loaded. Save to keep it."); });
   $("#curve-save").addEventListener("click", async () => {
-    try { const r = await post(`/api/curves/${E.curve}`, { points: E.draft }); S.curves.curves[E.curve] = r.points; E.draft = null; renderEditor(); toast(`${curveLabel(E.curve)} curve saved`); }
-    catch (err) { fail(err); }
+    const name = E.curve, draft = E.draft, before = JSON.stringify(draft);
+    const previous = curveSaves.get(name);
+    const writing = (async () => {
+      if (previous) await previous;
+      try {
+        const r = await post(`/api/curves/${name}`, { points: JSON.parse(before) });
+        S.curves.curves[name] = r.points;
+        if (E.curve === name) {
+          if (E.draft === draft && JSON.stringify(draft) === before && curveSaves.get(name) === writing) E.draft = null;
+          renderEditor();
+        }
+        toast(`${curveLabel(name)} curve saved`);
+      }
+      catch (err) { fail(err); }
+    })();
+    curveSaves.set(name, writing);
+    try { await writing; }
+    finally {
+      if (curveSaves.get(name) === writing) curveSaves.delete(name);
+    }
   });
 }
 

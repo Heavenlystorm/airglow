@@ -135,6 +135,12 @@ class HidDevice:
     def is_open(self):
         return self._dev is not None
 
+    def update_path(self, path):
+        with self._lock:
+            if path is not None and path != self.path:
+                self.close()
+                self.path = path
+
     def write(self, packet):
         if not self._dev:
             raise DeviceError(f"{self.name} isn't open")

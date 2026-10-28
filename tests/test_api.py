@@ -6,11 +6,12 @@ import time
 import unittest
 import urllib.parse
 from unittest import mock
+from types import SimpleNamespace
 
 from airglow import api, config, tools
 from airglow.controller import Controller
 from tests.fakes import FakeLightDevice, FakeManager, FakeNzxt, signals
-from tests.test_profiles import big_profile
+from tests.test_profiles import big_profile, NEON
 
 
 class ApiTests(unittest.TestCase):
@@ -483,6 +484,104 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("object", r["error"])
 
+
+
+class ProfileKeepTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = config.Store(self.tmp.name)
+        self.ctrl = Controller(self.store, manager=FakeManager(), signals=signals, read_sensors=dict, async_writes=False)
+        self.server = SimpleNamespace(ctrl=self.ctrl, store=self.store, hooks={})
+        self.ctrl.try_profile(config.DEFAULT_SCENE, "Preview")
+
+    def keep(self):
+        return api.route(self.server, "POST", "/api/profiles/keep", {"profile": NEON, "include_automations": True})
+
+    def test_rule_limit_failure_does_not_create_profiles_on_retry(self):
+        rules = [{"id": f"r{i}", "when": {"type": "locked"}, "then": {"type": "lights_off"}} for i in range(50)]
+        self.store.set_rules(rules, api.validate_rule)
+        before = self.store.get_presets()
+        for _ in range(2):
+            with self.assertRaisesRegex(ValueError, "50 automations"):
+                self.keep()
+            self.assertEqual(self.store.get_presets(), before)
+            self.assertEqual(config.Store(self.tmp.name).get_presets(), before)
+            self.assertIsNotNone(self.ctrl.trial)
+
+    def test_later_write_failure_restores_profile_files_and_memory(self):
+        before, rules = self.store.get_presets(), self.store.get_rules()
+        write = self.store._write
+
+        def fail_rules(name, data):
+            if name == "automations.json" and data:
+                raise OSError("disk full")
+            return write(name, data)
+
+        with mock.patch.object(self.store, "_write", side_effect=fail_rules):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                self.keep()
+        self.assertEqual(self.store.get_presets(), before)
+        self.assertEqual(self.store.get_rules(), rules)
+        again = config.Store(self.tmp.name)
+        self.assertEqual(again.get_presets(), before)
+        self.assertEqual(again.get_rules(), rules)
+        self.assertIsNotNone(self.ctrl.trial)
+
+    def test_activation_write_failure_keeps_the_trial_and_does_not_duplicate_on_retry(self):
+        before, rules, state = self.store.get_presets(), self.store.get_rules(), dict(self.store.state)
+        trial = self.ctrl.trial
+        write = self.store._write
+
+        def fail_state(name, data):
+            if name == "state.json":
+                raise OSError("state is locked")
+            return write(name, data)
+
+        with mock.patch.object(self.store, "_write", side_effect=fail_state):
+            for _ in range(2):
+                with self.assertRaisesRegex(OSError, "state is locked"):
+                    self.keep()
+                self.assertEqual(self.store.get_presets(), before)
+                self.assertEqual(self.store.get_rules(), rules)
+                self.assertEqual(self.store.state, state)
+                self.assertIs(self.ctrl.trial, trial)
+                again = config.Store(self.tmp.name)
+                self.assertEqual(again.get_presets(), before)
+                self.assertEqual(again.get_rules(), rules)
+                self.assertEqual(again.state, state)
+        result = self.keep()
+        self.assertEqual(len(result["presets"]), len(before) + 1)
+        self.assertIsNone(self.ctrl.trial)
+        self.assertEqual(config.Store(self.tmp.name).state["active_preset"], result["id"])
+
+    def test_failed_keep_preserves_zone_overrides_and_retry_clears_them(self):
+        dev = FakeLightDevice("strip", "Strip")
+        self.ctrl.manager.natives[dev.id] = dev
+        self.store.ensure_zones([dev.info()])
+        key = "strip/z1"
+        override = {"effect": "solid", "params": {"color": "#123456"}}
+        self.store.set_zone(key, {**self.store.zones()[key], "override": override}, 16)
+        self.ctrl.try_profile(config.DEFAULT_SCENE, "Preview", clear_zones=[key])
+        del self.ctrl.manager.natives[dev.id]
+        before = self.store.get_presets()
+        write = self.store._write
+        for failed_file in ("config.json", "state.json"):
+            with self.subTest(failed_file=failed_file):
+                def fail(name, data):
+                    if name == failed_file:
+                        raise OSError("locked")
+                    return write(name, data)
+                with mock.patch.object(self.store, "_write", side_effect=fail):
+                    with self.assertRaisesRegex(OSError, "locked"):
+                        self.keep()
+                self.assertEqual(self.store.get_presets(), before)
+                self.assertEqual(self.store.zones()[key]["override"], override)
+                self.assertEqual(config.Store(self.tmp.name).zones()[key]["override"], override)
+                self.assertIsNotNone(self.ctrl.trial)
+        self.keep()
+        self.assertIsNone(config.Store(self.tmp.name).zones()[key]["override"])
+        self.assertIsNone(self.ctrl.trial)
 
 
 class PortFallbackTests(unittest.TestCase):

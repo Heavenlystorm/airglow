@@ -35,8 +35,8 @@ jobs:
         # node --check parses as a script and accepts code Chromium rejects; this parses as a browser module and
         # checks every named import against the module it comes from.
         run: node --experimental-vm-modules tools/check-js.mjs
-      - name: Overview saves preserve edits during pending requests
-        run: node --experimental-vm-modules --test tools/test-overview.mjs
+      - name: UI state and effect runtime regressions
+        run: node --experimental-vm-modules --test tools/test-overview.mjs tools/test-ui-state.mjs tools/test-effect-runtime.mjs
       - name: Community effects are valid
         run: python tools/effects.py --check
       - name: Gallery profiles are valid

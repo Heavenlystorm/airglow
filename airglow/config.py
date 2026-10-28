@@ -50,6 +50,7 @@ DEFAULT_CONFIG = {
     "fan_curves": DEFAULT_CURVES,
     "zones": {},
     "device_params": {},      # device id -> plugin settings (validated against the plugin's PARAMETERS on save)
+    "device_ids": {},         # physical USB identity -> stable local device id
     "fan_channels": {},       # LHM control sensor id -> {"mode": "curve"|"steady", "duty"}; missing: left alone
 }
 
@@ -112,6 +113,16 @@ def parse_hex(color):
         raise ValueError(f"'{color}' is not a colour like #12abef")
     v = m.group(1)
     return [int(v[i:i + 2], 16) for i in (0, 2, 4)]
+
+
+def validate_device_ids(ids):
+    if not isinstance(ids, dict) or not all(
+            isinstance(k, str) and 0 < len(k) <= 4096 and isinstance(v, str)
+            and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", v) for k, v in ids.items()):
+        raise ValueError("device identities must map to valid device ids")
+    if len(set(ids.values())) != len(ids):
+        raise ValueError("device ids must be unique")
+    return dict(ids)
 
 
 def norm_hex(color):
@@ -467,6 +478,24 @@ def _place(role, n, z, leds, geometry):
 
 # ---------------------------------------------------------------- storage
 
+def validate_presets(presets, curves):
+    if not isinstance(presets, list) or len(presets) > 24:
+        raise ValueError("expected a list of up to 24 presets")
+    clean = [validate_preset(p, curves) for p in presets]
+    if len({p["id"] for p in clean}) != len(clean):
+        raise ValueError("preset ids must be unique")
+    return clean
+
+
+def validate_rules(rules, validator):
+    if not isinstance(rules, list) or len(rules) > 50:
+        raise ValueError("expected a list of up to 50 automations")
+    clean = [validator(r) for r in rules]
+    if len({r["id"] for r in clean}) != len(clean):
+        raise ValueError("automation ids must be unique")
+    return clean
+
+
 class Store:
     """Thread-safe JSON files with defaults. Writes are atomic (temp file + rename)."""
 
@@ -594,6 +623,11 @@ class Store:
                 cfg["zones"] = kept
             elif key == "device_params" and isinstance(value, dict):
                 cfg["device_params"] = {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, dict)}
+            elif key == "device_ids":
+                try:
+                    cfg[key] = validate_device_ids(value)
+                except ValueError as e:
+                    log.warning("ignoring invalid device identities: %s", e)
             elif key == "fan_channels" and isinstance(value, dict):
                 from . import lhmfans
                 for sid, ch in list(value.items())[:lhmfans.MAX_CHANNELS]:
@@ -654,7 +688,8 @@ class Store:
     # -- settings / curves
     def settings(self):
         with self._lock:
-            return {k: v for k, v in self.config.items() if k not in ("fan_curves", "zones", "schema", "fan_channels")}
+            return {k: v for k, v in self.config.items()
+                    if k not in ("fan_curves", "zones", "schema", "fan_channels", "device_ids")}
 
     def update_settings(self, patch):
         clean = validate_settings(patch)
@@ -730,6 +765,18 @@ class Store:
         return clean
 
     # -- device plugin settings
+    def device_ids(self):
+        with self._lock:
+            return dict(self.config["device_ids"])
+
+    def set_device_ids(self, ids):
+        clean = validate_device_ids(ids)
+        with self._lock:
+            updated = {**self.config, "device_ids": clean}
+            self._write("config.json", updated)
+            self.config = updated
+        return dict(clean)
+
     def device_params(self):
         """device id -> saved plugin settings (read-only; use set_device_params to change)."""
         return self.config["device_params"]
@@ -808,15 +855,45 @@ class Store:
             return copy.deepcopy(self.presets)
 
     def set_presets(self, presets):
-        if not isinstance(presets, list) or len(presets) > 24:
-            raise ValueError("expected a list of up to 24 presets")
-        clean = [validate_preset(p, self.config["fan_curves"]) for p in presets]
-        if len({p["id"] for p in clean}) != len(clean):
-            raise ValueError("preset ids must be unique")
+        clean = validate_presets(presets, self.config["fan_curves"])
         with self._lock:
-            self.presets = clean
             self._write("presets.json", clean)
+            self.presets = clean
         return clean
+
+    def install_profile(self, preset, rules=(), state=None, clear_zones=()):
+        """Validate Keep in full, and restore earlier files if any later write fails."""
+        from .automation import validate_rule
+        with self._lock:
+            presets = validate_presets(self.presets + [preset], self.config["fan_curves"])
+            ids = {p["id"] for p in presets}
+            combined = validate_rules(self.rules + list(rules),
+                                      lambda r: validate_rule(r, ids, set(self.config["fan_curves"]))) if rules else self.rules
+            config = copy.deepcopy(self.config)
+            for key in clear_zones:
+                if key in config["zones"]:
+                    config["zones"][key]["override"] = None
+            selected = {**self.state, **state} if state is not None else self.state
+            writes = [("presets.json", presets, self.presets)]
+            if rules:
+                writes.append(("automations.json", combined, self.rules))
+            if config != self.config:
+                writes.append(("config.json", config, self.config))
+            if state is not None:
+                writes.append(("state.json", selected, self.state))
+            written = []
+            try:
+                for name, value, old in writes:
+                    self._write(name, value)
+                    written.append((name, old))
+            except Exception:
+                for name, old in reversed(written):
+                    self._write(name, old)
+                raise
+            self.presets, self.rules = presets, combined
+            self.zones_rev += config != self.config
+            self.config, self.state = config, selected
+            return copy.deepcopy(presets)
 
     # -- automations
     def get_rules(self):
@@ -824,14 +901,10 @@ class Store:
             return copy.deepcopy(self.rules)
 
     def set_rules(self, rules, validator):
-        if not isinstance(rules, list) or len(rules) > 50:
-            raise ValueError("expected a list of up to 50 automations")
-        clean = [validator(r) for r in rules]
-        if len({r["id"] for r in clean}) != len(clean):
-            raise ValueError("automation ids must be unique")
+        clean = validate_rules(rules, validator)
         with self._lock:
-            self.rules = clean
             self._write("automations.json", clean)
+            self.rules = clean
         return clean
 
     # -- overview
