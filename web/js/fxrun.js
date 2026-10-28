@@ -120,19 +120,25 @@ export class EffectRunner {
     // here and go out with the load itself.
     this._early = { points, params: effect.params || {}, layers: effect.layers || [] };
     const a = await runtimeAssets();
+    if (this._destroyed) return;
     this.frame.src = "/runtime/frame.html";
     document.body.appendChild(this.frame);
     try {
       // A frame that never says hello (a broken page, a WebView out of memory) would otherwise leave the preview
       // silently empty for ever, with the runner waiting on a promise that never settles.
-      await Promise.race([this._hello, new Promise((_, reject) => setTimeout(
-        () => reject(new Error("The effect's page didn't start")), 8000))]);
+      await Promise.race([this._hello, new Promise((_, reject) => {
+        this._helloTimer = setTimeout(() => reject(new Error("The effect's page didn't start")), 8000);
+      })]);
     } catch (e) {
       this.destroy();
       this.h.onError?.({ message: String(e.message || e), line: null });
       this.h.onStopped?.("error");
       return;
+    } finally {
+      clearTimeout(this._helloTimer);
+      this._helloTimer = null;
     }
+    if (this._destroyed) return;
     const early = this._early;
     this._early = null;
     this._post({ type: "load", runtime: a.runtime, layersLib: a.layersLib, defaults: a.defaults, kind: effect.kind,
@@ -162,6 +168,10 @@ export class EffectRunner {
   }
 
   destroy() {
+    this._destroyed = true;
+    clearTimeout(this._helloTimer);
+    this._helloTimer = null;
+    this._helloRes();
     window.removeEventListener("message", this._onMessage);
     try { this._post({ type: "stop" }); } catch { /* already gone */ }
     this.frame.remove();
@@ -171,7 +181,7 @@ export class EffectRunner {
   _post(msg) { this.frame.contentWindow?.postMessage(msg, "*"); }
 
   _message(e) {
-    if (e.source !== this.frame.contentWindow || !e.data || typeof e.data.type !== "string") return;
+    if (this._destroyed || e.source !== this.frame.contentWindow || !e.data || typeof e.data.type !== "string") return;
     const d = e.data;
     if (d.type === "hello") this._helloRes();
     else if (d.type === "ready") { this.ready = true; this.h.onReady?.(); }
@@ -181,7 +191,7 @@ export class EffectRunner {
       if (d.backdrop instanceof ImageBitmap) this.h.onBackdrop?.(d.backdrop);
     } else if (d.type === "log") this.h.onLog?.(String(d.text).slice(0, 500));
     else if (d.type === "error") this.h.onError?.({ message: String(d.message).slice(0, 300), line: Number.isInteger(d.line) ? d.line : null });
-    else if (d.type === "stopped") { this.ready = false; this.h.onStopped?.(String(d.reason)); }
+    else if (d.type === "stopped") { this.destroy(); this.h.onStopped?.(String(d.reason)); }
   }
 }
 

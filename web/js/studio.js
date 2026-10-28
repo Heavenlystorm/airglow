@@ -108,7 +108,12 @@ export function initStudio() {
   window.addEventListener("resize", () => { E.painted = -1; });      // the preview canvas changed size: repaint it
   on("state", () => { followLights(); if (!box().closest(".view").hidden) paintProblems(); });
   on("zones", () => { if (E.runner) restartRunner(); });
-  on("studio:open", (req) => { pending = req; if (location.hash === "#studio/edit") renderStudio("edit"); else location.hash = "#studio/edit"; });
+}
+
+export function openStudio(req) {
+  pending = req;
+  if (location.hash === "#studio/edit") return renderStudio("edit");
+  location.hash = "#studio/edit";
 }
 
 function onKey(e) {
@@ -394,11 +399,11 @@ function payload(doc) {
 }
 
 // ------------------------------------------------------------ undo and redo
-function snapDoc() {
-  if (!E.doc) return "null";
-  return JSON.stringify({ name: E.doc.name, description: E.doc.description, tags: E.doc.tags, remix_of: E.doc.remix_of,
-                          mode: E.doc.mode, layers: E.doc.layers, master: E.doc.master, expose: E.doc.expose,
-                          source: E.doc.source, values: E.doc.values });
+function snapDoc(doc = E.doc) {
+  if (!doc) return "null";
+  return JSON.stringify({ name: doc.name, description: doc.description, tags: doc.tags, remix_of: doc.remix_of,
+                          mode: doc.mode, layers: doc.layers, master: doc.master, expose: doc.expose,
+                          source: doc.source, values: doc.values });
 }
 
 function histReset() {
@@ -1034,13 +1039,7 @@ function scheduleSave() {
 
 async function quietSave() {
   if (!E.doc?.fx_id || !E.doc.dirty) return;
-  const before = snapDoc();
-  try {
-    const r = await post("/api/studio/save", { ...payload(E.doc), fx_id: E.doc.fx_id });
-    E.doc.fx_id = r.effect.fx_id;
-    if (snapDoc() === before) { E.doc.dirty = false; forgetDraft(); }
-    setSavedLabel();
-  } catch { /* keep the draft; the next edit tries again */ }
+  return save({ quiet: true });
 }
 
 const syncLights = coalesce(async () => {
@@ -1347,22 +1346,43 @@ async function openInEditor() {
 }
 
 // ------------------------------------------------------------ save, use, share, check
+const saves = new Map();
 async function save({ quiet = false } = {}) {
   const d = E.doc;
   if (!d) return null;
-  const before = snapDoc();
-  try {
-    const r = await post("/api/studio/save", { ...payload(d), fx_id: d.fx_id });
-    d.fx_id = r.effect.fx_id;
-    if (snapDoc() === before) { d.dirty = false; forgetDraft(); }
-    if (!quiet) E.saved = before;          // Revert goes back to this deliberate save
-    setSavedLabel();
-    if (!quiet) {
-      S.effects = await get("/api/effects");
-      emit("refresh");
+  const key = d.fx_id || d, queue = saves.get(key) || { tail: null };
+  const before = snapDoc(d), previous = queue.tail;
+  saves.set(key, queue);
+  const writing = (async () => {
+    if (previous) await previous;
+    try {
+      // A queued first save must reuse the ID created by the preceding write.
+      const r = await post("/api/studio/save", { ...payload(JSON.parse(before)), fx_id: d.fx_id });
+      d.fx_id = r.effect.fx_id;
+      // Reopening the new effect must join the same queue, including its already queued first saves.
+      if (key !== d.fx_id) saves.delete(key);
+      saves.set(d.fx_id, queue);
+      d.dirty = snapDoc(d) !== before || queue.tail !== writing;
+      if (E.doc === d) {
+        if (!d.dirty) forgetDraft();
+        if (!quiet) E.saved = before;          // Revert goes back to this deliberate save
+        setSavedLabel();
+      }
+      if (!quiet) {
+        S.effects = await get("/api/effects");
+        emit("refresh");
+      }
+      return r.effect;
+    } catch (e) { if (!quiet) fail(e); return null; }
+  })();
+  queue.tail = writing;
+  try { return await writing; }
+  finally {
+    if (queue.tail === writing) {
+      saves.delete(key);
+      saves.delete(d.fx_id);
     }
-    return r.effect;
-  } catch (e) { if (!quiet) fail(e); return null; }
+  }
 }
 
 async function revert() {

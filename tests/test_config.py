@@ -7,6 +7,36 @@ from unittest import mock
 from airglow import config
 
 
+class DeviceIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = config.Store(self.tmp.name)
+
+    def test_identities_survive_reload_and_are_not_public_settings(self):
+        ids = {'[7793, 8226, "serial-A"]': "nzxt-hub", '[7793, 8226, "serial-B"]': "nzxt-hub-2"}
+        self.store.set_device_ids(ids)
+        ids.clear()
+        again = config.Store(self.tmp.name)
+        self.assertEqual(again.device_ids(), {'[7793, 8226, "serial-A"]': "nzxt-hub",
+                                             '[7793, 8226, "serial-B"]': "nzxt-hub-2"})
+        self.assertNotIn("device_ids", again.settings())
+        again.device_ids().clear()
+        self.assertEqual(len(again.device_ids()), 2)
+
+    def test_failed_save_keeps_the_original_identity_mapping(self):
+        self.store.set_device_ids({"A": "nzxt-hub"})
+        with mock.patch.object(self.store, "_write", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.store.set_device_ids({"B": "nzxt-hub-2"})
+        self.assertEqual(self.store.device_ids(), {"A": "nzxt-hub"})
+        self.assertEqual(config.Store(self.tmp.name).device_ids(), {"A": "nzxt-hub"})
+
+    def test_duplicate_device_ids_are_rejected(self):
+        with self.assertRaises(ValueError):
+            self.store.set_device_ids({"A": "nzxt-hub", "B": "nzxt-hub"})
+
+
 class ValidationTests(unittest.TestCase):
     def test_hex(self):
         self.assertEqual(config.parse_hex("#FF8000"), [255, 128, 0])

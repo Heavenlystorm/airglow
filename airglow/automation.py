@@ -55,7 +55,7 @@ def validate_rule(r, preset_ids=None, curve_names=None):
         start, end = str(w.get("start", "")), str(w.get("end", ""))
         if not _HHMM.fullmatch(start) or not _HHMM.fullmatch(end) or start == end:
             raise ValueError("enter a start and end time like 23:00 and 07:00")
-        days = w.get("days") or list(range(7))
+        days = w.get("days", list(range(7)))
         if not isinstance(days, list) or not days or not all(isinstance(d, int) and 0 <= d <= 6 for d in days):
             raise ValueError("pick at least one day")
         when.update(start=start, end=end, days=sorted(set(days)))

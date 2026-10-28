@@ -654,8 +654,17 @@ def start_setup(ctrl, store, ids=None):
             job.update(step="Downloading the Visual C++ runtime")
             job_file["vcredist"] = str(download(s["vcredist"]["url"], dl / "vc_redist.x64.exe"))
         password = None
+        new_auth = False
         if "lhm" in wanted:
-            password = secrets.token_urlsafe(24)
+            try:
+                auth = json.loads(auth_file().read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                auth = {"user": LHM_USER, "password": secrets.token_urlsafe(24)}
+                new_auth = True
+            if (not isinstance(auth, dict) or auth.get("user") != LHM_USER
+                    or not isinstance(auth.get("password"), str) or not auth["password"]):
+                raise SetupError("the saved sensor credentials are invalid; no helper programs were changed")
+            password = auth["password"]
             job_file["lhm_password_sha256"] = hashlib.sha256(password.encode()).hexdigest()
         job.update(progress=1.0)
         if "openrgb" in wanted:
@@ -665,15 +674,24 @@ def start_setup(ctrl, store, ids=None):
             disable_openrgb_detectors(openrgb_detectors_to_disable(ctrl.manager.natives.values()))
         path = dl / "setup-job.json"
         path.write_text(json.dumps(job_file), encoding="utf-8")
+        # Keep the credential before LHM can use it, even if a later setup step or this process fails.
+        if new_auth:
+            tmp = auth_file().with_suffix(".tmp")
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(auth, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, auth_file())
         try:
             r = _elevate(job, ["--setup-tools", str(path)], result_file(path, "--setup-tools"))
         finally:
             path.unlink(missing_ok=True)
         if r is None:
+            if new_auth:
+                auth_file().unlink(missing_ok=True)
             return "cancelled"
         job.update(state="working", step="Starting the programs")
         if password:
-            auth_file().write_text(json.dumps({"user": LHM_USER, "password": password}), encoding="utf-8")
             store.update_settings({"lhm_url": LHM_URL})
         if "lhm" in wanted and hasattr(ctrl, "lhm"):
             ctrl.lhm.wake()                                     # read it as soon as it answers, not in 12 s

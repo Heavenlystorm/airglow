@@ -14,6 +14,7 @@ from . import automation, devices, fancontrol, fans, lhmfans, sensors, system, t
 from .config import SAFETY_TEMP, validate_scene
 from .hw import DeviceManager
 from .history import SensorHistory
+from .lighting import geometry
 from .lighting.engine import Engine
 
 log = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ class Controller:
     def __init__(self, store, manager=None, read_sensors=None, signals=None, start_power_events=False,
                  async_writes=True, read_flat=None, lhm_fans=None):
         self.store = store
-        self.manager = manager or DeviceManager()
+        self.manager = manager or DeviceManager(store=store)
         if hasattr(self.manager, "dynamic_enabled"):
             self.manager.dynamic_enabled = lambda: store.settings()["dynamic_lighting_enabled"]
         s = store.state
@@ -143,27 +144,45 @@ class Controller:
     # ------------------------------------------------------------ trying a profile before keeping it
     def try_profile(self, scene, name, fan_points=None, clear_zones=(), kind="profile"):
         """Play a profile on the real lights (and its fan curve, when given) until end_trial().
-        clear_zones: zones whose own effect would hide the profile's per-area effects; put back on discard.
+        clear_zones: zones whose own effect would hide the profile's per-area effects; ignored only while trying.
         kind "studio": the Studio playing the effect being edited ("Also on my lights")."""
         with self._lock:
             if self.trial is None:
-                zones = self.store.zones()
                 self.trial = {"before": {"scene": dict(self.base_scene), "curve": self.base_curve,
-                                         "preset": self.active_preset,
-                                         "overrides": {k: zones[k].get("override") for k in clear_zones if k in zones}}}
-            else:
-                # a second profile (or the Studio) while one is being tried: remember what this one clears as
-                # well, or Discard would restore the first set and leave these zones without their effect
-                before, zones = self.trial["before"], self.store.zones()
-                before["overrides"] = {**{k: zones[k].get("override") for k in clear_zones if k in zones},
-                                       **before["overrides"]}
+                                         "preset": self.active_preset}, "clear_zones": {}}
             self.trial.update(name=name, fan_points=fan_points, kind=kind)
+            zones = self.store.zones()
             for key in clear_zones:
-                self._set_override(key, None)
+                if key not in zones:
+                    continue
+                dev = self.manager.get(key.rpartition("/")[0])
+                zone = next((z for z in (dev.zones if dev else []) if f"{dev.id}/{z.id}" == key), None)
+                self.trial["clear_zones"][key] = zone.max_leds if zone else geometry.total_leds(zones[key]["layout"])
+            self.engine.set_trial_zones(self.trial["clear_zones"])
             self.base_scene = validate_scene({**scene, "on": True})
             self.base_curve = "trial" if fan_points else self.trial["before"]["curve"]
             self.active_preset = None
             self.apply()                           # not saved: a restart goes back to what you had
+
+    def keep_profile(self, preset, rules=()):
+        """Save a tried profile and its selection before ending the transient preview."""
+        with self._lock:
+            state = None
+            clear = ()
+            if self.trial is not None:
+                state = {"scene": validate_scene({"effect": preset["effect"], "params": preset["params"],
+                                                 "brightness": preset["brightness"], "areas": preset.get("areas"),
+                                                 "on": True}),
+                         "fan_curve": self.preset_curve(preset) or self.trial["before"]["curve"],
+                         "active_preset": preset["id"]}
+                clear = self.trial["clear_zones"]
+            presets = self.store.install_profile(preset, rules, state=state, clear_zones=clear)
+            if state is not None:
+                self.base_scene, self.base_curve = state["scene"], state["fan_curve"]
+                self.active_preset, self.trial = preset["id"], None
+                self.engine.set_trial_zones(())
+            self.presets_changed()
+            return presets
 
     def end_trial(self, keep_preset=None):
         """Discard the profile being tried, or keep it: keep_preset is the profile it was installed as."""
@@ -171,7 +190,10 @@ class Controller:
             if self.trial is None:
                 return
             if keep_preset:
+                for key, max_leds in self.trial["clear_zones"].items():
+                    self._set_override(key, None, max_leds)
                 self.trial = None
+                self.engine.set_trial_zones(())
                 self.apply_preset(keep_preset)
                 return
             before = self._leave_trial()
@@ -181,18 +203,15 @@ class Controller:
     def _leave_trial(self):
         """End the trial: zones get their own effects back and the fans their curve. Returns what it replaced."""
         before, self.trial = self.trial["before"], None
-        for key, override in before["overrides"].items():
-            self._set_override(key, override)
+        self.engine.set_trial_zones(())
         self.base_curve = before["curve"] if self.curve_points(before["curve"]) else "balanced"
         return before
 
-    def _set_override(self, key, override):
+    def _set_override(self, key, override, max_leds):
         cfg = self.store.zones().get(key)
-        dev = self.manager.get(key.rpartition("/")[0])
-        zone = next((z for z in (dev.zones if dev else []) if f"{dev.id}/{z.id}" == key), None)
-        if cfg is None or zone is None or cfg.get("override") == override:
+        if cfg is None or cfg.get("override") == override:
             return
-        self.store.set_zone(key, {**cfg, "override": override}, zone.max_leds)
+        self.store.set_zone(key, {**cfg, "override": override}, max_leds)
         self.engine.invalidate(key)
 
     def mark_preset(self, preset_id):
@@ -353,6 +372,8 @@ class Controller:
                 hub.set_fan_duty({p: duty for p in self._hub_ports(hub)})
             except (devices.DeviceError, OSError) as e:
                 log.warning("%s fans: %s", dev.name, e)
+                dev.error = str(e)
+                dev.close()
         for dev in self.manager.natives.values():
             hub = getattr(dev, "hub", None)
             if hub is not None and dev.online and not getattr(hub, "FAN_PORTS", 0):
@@ -362,6 +383,8 @@ class Controller:
                     hub.poll()
                 except (devices.DeviceError, OSError) as e:
                     log.warning("%s: %s", dev.name, e)
+                    dev.error = str(e)
+                    dev.close()
         self._run_lhm_fans(duty, temp, cfg["fan_failsafe_duty"], grace=temp is None and not self._temp_seen
                            and time.monotonic() - self._started < self.STARTUP_GRACE, hottest=hottest)
 
@@ -408,13 +431,18 @@ class Controller:
         if not force and now - self._failsafe_at < 2.0:
             return
         self._failsafe_at = now
-        duty = self.store.settings()["fan_failsafe_duty"]
+        duty = max(self.store.settings()["fan_failsafe_duty"], self.fan_duty or 0)
+        hottest = fans.source_temp(self.sensors, "max")
+        if hottest is not None and hottest >= SAFETY_TEMP:
+            duty = 100
         for dev, hub in self._fan_devices():
             try:
                 hub.set_fan_duty({p: duty for p in self._hub_ports(hub)})
                 log.info("%s fans set to failsafe %d%%", dev.name, duty)
             except (devices.DeviceError, OSError) as e:
                 log.error("could not set failsafe fan speed on %s: %s", dev.name, e)
+                dev.error = str(e)
+                dev.close()
         # LHM channels Airglow drives: at least the failsafe speed (a pump held faster keeps its speed)
         n = self.lhm_fans.failsafe(duty)
         if n:
@@ -520,7 +548,8 @@ class Controller:
             while not self._stop.is_set():
                 try:
                     self.tick()
-                    failures = 0
+                    if self._ticks % 2 == 1:       # lightweight ticks don't prove sensors/fans recovered
+                        failures = 0
                 except Exception:
                     failures += 1
                     log.exception("controller tick failed (%d in a row)", failures)
@@ -567,8 +596,6 @@ class Controller:
             return
         self._stop.set()
         try:
-            # A trial's cleared zone effects live only in memory: put them back before we go, or the saved
-            # config keeps the trial's blanks for good.
             self.end_trial()
         except Exception:
             log.exception("ending the trial failed")

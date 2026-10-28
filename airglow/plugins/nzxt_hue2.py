@@ -28,7 +28,7 @@ _FANS_ONLY = ("Airglow drives its fans only: this revision changed its lighting 
 
 def _nzxt(pid, name, leds, fans, detector, experimental=True, note=None):
     return Product(0x1E71, pid, name, experimental=experimental, note=note, openrgb_detector=detector,
-                   facts={"led_channels": leds, "fan_ports": fans})
+                   facts={"led_channels": leds, "fan_ports": fans}, openrgb_skip=tuple(dict.fromkeys((name, detector))))
 
 
 # The fifth value is OpenRGB's detector for that id (NZXTHue2ControllerDetect.cpp): one name covers several ids, and
@@ -158,6 +158,9 @@ class NzxtDevice(Device):
 
     def close(self):
         self.hub.close()
+
+    def update_hid_path(self, path):
+        self.hub.update_path(path)
 
     def write_zone(self, zone_id, colors):
         limit = self.params.get("brightness_limit", 100)

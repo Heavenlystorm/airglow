@@ -89,6 +89,7 @@ class Engine:
         self._writers = {}               # device id -> DeviceWriter
         self._online = {}                # device id -> the device object if it was online last frame (re-send on change)
         self.scene = dict(store.state["scene"])
+        self._trial_zones = frozenset()  # zone overrides suppressed during a trial, never saved to the store
         self.screen, self.audio = ScreenSampler(), AudioAnalyzer()
         self._frames = ({}, {})          # (zone key -> the last frame's bytes, the same as hex once someone asked)
         self.frame_id = 0
@@ -215,6 +216,11 @@ class Engine:
                 self._last.clear()
         self._kick.set()                             # a zone's settings changed (an override, its layout)
 
+    def set_trial_zones(self, keys):
+        with self._lock:
+            self._trial_zones = frozenset(keys)
+            self.invalidate()
+
     # ------------------------------------------------------------ rendering
     def _geometry(self, key, layout, zcfg=None):
         cached = self._geom.get(key)
@@ -262,7 +268,7 @@ class Engine:
         if not scene.get("on", True):
             return np.zeros((z.n, 3)), 0
         eff_id, params = scene["effect"], scene["params"]
-        if own and zcfg.get("override"):               # an effect you gave this zone yourself wins
+        if own and key not in self._trial_zones and zcfg.get("override"):
             eff_id, params = zcfg["override"]["effect"], zcfg["override"]["params"]
         elif scene.get("areas"):                       # a profile's effect for the area this zone sits in
             area = scene["areas"].get(z.spot)      # cached per zone by _geometry, not rescanned every frame

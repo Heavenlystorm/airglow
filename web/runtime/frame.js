@@ -6,21 +6,25 @@
 // frame -> page: ready, frame {colors, ms, backdrop?}, log {text}, error {message, line}, stopped {reason}
 "use strict";
 (() => {
-  const HANG_MS = 3000;          // no answer to a frame for this long: the effect is stuck
+  const HANG_MS = 3000;          // no answer to startup or a frame for this long: the effect is stuck
   const SLOW_MS = 20, SLOW_RUN = 30;
-  let worker = null, prefixLines = 0, pending = 0, slow = 0, stopped = false;
+  let worker = null, prefixLines = 0, pending = 0, slow = 0, stopped = false, startupTimer = null;
 
   const up = (msg, transfer) => parent.postMessage(msg, "*", transfer || []);
 
   function stop(reason) {
     if (stopped) return;
     stopped = true;
+    clearTimeout(startupTimer);
+    startupTimer = null;
     worker?.terminate();
     worker = null;
     up({ type: "stopped", reason });
   }
 
   function load(m) {
+    // Top-level code and init() can hang before the runner is ready to send its first tick.
+    startupTimer = setTimeout(() => stop("hung"), HANG_MS);
     // the layer renderer comes with every effect: builder effects are drawn by it, code effects may use it too
     const body = m.kind === "layers"
       ? `airglow.effect(AirglowLayers.effect(${JSON.stringify(m.layers)}, ${JSON.stringify(m.defaults || {})}));\n`
@@ -37,6 +41,7 @@
       stop("error");
     };
     worker.onmessage = (e) => {
+      if (stopped) return;
       const d = e.data;
       if (d.type === "frame") {
         pending = 0;
@@ -49,6 +54,7 @@
         up({ type: "error", message: d.message, line: n ? Math.max(1, n - prefixLines) : null });
         stop("error");
       } else if (d.type === "log" || d.type === "ready") {
+        if (d.type === "ready") { clearTimeout(startupTimer); startupTimer = null; }
         up(d);
       }
     };
@@ -59,7 +65,7 @@
     if (e.source !== parent || !e.data || typeof e.data.type !== "string") return;
     const m = e.data;
     if (m.type === "load") {
-      if (worker) return;
+      if (worker || stopped) return;
       try { load(m); } catch (err) { up({ type: "error", message: String(err.message || err) }); stop("error"); }
       return;
     }

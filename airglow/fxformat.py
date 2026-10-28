@@ -14,6 +14,7 @@ here runs effect code: effects only ever run inside the sandboxed runtime (web/r
 import hashlib
 import html
 import json
+import math
 import re
 from functools import lru_cache
 from html.parser import HTMLParser
@@ -110,7 +111,10 @@ def _text(value, name, longest, required=False):
 
 def _number(a, key, name):
     try:
-        return float(a[key])
+        value = float(a[key])
+        if not math.isfinite(value):
+            raise ValueError
+        return value
     except (KeyError, TypeError, ValueError):
         raise FormatError(f"control '{name}' needs a number for {key}") from None
 

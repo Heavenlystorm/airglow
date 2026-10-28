@@ -3,9 +3,10 @@ import time
 import unittest
 from unittest import mock
 
-from airglow import config, sensors
+from airglow import config, devices, hw, sensors
+from airglow.plugins import nzxt_hue2
 from airglow.controller import Controller
-from tests.fakes import FakeLightDevice, FakeManager, FakeNzxt, signals
+from tests.fakes import FakeHidBackend, FakeHidDevice, FakeLightDevice, FakeManager, FakeNzxt, signals
 
 
 class ControllerTests(unittest.TestCase):
@@ -48,12 +49,49 @@ class ControllerTests(unittest.TestCase):
         self.ctrl.tick()
         self.assertEqual(self.nzxt.hub.duties[-1][1], 100)
         self.ctrl.failsafe()
-        self.assertEqual(self.nzxt.hub.duties[-1][1], self.store.settings()["fan_failsafe_duty"])
+        self.assertEqual(self.nzxt.hub.duties[-1][1], 100)
+
+    def test_failsafe_preserves_last_higher_duty_without_a_temperature(self):
+        self.ctrl.fan_duty = 80
+        self.ctrl.failsafe()
+        self.assertEqual(set(self.nzxt.hub.duties[-1].values()), {80})
+
+    def test_failsafe_uses_known_hot_temperature_before_the_first_fan_tick(self):
+        self.ctrl.sensors = {"cpu_temp": 95.0, "gpu_temp": 40.0}
+        self.ctrl.failsafe()
+        self.assertEqual(set(self.nzxt.hub.duties[-1].values()), {100})
+
+    def test_failed_fan_only_controller_is_closed_and_can_reconnect(self):
+        for operation in ("read", "write"):
+            with self.subTest(operation=operation):
+                handle = FakeHidDevice()
+                hub = devices.NzxtControlHub(FakeHidBackend(device=handle), pid=0x2011,
+                                            led_channels=0, fan_ports=3)
+                dev = nzxt_hue2.NzxtDevice(hub, product=next(p for p in nzxt_hue2.PRODUCTS if p.pid == 0x2011))
+                manager = hw.DeviceManager(natives=[dev])
+                manager.maintain(False, force=True)
+                ctrl = Controller(self.store, manager=manager, read_sensors=lambda: dict(self.temps),
+                                  signals=lambda: self.sig, async_writes=False)
+                with mock.patch.object(handle, operation, side_effect=OSError("USB disconnected")):
+                    ctrl.tick()
+                self.assertFalse(dev.online)
+                self.assertTrue(handle.closed)
+                self.assertIn("USB disconnected", dev.error)
+                manager.maintain(False, force=True)
+                self.assertTrue(dev.online)
+                self.assertIsNone(dev.error)
+                manager.close()
 
     def test_new_zones_get_default_settings(self):
         zones = self.store.zones()
         self.assertIn("nzxt-hub/ch1", zones)
         self.assertTrue(zones["nzxt-hub/ch1"]["enabled"])
+
+    def test_startup_uses_the_saved_openrgb_endpoint(self):
+        self.store.update_settings({"openrgb_host": "192.0.2.5", "openrgb_port": 7777})
+        with mock.patch("hid.enumerate", return_value=[]):
+            ctrl = Controller(config.Store(self.tmp.name), signals=lambda: self.sig, async_writes=False)
+        self.assertEqual((ctrl.manager.bridge.client.host, ctrl.manager.bridge.client.port), ("192.0.2.5", 7777))
 
     def test_set_scene_validates_and_clears_preset(self):
         self.ctrl.apply_preset(self.store.get_presets()[0])
@@ -188,11 +226,12 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(self.ctrl.effective_scene["on"])
 
     def test_loop_failsafe_after_repeated_errors(self):
-        self.ctrl.TICK = 0.01
         self.ctrl._read_sensors = lambda: 1 / 0
-        self.ctrl.start()
-        time.sleep(0.4)
-        self.ctrl.shutdown()
+        def next_tick(_):
+            if self.ctrl._ticks >= 9:
+                self.ctrl._stop.set()
+        with mock.patch.object(self.ctrl._stop, "wait", side_effect=next_tick):
+            self.ctrl._loop()
         failsafe = self.store.settings()["fan_failsafe_duty"]
         self.assertIn({p: failsafe for p in range(5)}, self.nzxt.hub.duties)
 

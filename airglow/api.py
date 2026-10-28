@@ -492,14 +492,11 @@ def route(server, method, path, body, query=None):
             raise ApiError(400, "You have 24 profiles already. Remove one first (Profiles, Edit).")
         pid = profiles.new_id(shared["name"], {p["id"] for p in presets})
         preset = profiles.to_preset(shared, pid, include_fans=bool(body.get("include_fans")))
-        presets = store.set_presets(presets + [preset])
+        new = []
         if body.get("include_automations") and shared.get("automations"):
             rules = store.get_rules()
             new = profiles.rules_to_install(shared, pid, {r["id"] for r in rules})
-            ids = {p["id"] for p in presets}
-            store.set_rules(rules + new, lambda r: validate_rule(r, ids, set(store.curves())))
-            ctrl.automations.evaluate()
-        ctrl.end_trial(keep_preset=next(p for p in presets if p["id"] == pid))
+        presets = ctrl.keep_profile(preset, new)
         return {"presets": presets, "id": pid}
     if path == "/api/profiles/share":
         p = _preset(store, body.get("id"))

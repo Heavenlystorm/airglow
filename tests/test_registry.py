@@ -1,7 +1,10 @@
 import types
+import tempfile
 import unittest
+from unittest import mock
 
-from airglow import devices, hw, plugins
+from airglow import config, devices, hw, plugins
+from airglow.controller import Controller
 from airglow.plugins import asus_aura_usb, nzxt_hue2
 from tests.fakes import (
     FakeHidBackend,
@@ -9,6 +12,7 @@ from tests.fakes import (
     FakeHub,
     FakeLightDevice,
     FakeManager,
+    signals,
 )
 
 
@@ -104,6 +108,19 @@ class PluginTests(unittest.TestCase):
         both = hw.DeviceManager(natives=hw.detect_natives([hid_entry(0x1E71, 0x2011), hid_entry(0x1E71, 0x2022)],
                                                           backend=FakeHidBackend()))
         self.assertTrue(both.bridge.skipped(self._orgb("NZXT Control Hub", "LED strip", vendor="NZXT")))
+        self.assertTrue(both.bridge.skipped(self._orgb("NZXT RGB & Fan Controller 2024", "LED strip", vendor="NZXT")))
+        self.assertFalse(both.bridge.skipped(self._orgb("NZXT RGB & Fan Controller", "LED strip", vendor="NZXT")))
+
+    def test_same_name_nzxt_models_are_distinguished_by_serial(self):
+        for lit_pid in (0x2009, 0x200E, 0x2010, 0x2020):
+            for fan_pid in (0x2011, 0x2019, 0x201F):
+                with self.subTest(lit_pid=lit_pid, fan_pid=fan_pid):
+                    manager = hw.DeviceManager(natives=hw.detect_natives([
+                        hid_entry(0x1E71, lit_pid, serial="LIGHT"), hid_entry(0x1E71, fan_pid, serial="FANS")],
+                        backend=FakeHidBackend()))
+                    ctrl = self._orgb("NZXT RGB & Fan Controller", "LED strip", vendor="NZXT")
+                    self.assertTrue(manager.bridge.skipped({**ctrl, "serial": "LIGHT"}))
+                    self.assertFalse(manager.bridge.skipped({**ctrl, "serial": "FANS"}))
 
 
 class HotPlugTests(unittest.TestCase):
@@ -119,7 +136,7 @@ class HotPlugTests(unittest.TestCase):
         usb = self.Backend(hid_entry(0x0B05, 0x19AF, interface=2))
         manager = hw.DeviceManager(hid_backend=usb)
         self.assertEqual(list(manager.natives), ["asus-aura"])
-        hub = {"vendor": "NZXT", "name": "NZXT RGB & Fan Controller", "type_name": "LED strip"}
+        hub = {"vendor": "NZXT", "name": "NZXT RGB & Fan Controller 2024", "type_name": "LED strip"}
         self.assertFalse(manager.bridge.skipped(hub))
         self.assertEqual(manager.rescan(), [])                              # nothing new: nothing changes
         aura = manager.natives["asus-aura"]
@@ -150,6 +167,84 @@ class HotPlugTests(unittest.TestCase):
         fixed._last_scan -= hw.DeviceManager.RESCAN
         fixed.maintain(False)
         self.assertEqual(fixed.natives, {})
+
+    def test_saved_ids_survive_reversed_enumeration_and_absent_controllers(self):
+        usb = self.Backend(hid_entry(0x1E71, 0x2022, serial="A"), hid_entry(0x1E71, 0x2022, serial="B"))
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("hid.enumerate", side_effect=usb.enumerate):
+            def restart():
+                ctrl = Controller(config.Store(tmp), signals=signals, read_sensors=lambda: {}, async_writes=False)
+                return {d.hid_key[2]: d.id for d in ctrl.manager.natives.values()}
+            self.assertEqual(restart(), {"A": "nzxt-hub", "B": "nzxt-hub-2"})
+            usb.entries.reverse()
+            self.assertEqual(restart(), {"A": "nzxt-hub", "B": "nzxt-hub-2"})
+            usb.entries = [hid_entry(0x1E71, 0x2022, serial="B"), hid_entry(0x1E71, 0x2022, serial="C")]
+            self.assertEqual(restart(), {"B": "nzxt-hub-2", "C": "nzxt-hub-3"})
+            usb.entries.append(hid_entry(0x1E71, 0x2022, serial="A"))
+            self.assertEqual(restart(), {"A": "nzxt-hub", "B": "nzxt-hub-2", "C": "nzxt-hub-3"})
+
+    def test_rescan_reopens_the_same_serial_at_its_new_usb_path(self):
+        usb = self.Backend(hid_entry(0x1E71, 0x2011, serial="A", path=b"old"))
+        manager = hw.DeviceManager(hid_backend=usb)
+        dev = manager.natives["nzxt-hub"]
+        manager.maintain(False, force=True)
+        self.assertTrue(dev.online)
+        usb.entries = [hid_entry(0x1E71, 0x2011, serial="A", path=b"new")]
+        self.assertEqual(manager.rescan(), [])
+        self.assertIs(manager.natives["nzxt-hub"], dev)
+        self.assertEqual(dev.hub.path, b"new")
+        self.assertFalse(dev.online)
+        manager.maintain(False, force=True)
+        self.assertTrue(dev.online)
+        manager.close()
+
+    def test_serialless_controllers_at_distinct_paths_keep_distinct_ids(self):
+        usb = self.Backend(hid_entry(0x0B05, 0x19AF, interface=2, path=b"first"),
+                           hid_entry(0x0B05, 0x19AF, interface=2, path=b"second"))
+        with tempfile.TemporaryDirectory() as tmp:
+            first = hw.DeviceManager(hid_backend=usb, store=config.Store(tmp))
+            self.assertEqual({d.aura.path: d.id for d in first.natives.values()},
+                             {b"first": "asus-aura", b"second": "asus-aura-2"})
+            usb.entries.reverse()
+            again = hw.DeviceManager(hid_backend=usb, store=config.Store(tmp))
+            self.assertEqual({d.aura.path: d.id for d in again.natives.values()},
+                             {b"first": "asus-aura", b"second": "asus-aura-2"})
+
+    def test_failed_initial_fan_setup_closes_the_handle_for_retry(self):
+        usb = self.Backend(hid_entry(0x1E71, 0x2011, serial="A"))
+        usb.dev.fail_writes = True
+        manager = hw.DeviceManager(hid_backend=usb)
+        manager.maintain(False, force=True)
+        dev = manager.natives["nzxt-hub"]
+        self.assertFalse(dev.online)
+        self.assertTrue(usb.dev.closed)
+        usb.dev.fail_writes = False
+        manager.maintain(False, force=True)
+        self.assertTrue(dev.online)
+        self.assertIsNone(dev.error)
+        manager.close()
+
+    def test_identity_write_failure_keeps_fan_controllers_and_retries_on_rescan(self):
+        usb = self.Backend(hid_entry(0x1E71, 0x2011, serial="A"), hid_entry(0x1E71, 0x2011, serial="B"))
+        with tempfile.TemporaryDirectory() as tmp:
+            store = config.Store(tmp)
+            with mock.patch.object(store, "set_device_ids", side_effect=OSError("disk full")):
+                manager = hw.DeviceManager(hid_backend=usb, store=store)
+            self.assertEqual(list(manager.natives), ["nzxt-hub", "nzxt-hub-2"])
+            self.assertEqual(store.device_ids(), {})
+            usb.entries.reverse()
+            self.assertEqual(manager.rescan(), [])
+            again = hw.DeviceManager(hid_backend=usb, store=config.Store(tmp))
+            self.assertEqual({d.hid_key[2]: d.id for d in again.natives.values()},
+                             {"A": "nzxt-hub", "B": "nzxt-hub-2"})
+
+    def test_hotplug_fan_only_model_is_exposed_by_serial_when_names_match(self):
+        usb = self.Backend(hid_entry(0x1E71, 0x2009, serial="LIGHT"))
+        manager = hw.DeviceManager(hid_backend=usb)
+        usb.entries.append(hid_entry(0x1E71, 0x2011, serial="FANS"))
+        manager.rescan()
+        ctrl = {"vendor": "NZXT", "name": "NZXT RGB & Fan Controller", "type_name": "LED strip"}
+        self.assertTrue(manager.bridge.skipped({**ctrl, "serial": "LIGHT"}))
+        self.assertFalse(manager.bridge.skipped({**ctrl, "serial": "FANS"}))
 
 
 class DeviceParameterTests(unittest.TestCase):
@@ -238,8 +333,9 @@ class MultiHubFanTests(unittest.TestCase):
             self.assertTrue(a.hub.duties and b.hub.duties)
             ports = ctrl.snapshot()["fans"]["ports"]
             self.assertEqual({p["device"] for p in ports}, {"nzxt-hub", "nzxt-hub-2"})
+            previous_duty = dict(b.hub.duties[-1])
             ctrl.failsafe()
-            self.assertEqual(set(b.hub.duties[-1].values()), {store.settings()["fan_failsafe_duty"]})
+            self.assertEqual(b.hub.duties[-1], previous_duty)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,12 @@ def rule(rid, when, then, enabled=True):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_time_rule_rejects_an_explicit_empty_day_selection(self):
+        for days in ([], None, False):
+            with self.subTest(days=days), self.assertRaisesRegex(ValueError, "pick at least one day"):
+                A.validate_rule(rule("night", {"type": "time", "start": "23:00", "end": "07:00", "days": days},
+                                     {"type": "lights_off"}))
+
     def test_valid_rules(self):
         r = A.validate_rule({"id": "a", "when": {"type": "app_running", "exe": "Cyberpunk2077.exe"},
                              "then": {"type": "preset", "preset": "gaming"}}, {"gaming"})
