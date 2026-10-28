@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.10.4
+- Native fan failsafes preserve higher cooling speeds and full-speed thermal protection. Failed fan-controller
+  connections close and reconnect, including fan-only NZXT models.
+- Studio saves remain ordered when an effect is reopened, and fan-curve saves preserve newer edits and the
+  selected curve. Opening or remixing an effect from Lighting works on the first visit to Studio.
+- Trying a profile no longer changes saved zone overrides. Keeping one validates the profile and automations
+  before saving, restores earlier writes if a later save fails, and retains the trial for retry.
+- Native device identities persist across restarts and enumeration changes. USB paths refresh after moving a
+  controller, and identity-save failures no longer prevent fan discovery. Mixed NZXT setups retain OpenRGB
+  lighting for fan-only controllers; OpenRGB also uses the saved host and port at startup.
+- Helper setup preserves sensor credentials when a later installation step fails and reuses them on retry.
+- Effect controls reject non-finite numbers, revoked versions cannot return through rollback copies, and hung
+  effect initialization is stopped. Duplicate effects keep valid file identities even with long names.
+- Automation schedules reject an explicitly empty day selection. Regression coverage now includes interrupted
+  saves, disconnections, restart persistence, worker startup and delayed replies.
+
+## 1.10.3
+- Repeated sensor or fan-control failures now trigger the runtime failsafe even when intervening controller ticks
+  succeed. Thermal protection also overrides a steady fan or pump speed during the startup grace period.
+- Returning fan channels to hardware control uses bounded retries, so failed handbacks cannot monopolize the
+  controller loop or delay emergency speed commands behind every removed channel.
+- A failed configuration-file write leaves the live configuration unchanged, and a later save cannot silently persist the
+  rejected change.
+- Studio saves stay attached to the effect that started them. Switching effects during autosave cannot assign
+  the old effect's file identity to the new one, and pending saves are ordered.
+- Rapid automation edits are saved in order without discarding earlier toggles or additions.
+- Gallery previews wait for the previous frame request before asking for another, and stop scheduling work when
+  the preview ends.
+- Disconnected sensors are removed from history after their last reading leaves the history window, while
+  returning sensors keep their timestamps aligned.
+
 ## 1.10.2
 - Fan failsafe commands reach every selected LibreHardwareMonitor channel, including setups with more than six
   channels. Full-speed thermal protection bypasses normal retry backoff, and changing curves no longer starve

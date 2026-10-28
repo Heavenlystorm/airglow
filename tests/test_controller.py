@@ -225,15 +225,38 @@ class ControllerTests(unittest.TestCase):
         self.ctrl._on_lock(False)
         self.assertTrue(self.ctrl.effective_scene["on"])
 
-    def test_loop_failsafe_after_repeated_errors(self):
-        self.ctrl._read_sensors = lambda: 1 / 0
-        def next_tick(_):
-            if self.ctrl._ticks >= 9:
+    def _run_loop_ticks(self, count):
+        waits = []
+
+        def wait(_timeout):
+            waits.append(self.ctrl._ticks)
+            if len(waits) == count:
                 self.ctrl._stop.set()
-        with mock.patch.object(self.ctrl._stop, "wait", side_effect=next_tick):
+
+        with mock.patch.object(self.ctrl._stop, "wait", side_effect=wait):
             self.ctrl._loop()
+
+    def test_loop_failsafe_after_repeated_sensor_errors_before_shutdown(self):
+        self.ctrl._read_sensors = mock.Mock(side_effect=ValueError("bad sensor response"))
+        with self.assertLogs("airglow.controller", "ERROR"):
+            self._run_loop_ticks(9)                         # five failed reads, with four successful even ticks
         failsafe = self.store.settings()["fan_failsafe_duty"]
-        self.assertIn({p: failsafe for p in range(5)}, self.nzxt.hub.duties)
+        self.assertEqual(self.nzxt.hub.duties, [{p: failsafe for p in range(5)}])
+
+    def test_loop_failsafe_after_repeated_fan_errors_before_shutdown(self):
+        with mock.patch.object(self.ctrl, "_run_fans", side_effect=ValueError("bad fan response")), \
+                self.assertLogs("airglow.controller", "ERROR"):
+            self._run_loop_ticks(9)
+        failsafe = self.store.settings()["fan_failsafe_duty"]
+        self.assertEqual(self.nzxt.hub.duties, [{p: failsafe for p in range(5)}])
+
+    def test_successful_fan_cycle_resets_the_failure_streak(self):
+        self.ctrl._read_sensors = mock.Mock(side_effect=(
+            [ValueError("bad sensor response")] * 4 + [dict(self.temps)] + [ValueError("bad sensor response")] * 4))
+        with mock.patch.object(self.ctrl, "failsafe") as failsafe, self.assertLogs("airglow.controller", "ERROR"):
+            self._run_loop_ticks(17)
+        failsafe.assert_not_called()
+        self.assertEqual(len(self.nzxt.hub.duties), 1)       # the one successful fan cycle, no shutdown involved
 
     def test_snapshot_shape(self):
         self.ctrl.tick()

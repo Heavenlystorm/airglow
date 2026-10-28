@@ -1,3 +1,4 @@
+import copy
 import json
 import tempfile
 import unittest
@@ -323,6 +324,46 @@ class StoreTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 s.update_settings({"temp_unit": "F"})
         self.assertEqual(sleep.call_count, 4)
+        self.assertEqual(s.settings()["temp_unit"], "C")
+        self.assertEqual(config.Store(self.dir).settings()["temp_unit"], "C")
+        s.update_settings({"design": "amber"})
+        again = config.Store(self.dir)
+        self.assertEqual((again.settings()["design"], again.settings()["temp_unit"]), ("amber", "C"))
+
+    def test_a_failed_reset_keeps_the_saved_settings(self):
+        s = config.Store(self.dir)
+        s.update_settings({"temp_unit": "F", "fan_failsafe_duty": 70, "design": "amber"})
+        before = s.settings()
+        with mock.patch.object(s, "_write", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                s.reset_settings()
+        self.assertEqual(s.settings(), before)
+        s.update_settings({"online_checks": True})
+        again = config.Store(self.dir)
+        self.assertEqual((again.settings()["temp_unit"], again.settings()["fan_failsafe_duty"],
+                          again.settings()["design"]), ("F", 70, "amber"))
+
+    def test_failed_saves_keep_live_data_and_zone_revision(self):
+        s = config.Store(self.dir)
+        zone = {"name": "Front", "layout": {"shape": "strip", "leds": 4, "x": 0, "y": 0}}
+        rule = {"id": "night", "when": {"type": "idle", "minutes": 5}, "then": {"type": "lights_off"}}
+        edits = {
+            "curve": lambda: s.set_curve("silent", [[30, 40], [90, 100]]),
+            "zone": lambda: s.set_zone("test/ch1", zone, 40),
+            "fan channel": lambda: s.set_fan_channel("/lpc/test/control/0", {"mode": "steady", "duty": 60}),
+            "device parameters": lambda: s.set_device_params("test", [], {}),
+            "presets": lambda: s.set_presets(s.get_presets() + [{"id": "mine", "name": "Mine"}]),
+            "automations": lambda: s.set_rules([rule], lambda r: dict(r)),
+            "overview": lambda: s.set_overview({"tiles": [], "pins": []}),
+            "state": lambda: s.save_state(onboarded=True),
+        }
+        before = copy.deepcopy((s.config, s.presets, s.rules, s.overview, s.state, s.zones_rev))
+        for name, edit in edits.items():
+            s = config.Store(self.dir)
+            with self.subTest(name=name), mock.patch.object(s, "_write", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    edit()
+                self.assertEqual((s.config, s.presets, s.rules, s.overview, s.state, s.zones_rev), before)
 
 
 class RegressionTests(unittest.TestCase):
@@ -396,6 +437,7 @@ class DamagedFileTests(unittest.TestCase):
             self.assertFalse(store.ensure_zones([FakeNzxt().info()]))
             with self.assertRaisesRegex(ValueError, "Restart Airglow"):
                 store.update_settings({"temp_unit": "F"})
+            self.assertEqual(store.settings()["temp_unit"], "C")
             self.assertEqual(cfg.read_text(encoding="utf-8"), good)
             store.save_state(active_preset=None)             # an unrelated readable file can still be saved
             self.assertTrue(Path(tmp, "state.json").exists())
@@ -412,6 +454,7 @@ class DamagedFileTests(unittest.TestCase):
             self.assertEqual(cfg.read_text(encoding="utf-8"), "{ damaged")
             with self.assertRaisesRegex(ValueError, "original file has been kept"):
                 store.update_settings({"design": "amber"})
+            self.assertEqual(store.settings()["design"], "graphite")
 
     def test_a_quarantined_file_allows_new_settings_without_losing_the_original(self):
         with tempfile.TemporaryDirectory() as tmp:

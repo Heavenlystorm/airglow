@@ -1350,6 +1350,7 @@ const saves = new Map();
 async function save({ quiet = false } = {}) {
   const d = E.doc;
   if (!d) return null;
+  clearTimeout(E.auto);
   const key = d.fx_id || d, queue = saves.get(key) || { tail: null };
   const before = snapDoc(d), previous = queue.tail;
   saves.set(key, queue);
@@ -1372,7 +1373,7 @@ async function save({ quiet = false } = {}) {
         S.effects = await get("/api/effects");
         emit("refresh");
       }
-      return r.effect;
+      return E.doc === d ? r.effect : null; // do not continue Use/Share in an editor opened during this save
     } catch (e) { if (!quiet) fail(e); return null; }
   })();
   queue.tail = writing;
@@ -1419,7 +1420,12 @@ async function useIt() {
 
 async function shareIt(fxId) {
   let eff = null;
-  if (E.doc && !fxId) { eff = E.doc.dirty || !E.doc.fx_id ? await save() : null; fxId = eff?.fx_id || E.doc.fx_id; if (!fxId) return; }
+  if (E.doc && !fxId) {
+    const d = E.doc;
+    if (d.dirty || !d.fx_id) { eff = await save(); if (!eff || E.doc !== d) return; }
+    fxId = eff?.fx_id || d.fx_id;
+    if (!fxId) return;
+  }
   const e = (H.lib?.effects || []).find((x) => x.fx_id === fxId) || E.doc || {};
   const desc = e.description || "";
   openSheet(`<form class="body" id="sh-form"><h2>Share ${esc(e.name)}</h2>
