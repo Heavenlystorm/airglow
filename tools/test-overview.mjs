@@ -9,6 +9,7 @@ const source = readFileSync(new URL("../web/js/overview.js", import.meta.url), "
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297px", paddingLeft: "28px", paddingRight: "28px" }, gridWidth = 1280) {
+  gridStyle = { gridAutoRows: "152px", columnGap: "12px", rowGap: "12px", ...gridStyle };
   const timers = new Map(), requests = [], errors = [];
   let nextTimer = 0;
   const context = vm.createContext({
@@ -48,11 +49,17 @@ async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297
 
 test("resize geometry excludes dashboard gutters and follows visible columns", async () => {
   const desktop = await harness();
-  assert.deepEqual(plain(desktop.cell()), { cw: 297, rh: 152, cols: 4 });
+  assert.deepEqual(plain(desktop.cell()), { cw: 297, rh: 152, cols: 4, columnGap: 12, rowGap: 12 });
   const narrow = await harness({ gridTemplateColumns: "318px 318px", paddingLeft: "16px", paddingRight: "16px" }, 680);
-  assert.deepEqual(plain(narrow.cell()), { cw: 318, rh: 152, cols: 2 });
+  assert.deepEqual(plain(narrow.cell()), { cw: 318, rh: 152, cols: 2, columnGap: 12, rowGap: 12 });
   const phone = await harness({ gridTemplateColumns: "358px", paddingLeft: "16px", paddingRight: "16px" }, 390);
-  assert.deepEqual(plain(phone.cell()), { cw: 358, rh: 152, cols: 1 });
+  assert.deepEqual(plain(phone.cell()), { cw: 358, rh: 152, cols: 1, columnGap: 12, rowGap: 12 });
+});
+
+test("resize geometry follows the rendered row height and spacing on a large screen", async () => {
+  const h = await harness({ gridTemplateColumns: "865px 865px 865px 865px", paddingLeft: "28px", paddingRight: "28px",
+    gridAutoRows: "480px", columnGap: "20px", rowGap: "20px" }, 3576);
+  assert.deepEqual(plain(h.cell()), { cw: 865, rh: 480, cols: 4, columnGap: 20, rowGap: 20 });
 });
 
 test("a grow key at the narrow viewport limit preserves the saved desktop span", async () => {

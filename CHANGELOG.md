@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.11.1
+- Overview makes better use of larger windows and monitors, with tiles that grow to fit the available space.
+- Readings, charts, navigation and the live lighting preview scale with the dashboard, while narrow windows retain
+  their compact layout and all twelve interface designs remain available.
+- Dragging to resize a tile now follows the displayed grid spacing and row height. Changing window size preserves
+  your saved tile arrangement.
+
 ## 1.11.0
 - A visual refresh across Overview, Lighting, Studio, Fans, Automations, Devices and Settings. Graphite now has
   charcoal surfaces, warm ivory typography and champagne accents, with clearer controls and more consistent spacing.

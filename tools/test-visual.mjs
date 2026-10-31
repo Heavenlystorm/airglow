@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const OUTPUT = join(ROOT, "output", "visual-overhaul", "checks");
+const OUTPUT = process.env.AIRGLOW_VISUAL_OUTPUT ? resolve(process.env.AIRGLOW_VISUAL_OUTPUT) : join(ROOT, "output", "visual-overhaul", "checks");
 const BASE = "http://127.0.0.1:8790";
 const THEMES = ["graphite", "ascii", "paper", "amber", "contrast", "neon", "kiln", "lumen", "midnight", "spore", "rim", "darkroom"];
 const VIEWS = ["overview", "lighting", "studio", "fans", "automations", "devices", "settings"];

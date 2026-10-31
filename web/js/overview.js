@@ -9,7 +9,6 @@ import { paintMini } from "./stage.js";
 import { closeSheet, openSheet } from "./sheet.js";
 
 const COLS = 4;
-const ROW_H = 152, GAP = 12;
 const STYLES = [
   { id: "spark", name: "Number" }, { id: "ring", name: "Gauge" }, { id: "graph", name: "Graph" }, { id: "bar", name: "Bar" },
 ];
@@ -390,7 +389,8 @@ function cell() {
   const g = grid(), style = getComputedStyle(g);
   const cols = Math.min(COLS, style.gridTemplateColumns.split(" ").length);
   const w = g.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-  return { cw: (w - GAP * (cols - 1)) / cols, rh: ROW_H, cols };
+  const columnGap = parseFloat(style.columnGap), rowGap = parseFloat(style.rowGap);
+  return { cw: (w - columnGap * (cols - 1)) / cols, rh: parseFloat(style.gridAutoRows), cols, columnGap, rowGap };
 }
 
 function onPointerDown(e) {
@@ -420,11 +420,11 @@ function onPointerMove(e) {
   const d = O.drag;
   if (!d) return;
   if (d.mode === "resize") {
-    const { cw, rh, cols } = cell();
-    const visibleW = clamp(Math.round(d.w0 + (e.clientX - d.x0) / (cw + GAP)), 1, cols);
+    const { cw, rh, cols, columnGap, rowGap } = cell();
+    const visibleW = clamp(Math.round(d.w0 + (e.clientX - d.x0) / (cw + columnGap)), 1, cols);
     // A narrower viewport only clamps presentation; vertical resizing must keep the desktop span.
     const w = visibleW === d.w0 ? d.savedW0 : visibleW;
-    const h = clamp(Math.round(d.h0 + (e.clientY - d.y0) / (rh + GAP)), 1, 3);
+    const h = clamp(Math.round(d.h0 + (e.clientY - d.y0) / (rh + rowGap)), 1, 3);
     if (w !== d.t.w || h !== d.t.h) {
       flip(grid(), () => { d.t.w = w; d.t.h = h; sizeTile(d.el, d.t); });
       update(d.el, d.t);
