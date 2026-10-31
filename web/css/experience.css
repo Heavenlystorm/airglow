@@ -54,13 +54,21 @@
 .power { width: 36px; height: 36px; }
 
 .eyebrow { color: var(--brass); font: 600 10px/1.5 var(--text); text-transform: uppercase; letter-spacing: .15em; margin: 0 0 9px; }
+.overview-view { container-type: size; }
+.ov-bar, .ov-grid { max-width: none; }
 .ov-bar { padding: 12px 28px 10px; min-height: 58px; }
-.ov-grid { padding: 0 28px 28px; }
-.ov-editbar { color: var(--ink-2); }
+.ov-grid {
+  padding: 0 28px 28px;
+  gap: clamp(12px, .6cqw, 24px);
+  grid-auto-rows: clamp(152px, min((100cqh - 160px) / 4, (100cqw - 56px) * .14), 500px);
+}
+.ov-editbar { color: var(--ink-2); font-size: clamp(13px, 1cqh, 20px); }
 .ov-editbar span { max-width: 60ch; }
+.ov-editbar :is(.btn, .text-link) { font-size: inherit; }
 .chip-btn { border-radius: var(--r-ctl); }
+#ov-edit { font-size: clamp(13px, 1.1cqh, 22px); padding: clamp(6px, .7cqh, 14px) clamp(12px, 1cqh, 20px); }
+#ov-edit svg { width: 1em; height: 1em; }
 
-/* Keep the 152px rows and 12px gaps: tile dragging uses that same geometry. */
 :where([data-design="graphite"]) .tile { border-color: var(--line-soft); box-shadow: var(--bevel), 0 4px 12px #00000010; }
 :where([data-design="graphite"]) .tile-head { font-size: 12px; letter-spacing: .01em; color: var(--ink-2); }
 :where([data-design="graphite"]) .tile-src { font-size: 10px; }
@@ -106,6 +114,49 @@
 @container (min-height: 280px) {
   :where([data-design="graphite"]) .readout .num { font-size: 72px; }
 }
+/* Tile contents follow their own size, including when a saved tile spans multiple rows. */
+.tile { --ov-inset: clamp(16px, 5cqh, 30px); }
+.tile-inner { padding: clamp(13px, 4cqh, 24px) var(--ov-inset) 0; }
+.tile-head { font-size: clamp(13px, 5.2cqh, 25px); }
+.tile-src { font-size: clamp(12px, 4cqh, 20px); }
+.readout .num { font-size: clamp(40px, 26cqh, 125px); }
+.readout .unit { font-size: clamp(17px, 7cqh, 32px); }
+.g-read .num { font-size: clamp(52px, 22cqh, 120px); }
+.g-read .unit { font-size: clamp(20px, 6cqh, 32px); }
+.minmax, .g-cap, .fan-sub, .bar-foot, .lg, .ax, .ax-time { font-size: clamp(12px, 4cqh, 20px); }
+.minmax span { font-size: inherit; }
+.lg .num { font-size: clamp(18px, 7cqh, 36px); }
+.lg .unit { font-size: clamp(12px, 4cqh, 20px); }
+.chart { margin-left: calc(-1 * var(--ov-inset)); margin-right: calc(-1 * var(--ov-inset)); }
+.ax-time { left: var(--ov-inset); }
+.hbar { height: clamp(8px, 2.5cqh, 14px); }
+.fan-seg button { padding: clamp(4px, 1.6cqh, 12px) 6px; font-size: clamp(12px, 4cqh, 20px); }
+.pcard .pname { font-size: clamp(12px, 4.5cqh, 25px); }
+.pcard .pmeta { font-size: clamp(10px, 3.6cqh, 20px); }
+.lt-foot { padding: clamp(13px, 1.8cqh, 22px) clamp(16px, 2cqh, 26px); }
+.lt-what b { font-size: clamp(14px, 2.6cqh, 24px); }
+.lt-what span { font-size: clamp(11px, 2.1cqh, 19px); }
+.lt-bri { max-width: clamp(160px, 28cqh, 300px); }
+.tile-lighting .switch { --lt-switch-height: clamp(22px, 3cqh, 36px); }
+.tile-lighting .switch span { width: calc(var(--lt-switch-height) * 1.73); height: var(--lt-switch-height); }
+.tile-lighting .switch span::after { width: calc(var(--lt-switch-height) - 6px); height: calc(var(--lt-switch-height) - 6px); }
+.tile-lighting .switch input:checked + span::after { transform: translateX(calc(var(--lt-switch-height) * .73)); }
+.tile-tools .icon-btn { width: clamp(26px, 9cqh, 46px); height: clamp(26px, 9cqh, 46px); }
+.tile-resize { width: clamp(20px, 7cqh, 36px); height: clamp(20px, 7cqh, 36px); }
+@container (min-height: 220px) {
+  .pcard { justify-content: center; gap: 5px; padding-top: 12px !important; }
+  .pswatch { position: static; width: clamp(16px, 5cqh, 28px); height: clamp(16px, 5cqh, 28px); margin-bottom: 8px; }
+}
+@media (min-width: 1600px) and (min-height: 1000px) {
+  .appbar { height: clamp(76px, 5.4vh, 112px); padding-inline: clamp(28px, 1.5vw, 60px); gap: clamp(30px, 1.5vw, 58px); }
+  .wordmark { font-size: clamp(21px, min(1vw, 1.8vh), 38px); }
+  .wordmark > svg { width: clamp(34px, min(1.5vw, 2.4vh), 58px); height: clamp(34px, min(1.5vw, 2.4vh), 58px); }
+  .brand-caption { font-size: clamp(9px, min(.45vw, .8vh), 17px); }
+  .tabs a { height: clamp(40px, 3.6vh, 78px); padding-inline: clamp(13px, .8vw, 28px); font-size: clamp(13px, min(.64vw, 1.1vh), 24px); }
+  .ambient { font-size: clamp(12px, min(.58vw, 1vh), 22px); }
+  .power { width: clamp(36px, 3.3vh, 68px); height: clamp(36px, 3.3vh, 68px); }
+  .power svg { width: 50%; height: 50%; }
+}
 @media (max-width: 1180px) {
   .appbar { padding: 0 20px; gap: 18px; }
   .tabs a { padding: 0 9px; }
@@ -126,7 +177,7 @@
   .notice { flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
   .notice > span:first-child { flex-basis: 100%; }
   .ov-bar { padding: 12px 16px; }
-  .ov-grid { padding: 0 16px 24px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-grid { padding: 0 16px 24px; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 152px; gap: 12px; }
   .ov-grid > .tile:is([data-w="3"], [data-w="4"]) { grid-column: span 2 !important; }
   .ov-editbar { flex-wrap: wrap; gap: 8px; }
   .ov-editbar span { flex-basis: 100%; }

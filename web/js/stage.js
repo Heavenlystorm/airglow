@@ -220,7 +220,7 @@ function draw() {
 // The Overview's lighting tile: every lit zone, zoomed to fit, same glow as the stage.
 // frames: zone key -> hex colours; the live ones by default, or a profile's preview from the gallery
 export function paintMini(c, frames = st.frames) {
-  paintRig(c, frames, { fit: "zones" });
+  paintRig(c, frames, { fit: "zones", maxScale: Math.max(0.6, Math.min(2, c.clientHeight / 600)) });
 }
 
 export const litZones = () => (S.zones?.zones || []).filter((z) => z.device.online && z.config.enabled && z.positions.length);
