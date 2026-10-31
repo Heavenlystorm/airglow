@@ -1,0 +1,144 @@
+/* Airglow's shared composition. Theme-specific signatures in designs.css remain
+   authoritative; only Graphite receives a new palette. LED canvases stay black. */
+[data-design="graphite"] {
+  --ground: #111315;
+  --panel: #1b1e21;
+  --raised: #25292d;
+  --hover: #2d3237;
+  --well: #121517;
+  --line: #3b4146;
+  --line-soft: #2b3034;
+  --ink: #f2f0e9;
+  --ink-2: #c2c4c3;
+  --ink-3: #999f9f;
+  --brass: #dfb878;
+  --brass-hi: #efd0a0;
+  --brass-glow: #dfb87830;
+  --display: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  --text: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --engrave: none;
+  --r-panel: 14px;
+  --r-stage: 16px;
+  --r-ctl: 8px;
+  --plate: linear-gradient(145deg, #22262a, #1b1e21 70%);
+  --bevel: inset 0 1px 0 #ffffff05;
+  --edge: #32383d;
+  --edge-strong: #3b4146;
+  --edge-panel: #343a3f;
+  --btn-top: #292e33;
+  --btn-top-hover: #343b41;
+  --card-top: #282d31;
+  --card-on-top: #34332e;
+  --power-top: #292e33;
+  --power-bottom: #1b1e21;
+  --data-line: #dfb878;
+  --data-spark: #dfb878;
+  --data-2: #adbdbb;
+  --data-area: #dfb878;
+  --tools-bg: #25292df5;
+  --chip-bg: #171a1df0;
+}
+
+/* A quiet, spacious masthead; the moving underline still follows the real tab. */
+.appbar { height: 76px; padding: 0 28px; gap: 30px; }
+.wordmark { gap: 10px; font-size: 21px; letter-spacing: -.045em; }
+.wordmark > svg { width: 34px; height: 34px; color: var(--brass); }
+.brand-caption { display: block; margin-top: 7px; font: 400 9px/1 var(--text); letter-spacing: .06em; color: var(--ink-3); white-space: nowrap; }
+.tabs { align-items: center; gap: 1px; min-width: 0; }
+.tabs a { height: 40px; padding: 0 13px; font-size: 13px; border-radius: var(--r-ctl); }
+.tabs a:hover { background: var(--highlight); }
+.tabs a[aria-current="page"] { background: color-mix(in srgb, var(--brass) 9%, transparent); color: var(--brass-hi); }
+.tab-ink { bottom: 9px; height: 2px; box-shadow: none; }
+.bar-right { gap: 14px; }
+.ambient { padding: 8px 10px; border-radius: var(--r-ctl); background: var(--well); }
+.power { width: 36px; height: 36px; }
+
+.eyebrow { color: var(--brass); font: 600 10px/1.5 var(--text); text-transform: uppercase; letter-spacing: .15em; margin: 0 0 9px; }
+.ov-bar { padding: 12px 28px 10px; min-height: 58px; }
+.ov-grid { padding: 0 28px 28px; }
+.ov-editbar { color: var(--ink-2); }
+.ov-editbar span { max-width: 60ch; }
+.chip-btn { border-radius: var(--r-ctl); }
+
+/* Keep the 152px rows and 12px gaps: tile dragging uses that same geometry. */
+:where([data-design="graphite"]) .tile { border-color: var(--line-soft); box-shadow: var(--bevel), 0 4px 12px #00000010; }
+:where([data-design="graphite"]) .tile-head { font-size: 12px; letter-spacing: .01em; color: var(--ink-2); }
+:where([data-design="graphite"]) .tile-src { font-size: 10px; }
+:where([data-design="graphite"]) .readout .num { font-family: var(--display); font-weight: 350; font-size: 43px; letter-spacing: -.055em; }
+:where([data-design="graphite"]) .readout .unit { font-size: 15px; }
+:where([data-design="graphite"]) .minmax { font-size: 10px; }
+:where([data-design="graphite"]) .minmax span { font: inherit; }
+:where([data-design="graphite"]) .spark .area { fill-opacity: .075; }
+:where([data-design="graphite"]) .spark .line { stroke-width: 1.7; }
+:where([data-design="graphite"]) .g-track { stroke: var(--line-soft); }
+:where([data-design="graphite"]) .g-fill { stroke-width: 6; }
+:where([data-design="graphite"]) .g-track { stroke-width: 6; }
+:where([data-design="graphite"]) .hbar,
+:where([data-design="graphite"]) .hbar .fill { border-radius: 4px; }
+:where([data-design="graphite"]) .hbar .fill { background: var(--data-line); }
+:where([data-design="graphite"]) .tile[data-level="warm"] .hbar .fill { background: var(--warm); }
+:where([data-design="graphite"]) .tile[data-level="hot"] .hbar .fill { background: var(--hot); }
+:where([data-design="graphite"]) .tile-lighting { border-color: var(--line); }
+.tile-lighting .mini { margin: 0; border-radius: 0; }
+.lt-foot { padding: 13px 16px; gap: 16px; }
+.lt-what b { font-size: 14px; font-weight: 500; }
+.lt-what span { font-size: 11px; }
+.pcards { gap: 8px; }
+:where([data-design="graphite"]) .pcard { border-color: var(--line); border-radius: 8px; background: var(--well); padding: 10px; }
+:where([data-design="graphite"]) .pcard:hover { background: var(--raised); border-color: var(--brass); }
+:where([data-design="graphite"]) .pcard[aria-pressed="true"] { background: color-mix(in srgb, var(--brass) 9%, var(--well)); border-color: var(--brass); }
+:where([data-design="graphite"]) .pcard .pname { font-size: 12px; font-weight: 500; }
+:where([data-design="graphite"]) .pcard .pmeta { font-size: 10px; }
+:where([data-design="graphite"]) .seg { box-shadow: none; border-color: var(--line-soft); }
+:where([data-design="graphite"]) .seg button { border-radius: 5px; }
+:where([data-design="graphite"]) .seg button[aria-checked="true"] { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); color: var(--brass-hi); }
+:where([data-design="graphite"]) .btn { box-shadow: var(--bevel); font-size: 13px; }
+:where([data-design="graphite"]) .btn.primary { box-shadow: inset 0 1px 0 var(--primary-highlight), 0 2px 8px #00000020; }
+:where([data-design="graphite"]) .text,
+:where([data-design="graphite"]) select.select { box-shadow: none; border-color: var(--line); }
+:where([data-design="graphite"]) input[type=range]::-webkit-slider-thumb { width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: var(--brass-hi); border-color: var(--brass); }
+:where([data-design="graphite"]) input[type=range]::-webkit-slider-runnable-track { border-radius: 3px; }
+
+/* This caption occupies the existing tool strip, never the rendered LED canvas. */
+.stage-caption { position: absolute; top: 16px; right: 20px; z-index: 1; text-align: right; pointer-events: none; color: #a5aaa9; font-size: 11px; }
+.stage-caption .eyebrow { display: block; margin: 0 0 2px; font-size: 9px; color: #e3c28c; }
+
+@container (min-height: 280px) {
+  :where([data-design="graphite"]) .readout .num { font-size: 72px; }
+}
+@media (max-width: 1180px) {
+  .appbar { padding: 0 20px; gap: 18px; }
+  .tabs a { padding: 0 9px; }
+  .bar-right { gap: 10px; }
+  .ambient { font-size: 11px; }
+}
+@media (max-width: 960px) {
+  .appbar { height: auto; min-height: 104px; grid-template-columns: 1fr auto; gap: 4px 20px; padding: 12px 20px 0; }
+  .wordmark { grid-column: 1; grid-row: 1; }
+  .brand-caption { display: none; }
+  .bar-right { grid-column: 2; grid-row: 1; }
+  .tabs { grid-column: 1 / -1; grid-row: 2; overflow-x: auto; padding-bottom: 5px; }
+  .tabs a { flex: none; }
+  .tab-ink { display: none; }
+  .tabs a[aria-current="page"] { box-shadow: inset 0 -2px 0 var(--brass); }
+}
+@media (max-width: 700px) {
+  .notice { flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+  .notice > span:first-child { flex-basis: 100%; }
+  .ov-bar { padding: 12px 16px; }
+  .ov-grid { padding: 0 16px 24px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-grid > .tile:is([data-w="3"], [data-w="4"]) { grid-column: span 2 !important; }
+  .ov-editbar { flex-wrap: wrap; gap: 8px; }
+  .ov-editbar span { flex-basis: 100%; }
+  .stage-caption { display: none; }
+}
+@media (max-width: 440px) {
+  .ov-grid { grid-template-columns: minmax(0, 1fr); }
+  .ov-grid > .tile[data-w] { grid-column: span 1 !important; }
+  .ov-bar { align-items: flex-start; }
+  .ov-bar:has(.ov-editbar:not([hidden])) { flex-direction: column-reverse; }
+}
+/* High contrast keeps solid rules and unambiguous focus/selection indicators. */
+[data-design="contrast"] .tabs a[aria-current="page"] { background: var(--brass); color: var(--ground); }
+[data-design="contrast"] .stage-caption { color: #fff; }
+[data-design="contrast"] .stage-caption .eyebrow { color: #ffff00; }

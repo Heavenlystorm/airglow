@@ -1,0 +1,261 @@
+/* Shared page rhythm; each design keeps its palette, type and control signatures. */
+.auto-view, .settings-view, .st-home { padding: 30px 28px 40px; }
+.page-head { align-items: center; gap: 20px 30px; margin-bottom: 28px; }
+.page-head > div:first-child { flex: 1 1 360px; }
+.page-head .lede { max-width: 66ch; margin-top: 10px; }
+.settings-head { margin-bottom: 8px; }
+.dev-head { align-items: center; }
+.dev-head > div:first-child { min-width: 0; }
+.dev-head h1 { overflow-wrap: anywhere; }
+:where([data-design="graphite"]) :is(.page-head, .settings-head, .curve-head, .dev-head) h1 { font-size: clamp(26px, 2.4vw, 34px); font-weight: 500; letter-spacing: -.04em; line-height: 1.15; }
+:where([data-design="graphite"]) .lede { color: var(--ink-3); font-size: 13px; line-height: 1.65; }
+
+/* Lighting has one uninterrupted preview, with its tools arranged around it. */
+.stage-wrap { padding: 22px 0 22px 24px; gap: 18px; }
+.inspector { padding: 26px 22px; gap: 26px; }
+.ins-block { gap: 14px; min-width: 0; }
+.ins-title { gap: 8px; }
+.ins-title h2 { line-height: 1.2; }
+.ins-title .meta { flex: none; font-size: 11px; }
+.field { min-width: 0; }
+.deck { grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px; padding: 0 0 2px; }
+/* Twelve cards need 952px at their 72px minimum; below that, keep two even rows. */
+@container (max-width: 951px) { .deck { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.fx { padding: 6px 6px 8px; }
+.fx .name { margin-top: 8px; padding: 0 3px; }
+.thumb { height: 48px; border-radius: var(--r-ctl); }
+.stage-empty { gap: 14px; padding: 32px; }
+.stage-empty p { font-size: 13px; line-height: 1.65; }
+.stage-empty .btn-row { justify-content: center; margin-top: 6px; }
+:where([data-design="graphite"]) .inspector { margin: 22px 24px 22px 18px; padding: 22px 18px; border: 1px solid var(--line-soft); border-radius: var(--r-panel); background: var(--plate); box-shadow: var(--bevel); }
+:where([data-design="graphite"]) .ins-title h2 { font-size: 19px; font-weight: 500; letter-spacing: -.025em; }
+:where([data-design="graphite"]) .stage { border-color: var(--line); box-shadow: 0 8px 26px #00000020; }
+:where([data-design="graphite"]) .fx { border-color: var(--line-soft); background: var(--panel); box-shadow: none; }
+:where([data-design="graphite"]) .fx:hover { border-color: var(--line); background: var(--raised); }
+:where([data-design="graphite"]) .fx[aria-checked="true"] { border-color: var(--brass); background: color-mix(in srgb, var(--brass) 9%, var(--panel)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brass) 18%, transparent); }
+:where([data-design="graphite"]) .fx[aria-checked="true"] .name { color: var(--brass-hi); }
+:where([data-design="graphite"]) .preset { padding: 7px 10px; background: var(--well); border-color: var(--line); box-shadow: none; }
+:where([data-design="graphite"]) .preset[aria-pressed="true"] { border-color: var(--brass); background: color-mix(in srgb, var(--brass) 8%, var(--well)); box-shadow: none; }
+
+/* Cooling: quiet telemetry beside a generous, legible curve editor. */
+.readouts { padding: 24px 20px; gap: 14px; min-width: 0; }
+.ro { min-width: 0; }
+.ro .head { flex-wrap: wrap; gap: 3px 10px; }
+.curve-area { padding: 30px 28px; gap: 20px; }
+.curve-head { gap: 18px; }
+.curve-head .lede { margin-top: 9px; }
+.curve-foot .hint { flex: 1 1 240px; }
+.curve-foot .btn-row { margin-left: auto; }
+.ports-row { gap: 24px; }
+.ports, .other-fans { min-width: 0; }
+.other-fans li { gap: 14px; }
+.channels { padding-top: 20px; }
+.chan { padding-top: 12px; padding-bottom: 12px; }
+:where([data-design="graphite"]) .readouts { background: transparent; border-color: var(--line-soft); box-shadow: none; }
+:where([data-design="graphite"]) .ro { padding: 18px 16px 14px; border: 1px solid var(--line-soft); border-radius: var(--r-panel); background: var(--plate); box-shadow: var(--bevel); }
+:where([data-design="graphite"]) .ro:last-child { border-bottom: 1px solid var(--line-soft); }
+:where([data-design="graphite"]) .ro .head { font-size: 12px; color: var(--ink-2); }
+:where([data-design="graphite"]) .ro .head span:last-child { font-size: 10px; }
+:where([data-design="graphite"]) .ro .big { margin: 12px 0; font-family: var(--display); font-size: 46px; font-weight: 350; letter-spacing: -.05em; }
+:where([data-design="graphite"]) .ro .big .u { font-size: 17px; }
+:where([data-design="graphite"]) .editor-wrap { padding: 16px 16px 8px; border-color: var(--line); background: var(--well); box-shadow: var(--bevel), 0 8px 26px #00000015; }
+:where([data-design="graphite"]) .editor .grid line { stroke: var(--line-soft); }
+:where([data-design="graphite"]) .editor .grid line.major { stroke: var(--line); }
+:where([data-design="graphite"]) .editor .curve-line { stroke-width: 2.5; filter: none; }
+:where([data-design="graphite"]) .editor .curve-fill { fill: color-mix(in srgb, var(--brass) 9%, transparent); }
+:where([data-design="graphite"]) .ports-row { padding: 18px; border: 1px solid var(--line-soft); border-radius: var(--r-panel); background: var(--panel); }
+:where([data-design="graphite"]) .ports .bar { height: 5px; border-radius: 4px; box-shadow: none; }
+:where([data-design="graphite"]) .ports .bar i { border-radius: inherit; background: var(--data-spark); }
+
+/* Rules read in priority order, with a clear active state and quieter templates. */
+.auto-view > :is(.page-head, .rules, .starters) { max-width: 1120px; margin-left: auto; margin-right: auto; }
+.rules { gap: 12px; }
+.rule { padding: 18px; gap: 16px; }
+.rule .state { margin-top: 5px; }
+.rule .tools { flex-wrap: wrap; justify-content: flex-end; }
+.starters { margin-top: 34px; }
+.starters h2 { margin-bottom: 14px; }
+.starter-grid { gap: 12px; }
+.starter { padding: 18px; line-height: 1.55; }
+.starter strong { margin-bottom: 5px; }
+:where([data-design="graphite"]) .rule { border-color: var(--line-soft); box-shadow: var(--bevel); }
+:where([data-design="graphite"]) .rule::before { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--well); color: var(--ink-3); }
+:where([data-design="graphite"]) .rule.active { border-color: color-mix(in srgb, var(--brass) 48%, var(--line)); }
+:where([data-design="graphite"]) .rule.active::before { background: color-mix(in srgb, var(--brass) 12%, var(--well)); color: var(--brass-hi); }
+:where([data-design="graphite"]) .sentence { font-size: 14px; }
+:where([data-design="graphite"]) .sentence b { padding: 3px 8px; border-radius: 5px; box-shadow: none; }
+:where([data-design="graphite"]) .starter { border-style: solid; border-color: var(--line-soft); background: var(--panel); color: var(--ink-3); font-size: 13px; }
+:where([data-design="graphite"]) .starter:hover { border-color: var(--brass); background: var(--raised); color: var(--ink-2); }
+
+/* Hardware and preferences share a calm, scannable list/detail treatment. */
+.dev-list { padding: 24px 16px; gap: 6px; }
+.dev-list h2 { padding: 18px 10px 8px; }
+.dev-item { padding: 12px 10px; gap: 4px 10px; }
+.dev-item > span { min-width: 0; overflow-wrap: anywhere; }
+.dev-detail { padding: 30px 28px 40px; gap: 22px; }
+.zone-card { padding: 20px; gap: 18px 20px; }
+.zone-card .zname { min-width: 0; }
+.zone-card .zfields { gap: 16px 24px; }
+.zone-card .zstrip { height: 18px; padding: 5px; border-radius: var(--r-ctl); }
+.openrgb-box { padding: 22px; gap: 14px; }
+.settings-layout { gap: 30px; }
+.settings-nav-links { gap: 4px; }
+.settings-nav button { padding: 9px 12px; }
+.set-group { margin-top: 24px; }
+.set-group > h2 { padding-bottom: 14px; }
+.set-row { padding: 18px 0; gap: 24px; }
+.set-row > div:first-child { min-width: 0; }
+.set-row p { margin-top: 5px; font-size: 12px; line-height: 1.6; }
+.set-row .ctl { max-width: 48%; }
+.set-row .ctl > :is(.text, .select) { min-width: 0; }
+:where([data-design="graphite"]) .dev-list { background: var(--ground); border-color: var(--line-soft); box-shadow: none; }
+:where([data-design="graphite"]) .dev-item { border: 1px solid transparent; }
+:where([data-design="graphite"]) .dev-item:hover { background: var(--panel); }
+:where([data-design="graphite"]) .dev-item[aria-selected="true"] { border-color: var(--line); background: var(--panel); box-shadow: inset 3px 0 0 var(--brass); }
+:where([data-design="graphite"]) .zone-card { border-color: var(--line-soft); }
+:where([data-design="graphite"]) .openrgb-box { background: var(--panel); }
+:where([data-design="graphite"]) .settings-nav button[aria-current="true"] { color: var(--brass-hi); background: color-mix(in srgb, var(--brass) 8%, var(--panel)); box-shadow: inset 2px 0 0 var(--brass); }
+:where([data-design="graphite"]) .set-group { padding: 22px 24px 4px; border: 1px solid var(--line-soft); border-radius: var(--r-panel); background: var(--panel); box-shadow: var(--bevel); }
+:where([data-design="graphite"]) .set-group > h2 { font-size: 15px; font-weight: 500; color: var(--ink); border-color: var(--line-soft); }
+:where([data-design="graphite"]) .set-row:last-child { border-bottom: 0; }
+
+/* Studio library: preview first, then a compact editorial caption. */
+.st-home > :is(.page-head, .st-sec, .st-filter, .banner) { max-width: 1400px; margin-left: auto; margin-right: auto; }
+.st-sec { margin-top: 32px; }
+.st-h { margin-bottom: 16px; }
+.st-grid { gap: 16px; }
+.st-card { padding: 8px 8px 14px; }
+.st-live, .st-codeglyph { border-radius: var(--r-ctl); }
+.st-cap { padding: 14px 8px 0; gap: 5px; }
+.st-cap strong { font-size: 15px; }
+.st-cap > span, .st-desc { font-size: 12px; }
+.st-desc { line-height: 1.6; }
+.st-acts { padding: 14px 8px 0; gap: 8px; }
+.st-filter { gap: 14px; margin-bottom: 22px; }
+.st-filter .text { max-width: 400px; }
+.st-top { min-height: 64px; padding: 12px 20px; gap: 8px; }
+.st-name { min-width: 110px; }
+.st-left { padding: 18px 14px; }
+.st-right { padding: 22px 18px; }
+.st-mid { padding: 18px; gap: 14px; }
+.st-layer { padding: 10px; }
+.st-list { gap: 6px; }
+.st-layer.st-eff { padding: 12px; margin-bottom: 8px; }
+.st-stagebar { gap: 8px 12px; }
+.st-check { padding: 10px; }
+:where([data-design="graphite"]) .st-card { border-color: var(--line-soft); box-shadow: var(--bevel); }
+:where([data-design="graphite"]) .st-card:hover { border-color: var(--line); }
+:where([data-design="graphite"]) .st-cap strong { font-weight: 500; letter-spacing: -.02em; }
+:where([data-design="graphite"]) .st-h { font-size: 10px; letter-spacing: .12em; }
+:where([data-design="graphite"]) .st-top { border-color: var(--line-soft); background: var(--ground); box-shadow: none; }
+:where([data-design="graphite"]) .st-left,
+:where([data-design="graphite"]) .st-right { border-color: var(--line-soft); box-shadow: none; }
+:where([data-design="graphite"]) .st-layer { border-color: var(--line-soft); background: var(--well); box-shadow: none; }
+:where([data-design="graphite"]) .st-layer:hover { border-color: var(--line); }
+:where([data-design="graphite"]) .st-layer[aria-pressed="true"] { border-color: color-mix(in srgb, var(--brass) 60%, var(--line)); background: color-mix(in srgb, var(--brass) 8%, var(--well)); }
+:where([data-design="graphite"]) .st-stage { border-color: var(--line); box-shadow: 0 8px 26px #00000020; }
+
+/* Dialogs inherit the chosen design; spacing and actions remain consistent. */
+.sheet { border-radius: var(--r-panel); }
+.sheet form, .sheet .body { padding: 26px; gap: 20px; }
+.sheet .sheet-head { gap: 20px; }
+.sheet .actions { flex-wrap: wrap; gap: 10px; margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+.sheet .actions .spacer { min-width: 0; }
+.design-gallery { gap: 14px; }
+.dsg-card { padding: 12px; gap: 10px; }
+.dsg-blurb { line-height: 1.5; }
+.dsg-name { gap: 6px; }
+.gl-list { gap: 8px; }
+.gl-card { padding: 14px; gap: 5px; }
+.gl-detail { gap: 16px; }
+.onb-item { padding: 14px; }
+:where([data-design="graphite"]) .sheet { border-color: var(--line); background: var(--panel); box-shadow: 0 30px 100px #00000080; }
+:where([data-design="graphite"]) .sheet h2 { font-size: 24px; font-weight: 500; letter-spacing: -.035em; }
+:where([data-design="graphite"]) .dsg-card { border-color: var(--line-soft); background: var(--ground); }
+:where([data-design="graphite"]) .dsg-card[aria-checked="true"] { border-color: var(--brass); background: color-mix(in srgb, var(--brass) 6%, var(--ground)); }
+:where([data-design="graphite"]) .gl-card { border-color: var(--line-soft); box-shadow: none; }
+:where([data-design="graphite"]) .gl-card[aria-selected="true"] { border-color: var(--brass); background: var(--raised); box-shadow: inset 2px 0 0 var(--brass); }
+
+/* Compact desktop windows retain the familiar panel arrangement. */
+@media (max-width: 1180px) {
+  .stage-wrap { padding: 18px 0 18px 20px; gap: 14px; }
+  .inspector { padding: 22px 16px; }
+  :where([data-design="graphite"]) .inspector { margin: 18px 18px 18px 14px; padding: 20px 14px; }
+  .curve-area { padding: 24px 22px; }
+  .readouts { padding: 20px 16px; }
+  .st-mid { padding: 14px; }
+  .st-right { padding: 18px 14px; }
+  .ports-row { grid-template-columns: 1fr; gap: 18px; }
+}
+@media (max-width: 1100px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .settings-nav { min-width: 0; padding: 12px 0; }
+  .settings-nav-links { min-width: 0; gap: 2px; }
+}
+
+/* Browser-sized layouts stack their existing controls without changing hardware state. */
+@media (max-width: 960px) {
+  .lighting-view { display: flex; flex-direction: column; overflow-y: auto; }
+  .stage-wrap { flex: none; min-height: 510px; padding: 20px 20px 0; }
+  .stage { flex: none; min-height: 300px; height: 45vh; }
+  .inspector { flex: none; overflow: visible; border-left: 0; }
+  :where([data-design="graphite"]) .inspector { margin: 20px; }
+  .fans-view { display: block; }
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .curve-area { padding: 24px 20px; }
+  .devices-view { grid-template-columns: 240px minmax(0, 1fr); }
+  .dev-detail { padding: 24px 20px; }
+  .zone-card { padding: 16px; }
+  .st-edit { grid-template-columns: 200px minmax(0, 1fr); grid-template-rows: auto minmax(380px, 1fr) auto; overflow-y: auto; }
+  .st-edit.is-code { grid-template-columns: minmax(260px, 1fr) minmax(0, 1fr); }
+  .st-edit .st-right { grid-column: 1 / -1; border-top: 1px solid var(--line-soft); border-left: 0; overflow: visible; }
+  .st-top { grid-column: 1 / -1; }
+  .st-name { flex: 1; }
+  .st-saved { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@media (max-width: 700px) {
+  .auto-view, .settings-view, .st-home { padding: 24px 16px 32px; }
+  .page-head { gap: 18px; margin-bottom: 24px; }
+  .page-head > div:first-child { flex-basis: 100%; }
+  .page-head .btn-row { width: 100%; }
+  .stage-wrap { padding-left: 16px; padding-right: 16px; }
+  :where([data-design="graphite"]) .inspector { margin: 18px 16px; }
+  .stage-empty { padding: 24px; }
+  .deck { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .readouts { padding: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  :where([data-design="graphite"]) .ro { padding: 14px 12px; }
+  :where([data-design="graphite"]) .ro .big { font-size: 36px; }
+  .curve-area { padding: 24px 16px; }
+  .curve-foot .btn-row { margin-left: 0; }
+  .chan { grid-template-columns: minmax(100px, 1fr) minmax(50px, .8fr) 70px; gap: 10px; }
+  .chan .select, .chan-steady { grid-column: 1 / -1; }
+  .devices-view { display: block; }
+  .dev-list { max-height: 260px; padding: 16px; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .dev-detail { padding: 24px 16px; overflow: visible; }
+  .dev-head { flex-wrap: wrap; }
+  .rule { grid-template-columns: 24px minmax(0, 1fr); gap: 12px; padding: 16px; }
+  .rule .tools { grid-column: 2; justify-content: flex-start; }
+  .starter-grid { grid-template-columns: 1fr; }
+  .set-row { flex-wrap: wrap; gap: 14px; }
+  .set-row > div:first-child { flex-basis: 100%; }
+  .set-row .ctl { max-width: 100%; width: 100%; justify-content: flex-start; }
+  .set-row .ctl > :is(.text, .select) { max-width: 100%; }
+  :where([data-design="graphite"]) .set-group { padding: 20px 18px 4px; }
+  .settings-nav .settings-saved { max-width: 80px; font-size: 10px; }
+  .st-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .st-edit, .st-edit.is-code { display: flex; flex-direction: column; }
+  .st-top { flex: none; padding: 12px; }
+  .st-left { flex: none; max-height: 300px; border-right: 0; }
+  .st-edit.is-code .st-left { height: 320px; max-height: none; }
+  .st-mid { flex: none; height: 420px; }
+  .st-right { flex: none; }
+  .st-name { font-size: 16px; width: 130px; }
+  .sheet form, .sheet .body { padding: 22px 18px; }
+  .sheet .sheet-head { gap: 12px; }
+  .sheet .sheet-head-side { flex-wrap: wrap; justify-content: flex-end; }
+  .design-gallery { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .builder .row { grid-template-columns: 1fr; gap: 7px; }
+}
+@media (max-width: 420px) {
+  .deck { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

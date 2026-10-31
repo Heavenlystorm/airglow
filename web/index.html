@@ -8,12 +8,14 @@
 <script src="js/design-boot.js"></script>
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/designs.css">
+<link rel="stylesheet" href="css/experience.css">
+<link rel="stylesheet" href="css/surfaces.css">
 <script type="module" src="js/main.js"></script>
 </head>
 <body>
 
 <header class="appbar">
-  <a class="wordmark" href="#overview"><svg aria-hidden="true"><use href="#i-mark"/></svg>Airglow</a>
+  <a class="wordmark" href="#overview"><svg aria-hidden="true"><use href="#i-mark"/></svg><span>Airglow<span class="brand-caption">Light. Air. In harmony.</span></span></a>
   <nav class="tabs" aria-label="Sections">
     <span class="tab-ink" aria-hidden="true"></span>
     <a href="#overview" data-tab="overview" aria-keyshortcuts="Control+1">Overview</a>
@@ -51,6 +53,7 @@
   <section class="view lighting-view" data-view="lighting" aria-label="Lighting" hidden>
     <div class="stage-wrap">
       <div class="stage" id="stage">
+        <div class="stage-caption" aria-hidden="true"><span class="eyebrow">Lighting canvas</span><span>Your rig. Your atmosphere.</span></div>
         <canvas id="stage-canvas" aria-hidden="true"></canvas>
         <svg id="stage-svg" aria-label="Lighting zones" role="group"></svg>
         <div class="stage-tools">
@@ -79,6 +82,7 @@
     <div class="curve-area">
       <div class="curve-head">
         <div>
+          <p class="eyebrow">Cooling, composed</p>
           <h1>Fan curve</h1>
           <p class="lede" id="curve-lede"></p>
         </div>
@@ -105,6 +109,7 @@
   <section class="view auto-view" data-view="automations" aria-label="Automations" hidden>
     <div class="page-head">
       <div>
+        <p class="eyebrow">Set it. Let it flow.</p>
         <h1>Automations</h1>
         <p class="lede">Rules that change your lighting and fans on their own. The highest rule that applies wins, and when it stops applying, your own settings come back.</p>
       </div>
@@ -130,7 +135,9 @@
   <!-- ============================================================ Settings -->
   <section class="view settings-view" data-view="settings" aria-label="Settings" hidden>
     <div class="settings-head">
+      <p class="eyebrow">Make yourself at home</p>
       <h1>Settings</h1>
+      <p class="lede">A workspace that feels like yours.</p>
     </div>
     <div class="settings-layout">
       <nav class="settings-nav" id="settings-nav" aria-label="Settings sections">
