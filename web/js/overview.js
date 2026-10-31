@@ -387,8 +387,10 @@ function setEditing(on) {
 }
 
 function cell() {
-  const w = grid().clientWidth;
-  return { cw: (w - GAP * (COLS - 1)) / COLS, rh: ROW_H };
+  const g = grid(), style = getComputedStyle(g);
+  const cols = Math.min(COLS, style.gridTemplateColumns.split(" ").length);
+  const w = g.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  return { cw: (w - GAP * (cols - 1)) / cols, rh: ROW_H, cols };
 }
 
 function onPointerDown(e) {
@@ -399,7 +401,7 @@ function onPointerDown(e) {
   const r = el.getBoundingClientRect();
   e.preventDefault();
   if (e.target.closest('[data-act="resize"]')) {
-    O.drag = { mode: "resize", el, t, x0: e.clientX, y0: e.clientY, w0: t.w, h0: t.h };
+    O.drag = { mode: "resize", el, t, x0: e.clientX, y0: e.clientY, w0: Math.min(t.w, cell().cols), savedW0: t.w, h0: t.h };
   } else {
     O.drag = { mode: "move", el, t, ox: e.clientX - r.left, oy: e.clientY - r.top, x0: e.clientX, y0: e.clientY, started: false, natural: r };
   }
@@ -418,8 +420,10 @@ function onPointerMove(e) {
   const d = O.drag;
   if (!d) return;
   if (d.mode === "resize") {
-    const { cw, rh } = cell();
-    const w = clamp(Math.round(d.w0 + (e.clientX - d.x0) / (cw + GAP)), 1, COLS);
+    const { cw, rh, cols } = cell();
+    const visibleW = clamp(Math.round(d.w0 + (e.clientX - d.x0) / (cw + GAP)), 1, cols);
+    // A narrower viewport only clamps presentation; vertical resizing must keep the desktop span.
+    const w = visibleW === d.w0 ? d.savedW0 : visibleW;
     const h = clamp(Math.round(d.h0 + (e.clientY - d.y0) / (rh + GAP)), 1, 3);
     if (w !== d.t.w || h !== d.t.h) {
       flip(grid(), () => { d.t.w = w; d.t.h = h; sizeTile(d.el, d.t); });
@@ -474,8 +478,8 @@ function onKey(e) {
   if (!el || e.target !== el) return;
   const t = tileById(el.dataset.id), tiles = O.layout.tiles, i = tiles.indexOf(t);
   let changed = true;
-  if (e.shiftKey && e.key === "ArrowRight") t.w = Math.min(COLS, t.w + 1);
-  else if (e.shiftKey && e.key === "ArrowLeft") t.w = Math.max(1, t.w - 1);
+  if (e.shiftKey && e.key === "ArrowRight") { if (t.w < cell().cols) t.w++; else changed = false; }
+  else if (e.shiftKey && e.key === "ArrowLeft") t.w = Math.max(1, Math.min(cell().cols, t.w) - 1);
   else if (e.shiftKey && e.key === "ArrowDown") t.h = Math.min(3, t.h + 1);
   else if (e.shiftKey && e.key === "ArrowUp") t.h = Math.max(1, t.h - 1);
   else if ((e.key === "ArrowRight" || e.key === "ArrowDown") && i < tiles.length - 1) { tiles.splice(i, 1); tiles.splice(i + 1, 0, t); }

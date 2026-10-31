@@ -8,15 +8,18 @@ import vm from "node:vm";
 const source = readFileSync(new URL("../web/js/overview.js", import.meta.url), "utf8");
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-async function harness() {
+async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297px", paddingLeft: "28px", paddingRight: "28px" }, gridWidth = 1280) {
   const timers = new Map(), requests = [], errors = [];
   let nextTimer = 0;
   const context = vm.createContext({
     window: { addEventListener() {} }, document: {},
+    getComputedStyle: () => gridStyle,
     setTimeout(fn) { timers.set(++nextTimer, fn); return nextTimer; },
     clearTimeout(id) { timers.delete(id); },
   });
   const core = {
+    $: () => ({ clientWidth: gridWidth }),
+    clamp: (v, lo, hi) => Math.max(lo, Math.min(hi, v)),
     S: {}, emit() {}, fail(error) { errors.push(error); },
     post(path, body) {
       return new Promise((resolve, reject) => requests.push({ path, body: plain(body), resolve, reject }));
@@ -24,7 +27,7 @@ async function harness() {
   };
   const imports = new Map([...source.matchAll(/import\s+\{([^}]+)\}\s+from\s+["']([^"']+)["']/g)]
     .map((m) => [m[2], m[1].split(",").map((name) => name.trim())]));
-  const module = new vm.SourceTextModule(source + "\nexport { save, O };", { context });
+  const module = new vm.SourceTextModule(source + "\nexport { save, O, cell, onKey, onPointerMove };", { context });
   await module.link((specifier) => {
     const names = imports.get(specifier);
     return new vm.SyntheticModule(names, function () {
@@ -32,7 +35,7 @@ async function harness() {
     }, { context });
   });
   await module.evaluate();
-  const { save, O } = module.namespace;
+  const { save, O, cell, onKey, onPointerMove } = module.namespace;
   O.layout = { tiles: [{ id: "cpu", label: "A" }], pins: ["cpu"] };
   function fire() {
     assert.equal(timers.size, 1, "only one debounce should be pending");
@@ -40,8 +43,39 @@ async function harness() {
     timers.delete(id);
     return callback();
   }
-  return { save, O, requests, errors, timers, fire };
+  return { save, O, requests, errors, timers, fire, cell, onKey, onPointerMove };
 }
+
+test("resize geometry excludes dashboard gutters and follows visible columns", async () => {
+  const desktop = await harness();
+  assert.deepEqual(plain(desktop.cell()), { cw: 297, rh: 152, cols: 4 });
+  const narrow = await harness({ gridTemplateColumns: "318px 318px", paddingLeft: "16px", paddingRight: "16px" }, 680);
+  assert.deepEqual(plain(narrow.cell()), { cw: 318, rh: 152, cols: 2 });
+  const phone = await harness({ gridTemplateColumns: "358px", paddingLeft: "16px", paddingRight: "16px" }, 390);
+  assert.deepEqual(plain(phone.cell()), { cw: 358, rh: 152, cols: 1 });
+});
+
+test("a grow key at the narrow viewport limit preserves the saved desktop span", async () => {
+  const h = await harness({ gridTemplateColumns: "318px 318px", paddingLeft: "16px", paddingRight: "16px" }, 680);
+  const tile = h.O.layout.tiles[0];
+  tile.w = 4; tile.h = 1; h.O.editing = true;
+  const el = { dataset: { id: tile.id }, closest() { return this; }, focus() {} };
+  h.onKey({ target: el, shiftKey: true, key: "ArrowRight", preventDefault() {} });
+  assert.equal(tile.w, 4);
+  assert.equal(h.timers.size, 0, "a visually unchanged tile must not overwrite its saved span");
+  h.onKey({ target: el, shiftKey: true, key: "ArrowLeft", preventDefault() {} });
+  assert.equal(tile.w, 1, "explicit shrinking starts from the visible two-column width");
+});
+
+test("grabbing a clamped tile resize handle without moving does not shrink it", async () => {
+  const h = await harness({ gridTemplateColumns: "318px 318px", paddingLeft: "16px", paddingRight: "16px" }, 680);
+  const tile = h.O.layout.tiles[0];
+  tile.w = 4; tile.h = 1;
+  h.O.drag = { mode: "resize", t: tile, w0: 2, savedW0: 4, h0: 1, x0: 0, y0: 0 };
+  h.onPointerMove({ clientX: 0, clientY: 0 });
+  assert.equal(tile.w, 4);
+  assert.ok(!h.O.drag.changed);
+});
 
 test("edits during a save survive its response and persist in the next serialized request", async () => {
   const h = await harness(), tile = h.O.layout.tiles[0];

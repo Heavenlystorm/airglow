@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 # design id -> (window/caption ground, caption text, dark title bar). The palette's ground, so a light design doesn't
 # sit in a black frame. test_designs keeps these ids in step with the design lists.
 TITLEBAR = {
-    "graphite": ("#17181a", "#e9e5da", True),
+    "graphite": ("#111315", "#f2f0e9", True),
     "ascii": ("#060806", "#d9ffd9", True),
     "paper": ("#e8e4db", "#1c1d19", False),
     "amber": ("#0c0903", "#ffd39a", True),

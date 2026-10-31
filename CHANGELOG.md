@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.11.0
+- A visual refresh across Overview, Lighting, Studio, Fans, Automations, Devices and Settings. Graphite now has
+  charcoal surfaces, warm ivory typography and champagne accents, with clearer controls and more consistent spacing.
+- Overview puts the lighting preview and readings first, with a compact Customize toolbar. Lighting has a balanced
+  effect picker, and Studio, fan curves, device panels and dialogs share the refined styling.
+- All twelve interface designs remain available, including Paper, ASCII and High contrast. Keyboard focus and
+  reduced-motion preferences remain supported, and lighting previews keep their real colours.
+- Narrow windows now stack panels and dashboard tiles. Resizing a tile follows the visible grid, while changing
+  viewport size or resizing vertically preserves its saved desktop width.
+- Added browser checks for theme layouts, keyboard navigation, dialogs, Studio editors and responsive tile editing.
+
 ## 1.10.4
 - Native fan failsafes preserve higher cooling speeds and full-speed thermal protection. Failed fan-controller
   connections close and reconnect, including fan-only NZXT models.
