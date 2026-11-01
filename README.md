@@ -9,119 +9,59 @@
 [![MIT licence](https://img.shields.io/github/license/Heavenlystorm/airglow)](LICENSE)
 [![r/AirglowRGB on Reddit](https://img.shields.io/badge/Reddit-r%2FAirglowRGB-ff4500?logo=reddit&logoColor=white)](https://www.reddit.com/r/AirglowRGB/)
 
-Airglow runs the RGB lighting, the fans and the temperature readouts of a Windows PC from one app. If you've ended up
-with NZXT CAM, Armoury Crate and an RGB program all running at once and fighting over the same LEDs, this replaces
-them. It's free and open source, there's no account, and it doesn't collect anything.
+**Your lights, your fans, your kind of setup.**
 
-**Show off your setup, ask questions and share effects on [r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/).**
+Hey, welcome! Airglow is a free, open-source Windows app for bringing RGB lighting, fan control and PC readings
+together. If you've ever spent longer picking a colour than picking a wallpaper, you're in good company. If you just
+want your lights to behave and your PC to stay cool, you're welcome here too.
+
+**[Download Airglow](https://github.com/Heavenlystorm/airglow/releases/latest)** ·
+[Visit the website](https://airglowrgb.com) ·
+[Check your hardware](#supported-hardware) ·
+[Say hello on Reddit](https://www.reddit.com/r/AirglowRGB/)
 
 ![The Overview: your lights, temperatures, load, power and fans on one screen](docs/screenshots/overview.png)
 
-Settings, General also holds twelve **interface designs** (Graphite, ASCII, Paper, Amber CRT, High contrast, Neon,
-Kiln, Lumen, Midnight, Spore, Rim and Darkroom), each with a live preview, and the electricity price behind the **Cost
-per hour** tile, which turns the PC's current power draw into what an hour costs. Your lights keep their real colours
-in every design.
+Here's what you can do:
 
-<details>
-<summary><b>What's new in 1.9</b></summary>
+- **Make it yours.** Set up the lights in your case, try the built-in effects, and save a look for every mood.
+- **Play in the Studio.** Make an effect from layers, follow the music, or press **Surprise me** and see what happens.
+  You can even try it on a sample case before setting up your lights.
+- **Keep an eye on things.** See temperatures, load, power and fans together, with twelve interface designs to choose
+  from. Your lights keep their real colours in every design.
+- **Set it and get on with your day.** Shape a fan curve or make an automation for game time, quiet time or bedtime.
 
-- The Studio works before any lights are set up: a labelled **sample case** stands in, and every template shows a
-  real live still.
-- One **palette** and **speed, brightness and music-reactivity** knobs for the whole effect, each exposable as a
-  control. Controls keep their ids when a layer moves.
-- **Music reaction on any layer**, plus **Comet** and **Chase** layers, built on each LED's place around its own fan
-  or along its strip.
-- **Undo/redo, autosave and Revert**, typed slider values and a reset, and a debug strip for code.
-- **Share runs the check**: the reviewer list, strobing and frame time, and the exact file, before GitHub opens.
-- Code effects declare controls with `airglow.params({...})`; `console.log` and clickable errors.
-- **Six interface designs** (Graphite, ASCII, Paper, Amber CRT, High contrast and Neon) and a **Cost per hour** tile
-  at your own tariff.
+No account and no telemetry. Just a little more room to make your setup feel like yours.
 
-[Release notes](https://github.com/Heavenlystorm/airglow/releases/tag/v1.9.1) · [Changelog](CHANGELOG.md)
-</details>
+Made something you like? We'd love to see it. Share your setup, ask a question or show off an effect on
+[r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/) or in
+[GitHub Discussions](https://github.com/Heavenlystorm/airglow/discussions).
 
-## Lighting
-Airglow draws your fans and strips where they actually sit in the case and lights them with the colours the hardware
-is showing right now. Setting that up takes a minute: each header blinks while you set it up, you pick the product
-(NZXT accessories are recognised) or count its LEDs with a slider, and drag it into place.
-
-Effects run across everything at once, so a rainbow really does sweep from the front fans to the back. There are ten
-built in, from a plain colour to screen ambience and two that follow the music, and any single zone can have
-its own. Profiles save a whole look, optionally with a fan curve, and you can share them or try other people's
-before keeping them.
-
-![Lighting: the case as you set it up, with the effect list underneath](docs/screenshots/lighting.png)
-
-## The Studio
-If none of the built-in effects is quite what you want, make your own. Pick a starting point or press **Surprise me**,
-stack layers (gradients, plasma, waves, sparkles, a scanner, a comet around every fan, a chase, a pulse on the beat),
-choose how each one mixes in and which part of the case it lights, and watch the result as you go. With no lights set
-up yet it plays on a labelled sample case, so you can start before the hardware is configured. Turn on "Also on my
-lights" and the real hardware follows along.
-
-The palette, speed, brightness and music reactivity are one set of settings for the whole effect, so whoever installs
-it can retune it in one place. Tick "Show as a control" under any setting, including the palette, and it appears in
-their effect panel; a control stays with its own layer when you reorder the stack. Any layer can follow the music, and
-undo/redo, autosave and Revert make experimenting cheap.
-
-![The Studio: layers on the left, your case in the middle, and the effect's palette and knobs on the right](docs/screenshots/studio.png)
-
-**Share** first shows the check a reviewer would run — the reviewer list, strobing and frame time, and the exact file
-— then opens GitHub. Once the pull request is merged, everyone can find it in Studio, Community effects, see it on
-their own case and install it; **How it's made** shows the layers and controls before installing, and **Learn** has the
-rules and copyable recipes. Every effect, yours or someone else's, runs sandboxed: it can't reach the internet, your
-files or the rest of Airglow. [docs/EFFECT-STUDIO.md](docs/EFFECT-STUDIO.md) has the format, and
-[effects/README.md](effects/README.md) explains sharing.
-
-![Ready to share: the check, the reviewer list and the exact file, before GitHub opens](docs/screenshots/studio-check.png)
-
-If you'd rather write code, switch the editor to Code. An effect is a small HTML file with a script that draws on a
-320 × 200 canvas, or simply answers "what colour is this LED right now?" — with `led.local`, `led.fan`, `led.area` and
-`ctx.rig` when it needs to know where it is. Declare controls with `airglow.params({...})` next to the code, use
-`console.log` and the clickable error line, and pause or slow the preview down to look at a frame. There are templates
-to start from, [type declarations](docs/effect-api.d.ts) for editors, and you can edit in VS Code with the preview
-reloading every time you save.
-
-![Code mode: the effect's file on the left, the preview in the middle, its controls on the right](docs/screenshots/studio-code.png)
-
-![Community effects, each shown on your own case](docs/screenshots/community.png)
-
-## Fans and automations
-Fan curves are a line you drag into shape, following the processor, the graphics card, whichever is hotter, or the
-coolant of a liquid cooler. Besides the fans on an NZXT hub, Airglow can drive the motherboard's own fan headers and
-the pump and fans of many liquid coolers through LibreHardwareMonitor: each one stays on its BIOS or cooler curve
-until you choose to have it follow the curve or hold a steady speed. Fans never go below 20 %, and at 90 °C they run
-at full speed whatever the curve says. If the temperature readings stop, the fans go to a failsafe speed until they
-come back, and when Airglow quits, the headers and coolers get their own curves back.
-
-Automations are rules that read like sentences: "Between 23:00 and 07:00, turn the lights off", "When
-Cyberpunk2077.exe is running, use Gaming". When a rule stops applying, you get your own settings back. Airglow also
-turns the lights off while the PC sleeps (plenty of boards leave RGB on) and sets everything up again afterwards.
-
-| Fans | Automations |
-|---|---|
-| ![Fan curve editor](docs/screenshots/fans.png) | ![Automations](docs/screenshots/automations.png) |
+**A quick heads-up:** the Windows installer isn't signed yet, so Windows may show a warning. You can read
+[why and how Airglow works](#is-it-safe) before deciding whether to install it.
 
 ## Installing
-1. Download `Airglow-stable-Setup.exe` from the [latest release](../../releases/latest) and run it. It installs for
-   your Windows user only, so there's no admin prompt, and it starts with Windows. The installer isn't code-signed yet,
-   so SmartScreen may say "Windows protected your PC". Choose More info, then Run anyway, or see
-   [Is it safe?](#is-it-safe) first.
-2. Close any other RGB software (SignalRGB, iCUE, NZXT CAM, Armoury Crate). Two programs driving the same LEDs makes
-   them flicker. Airglow spots the usual ones and offers to close them.
-3. Open Airglow. The welcome screen shows what it found. Temperatures and most RGB devices come from two other free
-   programs, LibreHardwareMonitor and OpenRGB; if they're missing, the welcome screen offers **Set up automatically**,
-   which downloads them from their official sources, checks each file against a known checksum and installs them.
-   Windows asks for permission once.
-4. Press **Set up lights** and tell Airglow what's plugged in where. It takes about a minute.
 
-Already on 1.6 or newer? Airglow updates itself: it asks once whether to check automatically, and if you say no it
-only looks when you press "Check for updates" in Settings, About. Coming from 1.5 or older, run the new installer; it
-keeps your settings, profiles and helper programs.
+Ready to give it a try? You'll need Windows 10 (1809 or newer) or Windows 11.
 
-You need Windows 10 (1809 or newer) or Windows 11. Windows 11 already has the WebView2 runtime Airglow uses; on
-Windows 10 it usually comes with Edge. If your PC doesn't have it, the installer adds it, and if you start Airglow
-without it (from the portable zip, say) it tells you where to get it.
+1. Download `Airglow-stable-Setup.exe` from the [latest release](https://github.com/Heavenlystorm/airglow/releases/latest) and run it. It installs for
+   your Windows user and starts with Windows. The installer isn't signed yet, so SmartScreen may show a warning.
+   Read [Is it safe?](#is-it-safe) if you'd like more detail before you continue.
+2. Close other RGB software, such as SignalRGB, iCUE, NZXT CAM or Armoury Crate. Two programs trying to drive the
+   same LEDs can make them flicker. Airglow spots the usual ones and offers to close them.
+3. Open Airglow and see what it found. Temperatures and most RGB devices come from two other free programs,
+   LibreHardwareMonitor and OpenRGB. If they're missing, the welcome screen offers **Set up automatically**: it
+   downloads them from their official sources, checks each file against a known checksum and installs them. Windows
+   asks for permission once.
+4. Press **Set up lights** and tell Airglow what's plugged in where. Then make yourself a nice colour (or several).
+
+Already using Airglow 1.6 or newer? It asks whether to check for updates automatically. If you say no, it only checks
+when you ask in Settings, About. Coming from 1.5 or older? Run the new installer; it keeps your settings, profiles and
+helper programs. See the [release notes](https://github.com/Heavenlystorm/airglow/releases) or [changelog](CHANGELOG.md) for what's changed.
+
+Windows 11 already has the WebView2 runtime Airglow uses, and Windows 10 usually gets it with Edge. If it's missing,
+the installer adds it. If you start Airglow without it, for example from the portable zip, the app tells you where to
+get it.
 
 <details>
 <summary>Scoop, winget or the portable zip</summary>
@@ -154,7 +94,76 @@ runtime, which the installer would add for you.
   profiles when you switch profiles in Airglow.
 </details>
 
+## Lighting
+
+Make your case feel like yours. Airglow shows your fans and strips where they actually sit, with the colours your
+hardware is showing right now. During setup, each header blinks so you can tell it apart; pick the product (NZXT
+accessories are recognised) or count its LEDs with a slider, then drag it into place.
+
+Choose from ten built-in effects, from a simple solid colour to screen ambience and music-reactive looks. Effects can
+move across your whole case, or you can give a single zone its own look. Save the ones you love as profiles, optionally
+with a fan curve, and share them or try someone else's before keeping them.
+
+![Lighting: the case as you set it up, with the effect list underneath](docs/screenshots/lighting.png)
+
+## The Studio
+
+This is the fun bit if you like to tinker. Start with a template, press **Surprise me**, or build something of your
+own by stacking layers: gradients, plasma, waves, sparkles, scanners, comets, chases and beat-driven pulses. Mix them
+together, choose which part of the case they light, and watch as you go.
+
+Don't have your lights set up yet? There's a sample case to play with. When you're ready, turn on **Also on my
+lights** to see your creation on the real hardware.
+
+The palette, speed, brightness and music reactivity are shared across an effect, so anyone who installs it can make
+it their own. You can expose individual settings as controls, including the palette; controls stay with their layers
+when you reorder them. Any layer can follow music, and undo/redo, autosave and Revert give you room to experiment.
+
+![The Studio: layers on the left, your case in the middle, and the effect's palette and knobs on the right](docs/screenshots/studio.png)
+
+Made something you like? **Share** shows the checks a reviewer would run, including strobing, frame time and the
+exact file, before opening GitHub. Once its pull request is merged, others can find it under Studio, Community effects,
+preview it on their own case and install it. **How it's made** shows the layers and controls, and **Learn** has rules
+and recipes if you're looking for a starting point. Effects run in a sandbox; see
+[docs/EFFECT-STUDIO.md](docs/EFFECT-STUDIO.md) for the format and [effects/README.md](effects/README.md) for sharing.
+
+![Ready to share: the check, the reviewer list and the exact file, before GitHub opens](docs/screenshots/studio-check.png)
+
+Prefer writing code? Switch the editor to Code. An effect is a small HTML file with a script that draws on a
+320 × 200 canvas, or answers “what colour is this LED right now?” You can use `led.local`, `led.fan`, `led.area` and
+`ctx.rig` to work with the case layout, declare controls with `airglow.params({...})`, and use `console.log` and
+clickable errors while you work. Pause or slow the preview to inspect a frame, start from a template, or edit in
+VS Code and watch the preview reload when you save. There are [type declarations](docs/effect-api.d.ts) for editors,
+too.
+
+![Code mode: the effect's file on the left, the preview in the middle, its controls on the right](docs/screenshots/studio-code.png)
+
+![Community effects, each shown on your own case](docs/screenshots/community.png)
+
+## Fans and automations
+
+Your setup can be quiet when you're working and ready for more when you need it. Draw a fan curve using the
+processor, graphics card, whichever is hotter, or a liquid cooler's coolant temperature. Alongside fans on an NZXT
+hub, Airglow can use LibreHardwareMonitor to control supported motherboard fan headers and cooler pumps and fans.
+They stay on their BIOS or cooler curve until you choose an Airglow curve or a steady speed.
+
+For the fans Airglow controls, curves never go below 20%, and at 90 °C they run at full speed regardless of the
+curve. If temperature readings stop, a failsafe speed takes over until they return. When Airglow quits, the headers
+and coolers get their own curves back.
+
+Automations read like little instructions: “Between 23:00 and 07:00, turn the lights off” or “When
+Cyberpunk2077.exe is running, use Gaming.” When a rule stops applying, your own settings come back. Airglow also
+turns the lights off while the PC sleeps and sets everything up again afterwards.
+
+| Fans | Automations |
+|---|---|
+| ![Fan curve editor](docs/screenshots/fans.png) | ![Automations](docs/screenshots/automations.png) |
+
 ## Supported hardware
+
+Every PC is a little different. Here's where Airglow connects directly, where helper programs come in, and which
+devices still need a real-world try. If you test an experimental controller, we'd love to hear how it went.
+
 | Connection | Devices |
 |---|---|
 | Directly over USB | NZXT Control Hub. ASUS Aura USB motherboard controller `0B05:19AF`. |
@@ -169,6 +178,9 @@ Controllers Airglow drives directly come from device plugins, one file per famil
 [`airglow/plugins/`](airglow/plugins/). [CONTRIBUTING.md](CONTRIBUTING.md) explains how to add one.
 
 ## Troubleshooting
+
+Something not quite glowing? These are good places to start.
+
 A device is missing or says "busy": another RGB program still has it open. Close it (check the tray too) and give it
 a few seconds.
 
@@ -185,23 +197,27 @@ the window with a Try again button. Music effects stay dark while nothing is pla
 what they'd do.
 
 For anything else, go to Settings, About, press **Save a report** and attach the zip to an issue. It has the logs and
-what Airglow found, with your user name, PC name and device serial numbers taken out. Settings live in
+what Airglow found, with your user name, PC name and device serial numbers taken out. Take a look inside before
+sharing it. Settings live in
 `%APPDATA%\Airglow`, logs in its `logs` folder.
 
 ## Is it safe?
-Airglow only listens on `127.0.0.1`, and every change has to carry a header that websites can't send, so a web page
-can't touch your hardware. Studio effects run in a sandbox: all they can do is say what colour each LED should be.
-[SECURITY.md](SECURITY.md) goes into more detail.
 
-There's no telemetry. Airglow only goes online for the update check (on its own only if you said yes to that), the
-community galleries while you have them open, and setting up the helper programs when you ask it to. The update check
-and the galleries only talk to GitHub; the helper programs come from their own official sites.
+It's a fair question, especially for an app that controls your fans. Airglow's local API listens on `127.0.0.1`
+only, and changes require a header that a web page from another origin can't send without permission. Programs
+already running as you on the same PC can still access the API. Studio effects run in a sandbox with access to LED
+colours rather than your files or the network. [SECURITY.md](SECURITY.md) explains the safeguards and how to report a
+security issue privately.
 
-If you let Airglow set up LibreHardwareMonitor, its web server only answers on this PC and needs a password Airglow
-made up for it (kept in `%APPDATA%\Airglow\lhm-auth.json` and left out of diagnostics reports).
+There's no telemetry. Airglow goes online for update checks (automatically only if you opt in), for community
+galleries while you have them open, and for setting up helper programs when you ask it to. Updates and galleries talk
+to GitHub; the helper programs come from their official sites.
 
-The installer isn't signed yet. Releases are built by GitHub Actions straight from this repository, never on
-someone's PC, and you can always build it yourself (below) and compare.
+If you let Airglow set up LibreHardwareMonitor, its web server only answers on this PC and requires a password
+generated by Airglow. It's kept in `%APPDATA%\Airglow\lhm-auth.json` and left out of diagnostics reports.
+
+The installer isn't code-signed yet, so Windows may show a warning. Releases are built by GitHub Actions from this
+repository, and you can also build Airglow yourself using the instructions below.
 
 ## Building from source
 ```
@@ -236,11 +252,22 @@ The NZXT and ASUS packet formats follow what liquidctl and OpenRGB document for 
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Airglow is its own implementation and includes none of their code.
 
 ## Contributing
-Bug reports and ideas are welcome on the [issues](https://github.com/Heavenlystorm/airglow/issues).
-[CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the test commands and the conventions; effects have their own guide
-in [effects/README.md](effects/README.md), and each device family is one plugin in
-[`airglow/plugins/`](airglow/plugins/). Security reports go through [SECURITY.md](SECURITY.md). The unit tests need no
-hardware.
+
+Airglow gets better when people with different PCs try it. You don't need to write code or have a picture-perfect
+setup to take part.
+
+- **Show us your setup or share an idea.** Come by [r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/) or join
+  [GitHub Discussions](https://github.com/Heavenlystorm/airglow/discussions). Questions are welcome, too.
+- **Found a problem?** [Open an issue](https://github.com/Heavenlystorm/airglow/issues) and tell us what happened.
+  A diagnostics report can help; please check its contents before sharing it.
+- **Made a cool effect or profile?** Share it from Airglow so others can try it. The
+  [effects guide](effects/README.md) explains the process.
+- **Want to help with code or hardware?** [CONTRIBUTING.md](CONTRIBUTING.md) has the setup, tests and device plugin
+  guide. The unit tests don't need any hardware.
+
+For security issues, please use the private reporting route in [SECURITY.md](SECURITY.md).
+
+Thanks for taking a look, trying something out, or helping make Airglow a little better for the next person.
 
 ## Licence
 MIT, see [LICENSE](LICENSE). Bundled components and their licences are listed in
