@@ -136,7 +136,7 @@
 :where([data-design="graphite"]) .set-row:last-child { border-bottom: 0; }
 
 /* Studio library: preview first, then a compact editorial caption. */
-.st-home > :is(.page-head, .st-sec, .st-filter, .banner) { max-width: 1400px; margin-left: auto; margin-right: auto; }
+.st-home > :is(.page-head, .st-sec, .st-filter, .banner, .st-workflow) { max-width: 1400px; margin-left: 0; margin-right: auto; }
 .st-sec { margin-top: 32px; }
 .st-h { margin-bottom: 16px; }
 .st-grid { gap: 16px; }

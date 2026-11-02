@@ -28,7 +28,7 @@ async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297
   };
   const imports = new Map([...source.matchAll(/import\s+\{([^}]+)\}\s+from\s+["']([^"']+)["']/g)]
     .map((m) => [m[2], m[1].split(",").map((name) => name.trim())]));
-  const module = new vm.SourceTextModule(source + "\nexport { save, O, cell, onKey, onPointerMove };", { context });
+  const module = new vm.SourceTextModule(source + "\nexport { save, O, cell, onKey, onPointerMove, seriesPath, fanSummary };", { context });
   await module.link((specifier) => {
     const names = imports.get(specifier);
     return new vm.SyntheticModule(names, function () {
@@ -44,8 +44,27 @@ async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297
     timers.delete(id);
     return callback();
   }
-  return { save, O, requests, errors, timers, fire, cell, onKey, onPointerMove };
+  return { save, O, requests, errors, timers, fire, cell, onKey, onPointerMove,
+    seriesPath: module.namespace.seriesPath, fanSummary: module.namespace.fanSummary };
 }
+
+test("Case fans uses reported speed and includes stopped and steady managed fans", async () => {
+  const h = await harness();
+  const summary = h.fanSummary({ duty: 80, ports: [{ duty: 40, rpm: 800 }], channels: [
+    { mode: "curve", duty: 20, rpm: 0 }, { mode: "steady", duty: 60, rpm: 1000 },
+    { mode: "steady", duty: 100, rpm: 2200, pump: true }, { mode: null, duty: 100, rpm: 1000 },
+  ] });
+  assert.deepEqual(plain(summary), { duty: 40, rpm: 600, reporting: 3, count: 3, error: false });
+  assert.equal(h.fanSummary({ duty: 80, ports: [], channels: [{ mode: "curve", duty: null, rpm: null }] }).rpm, null);
+});
+
+test("Overview graph paths and filled areas break at missing readings", async () => {
+  const h = await harness();
+  const path = h.seriesPath([40, 45, null, 50, 55], 0, 100, 400, 100);
+  assert.equal((path.d.match(/M/g) || []).length, 2);
+  assert.equal((path.area.match(/Z/g) || []).length, 2);
+  assert.match(h.seriesPath([null, null, 50], 0, 100, 400, 100).d, /^M400/);
+});
 
 test("resize geometry excludes dashboard gutters and follows visible columns", async () => {
   const desktop = await harness();

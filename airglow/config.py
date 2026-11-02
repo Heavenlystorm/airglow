@@ -50,7 +50,7 @@ DEFAULT_CONFIG = {
     "zones": {},
     "device_params": {},      # device id -> plugin settings (validated against the plugin's PARAMETERS on save)
     "device_ids": {},         # physical USB identity -> stable local device id
-    "fan_channels": {},       # LHM control sensor id -> {"mode": "curve"|"steady", "duty"}; missing: left alone
+    "fan_channels": {},       # LHM control id -> curve, steady (+ duty), or explicit bios opt-out
 }
 
 DEFAULT_PRESETS = [
@@ -78,7 +78,7 @@ DEFAULT_OVERVIEW = {
         {"id": "gpu-load", "type": "sensor", "sensors": ["auto/gpu_load"], "style": "ring", "w": 1, "h": 1},
         {"id": "presets", "type": "presets", "w": 2, "h": 1},
         {"id": "power", "type": "sensor", "sensors": ["auto/cpu_power", "auto/gpu_power"], "style": "graph", "w": 2, "h": 1,
-         "label": "Power draw"},
+         "label": "CPU + GPU power"},
         {"id": "fans", "type": "fans", "w": 1, "h": 1},
         {"id": "ram", "type": "sensor", "sensors": ["auto/ram_load"], "style": "bar", "w": 1, "h": 1},
         {"id": "ssd-temp", "type": "sensor", "sensors": ["auto/ssd_temp"], "style": "spark", "w": 1, "h": 1},
@@ -768,20 +768,37 @@ class Store:
 
     # -- fans and pumps driven through LibreHardwareMonitor
     def fan_channels(self):
-        """sensor id -> {"mode", "duty"} for every channel Airglow drives (read-only; use set_fan_channel)."""
+        """Saved ownership and speed choices by sensor id (read-only; use set_fan_channel)."""
         return self.config["fan_channels"]
 
+    def adopt_fan_channels(self, found):
+        """Completed setup activates detected fans, including ones that appear after LHM starts."""
+        from . import lhmfans
+        with self._lock:
+            chosen = dict(self.config["fan_channels"])
+            if not self.state.get("onboarded"):
+                return chosen
+            for ch in found:
+                if len(chosen) >= lhmfans.MAX_CHANNELS:
+                    break
+                if ch["id"] in chosen or ch["pump"] or not ch["rpm"] or ch["rpm"] < 0:
+                    continue
+                sid = lhmfans.validate_id(ch["id"])
+                chosen[sid] = {"mode": "curve"}
+            if chosen != self.config["fan_channels"]:
+                self._save_config({"fan_channels": chosen})
+            return chosen
+
     def set_fan_channel(self, sensor_id, cfg):
-        """cfg None: leave the channel alone again (its BIOS or cooler curve)."""
+        """cfg None: persist BIOS ownership, so discovery never takes this channel back."""
         from . import lhmfans
         sid = lhmfans.validate_id(sensor_id)
-        clean = lhmfans.validate(cfg) if cfg is not None else None
+        clean = lhmfans.validate(cfg) if cfg is not None else {"mode": "bios"}
         with self._lock:
             channels = {k: v for k, v in self.config["fan_channels"].items() if k != sid}
-            if clean is not None:
-                if len(channels) >= lhmfans.MAX_CHANNELS:
-                    raise ValueError(f"Airglow drives up to {lhmfans.MAX_CHANNELS} fans this way")
-                channels[sid] = clean
+            if len(channels) >= lhmfans.MAX_CHANNELS:
+                raise ValueError(f"Airglow remembers up to {lhmfans.MAX_CHANNELS} fan channels this way")
+            channels[sid] = clean
             self._save_config({"fan_channels": channels})
         return clean
 

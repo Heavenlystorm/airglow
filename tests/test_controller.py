@@ -126,10 +126,12 @@ class ControllerTests(unittest.TestCase):
                 self.ctrl.shutdown()
 
     def test_catalog_revision_tracks_identity_not_changing_values(self):
-        self.ctrl.tick()
-        first = self.ctrl.snapshot()["catalog_rev"]
-        self.ctrl.tick(); self.ctrl.tick()
-        self.assertEqual(self.ctrl.snapshot()["catalog_rev"], first)
+        with mock.patch.object(self.ctrl._system, "read", side_effect=[
+                {"ram_total": 32, "cpu_load": 10}, {"ram_total": 32, "cpu_load": 20}]):
+            self.ctrl.tick()
+            first = self.ctrl.snapshot()["catalog_rev"]
+            self.ctrl.tick(); self.ctrl.tick()
+            self.assertEqual(self.ctrl.snapshot()["catalog_rev"], first)
         with mock.patch.object(self.ctrl._system, "read", return_value={"ram_total": 64}):
             self.ctrl._update_readings([])
         self.assertGreater(self.ctrl.snapshot()["catalog_rev"], first)
@@ -407,6 +409,28 @@ class ControllerTests(unittest.TestCase):
         self.ctrl.tick()
         for sid in ("app/fan_duty", "app/fan_rpm"):
             self.assertTrue(self.ctrl.readings[sid]["short"])
+
+    def test_fan_readings_average_reported_curve_and_steady_fans_including_zero_rpm(self):
+        self.nzxt.close()
+        self.ctrl.fan_duty = 33
+        self.ctrl.fan_channels = [
+            {"id": "/fan/steady", "fan_id": "/rpm/steady", "mode": "steady", "pump": False, "duty": 80, "rpm": 0},
+            {"id": "/fan/curve", "fan_id": "/rpm/curve", "mode": "curve", "pump": False, "duty": 40, "rpm": 900},
+            {"id": "/fan/bios", "mode": "bios", "pump": False, "duty": 100, "rpm": 2000},
+            {"id": "/pump", "mode": "steady", "pump": True, "duty": 100, "rpm": 2000},
+        ]
+        readings = {r["id"]: r for r in self.ctrl._app_readings()}
+        self.assertEqual(readings["app/fan_duty"]["value"], 60)
+        self.assertEqual(readings["app/fan_rpm"]["value"], 450)
+        self.assertEqual(readings["app/fan_duty"]["source_ids"], ["/fan/steady", "/fan/curve"])
+
+    def test_only_a_steady_pump_does_not_report_the_unused_case_fan_curve(self):
+        self.nzxt.close()
+        self.ctrl.fan_duty = 33
+        self.ctrl.fan_channels = [{"id": "/pump", "mode": "steady", "pump": True, "duty": 80, "rpm": 2000}]
+        readings = {r["id"]: r for r in self.ctrl._app_readings()}
+        self.assertIsNone(readings["app/fan_duty"]["value"])
+        self.assertIsNone(readings["app/fan_rpm"]["value"])
 
     def test_cost_per_hour_follows_power_and_the_tariff(self):
         self.store.update_settings({"energy_price": 0.3797})

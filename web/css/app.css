@@ -251,6 +251,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .tile-src.link { flex: none; text-decoration: none; }
 .tile-src.link:hover { color: var(--ink); }
 .tile-note { position: absolute; left: 16px; right: 16px; bottom: 16px; color: var(--ink-3); font-size: 13px; }
+.s-graph .tile-note { bottom: 36px; }
 .tile.missing .readout, .tile.missing .spark, .tile.missing .minmax, .tile.missing .gauge,
 .tile.missing .hbar, .tile.missing .bar-foot { opacity: .25; }
 
@@ -312,6 +313,8 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .chart .a-1 { fill-opacity: 0; }
 .ax, .ax-time { position: absolute; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; pointer-events: none; }
 .ax { right: 12px; transform: translateY(-50%); }
+.mixed-units .ax:not(.ax-right) { left: 12px; right: auto; color: var(--data-line); }
+.ax-right { color: var(--data-2); }
 .ax-hi { top: 0; }
 .ax-mid { top: calc((100% - 18px) / 2); }
 .ax-time { left: 16px; bottom: 2px; }

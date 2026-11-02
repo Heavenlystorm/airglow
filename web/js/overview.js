@@ -103,7 +103,7 @@ function sensorMarkup(t) {
       <div class="chart"><svg viewBox="0 0 400 100" preserveAspectRatio="none" aria-hidden="true">
         <line class="gl" x1="0" x2="400" y1="0.5" y2="0.5"/><line class="gl" x1="0" x2="400" y1="50" y2="50"/><line class="gl" x1="0" x2="400" y1="99.5" y2="99.5"/>
         ${t.sensors.map((_, i) => `<path class="area a-${i}"/><path class="line l-${i}"/>`).join("")}</svg>
-        <span class="ax ax-hi"></span><span class="ax ax-mid"></span><span class="ax-time">10 min</span></div>`;
+        <span class="ax ax-hi"></span><span class="ax ax-mid"></span><span class="ax ax-hi ax-right" hidden></span><span class="ax ax-mid ax-right" hidden></span><span class="ax-time">10 min</span></div>`;
   }
   return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span>${two ? "" : ""}</div>
     <div class="minmax"></div>
@@ -149,27 +149,23 @@ function arc(cx, cy, r, a0, a1) {
   return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
 }
 
-// A line can be drawn from the first sample. Fill the empty part before it with that first value, so a cold start
-// shows a flat line straight away instead of a sliver at the right edge (or nothing for the first 12 seconds).
-function withLead(pts) {
-  const first = pts.findIndex((v) => v != null);
-  if (first <= 0) return pts;
-  return pts.map((v, i) => (i < first ? pts[first] : v));
-}
-
-// Path through resampled points; gaps (no data yet) are skipped.
+// Close each area separately so outages remain visible in both the line and fill.
 function seriesPath(vals, lo, hi, w, h, pad = 2) {
   const n = vals.length;
-  let d = "", area = "", first = null, last = null;
+  let d = "", area = "", segment = "", first = null, last = null;
+  const finish = () => {
+    if (segment) area += `${segment}L${last.toFixed(1)} ${h}L${first.toFixed(1)} ${h}Z`;
+    segment = ""; first = last = null;
+  };
   vals.forEach((v, i) => {
-    if (v == null) return;
+    if (!Number.isFinite(v)) { finish(); return; }
     const x = (i / (n - 1)) * w, y = h - pad - ((clamp(v, lo, hi) - lo) / (hi - lo || 1)) * (h - pad * 2);
-    d += `${d ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
+    const point = `${segment ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
+    d += point; segment += point;
     if (first == null) first = x;
     last = x;
   });
-  if (!d) return { d: "", area: "" };
-  area = `${d}L${last.toFixed(1)} ${h}L${first.toFixed(1)} ${h}Z`;
+  finish();
   return { d, area };
 }
 
@@ -182,6 +178,7 @@ function setPath(el, d) {
 
 // ------------------------------------------------------------ updating
 function unavailable(id) {
+  if (R.stale) return "Waiting for Airglow to reconnect";
   const meta = R.meta[id];
   const needsLhm = meta?.needs_lhm ?? !/^(sys\/|app\/|auto\/(ram_load|ram_used|net_|disk_))/.test(id);
   if (needsLhm && !S.state?.sensors?.online) return "Needs LibreHardwareMonitor";
@@ -210,10 +207,10 @@ function updateSensor(el, t) {
     nameEl._fitKey = fitKey;
     src.hidden = false;
     src.hidden = !!srcText && (nameEl.scrollWidth > nameEl.clientWidth || src.clientWidth < 64);
-    nameEl.title = src.hidden ? `${name} · ${srcText}` : "";
+    nameEl.title = [name, srcText, meta?.sensor_name].filter(Boolean).join(" · ");
     src.title = !src.hidden && src.scrollWidth > src.clientWidth ? srcText : "";
   }
-  const missing = v == null && t.style !== "graph";
+  const missing = t.sensors.every((sid) => value(sid) == null);
   el.classList.toggle("missing", missing);
   let note = el.querySelector(".tile-note");
   if (missing) {
@@ -236,11 +233,11 @@ function updateSensor(el, t) {
     if (meta?.unit === "%") { a = Math.min(a, 0); b = Math.max(b, 10); }
     const span = Math.max(b - a, meta?.unit === "°C" ? 8 : meta?.unit === "W" ? 20 : (b || 1) * 0.2);
     const mid = (a + b) / 2;
-    const p = vals.length ? seriesPath(withLead(pts), mid - span * 0.6, mid + span * 0.6, 300, 60, 4) : { d: "", area: "" };
+    const p = vals.length ? seriesPath(pts, mid - span * 0.6, mid + span * 0.6, 300, 60, 4) : { d: "", area: "" };
     setPath(el.querySelector(".spark .line"), p.d);
     setPath(el.querySelector(".spark .area"), p.area);
-    const lo10 = vals.length ? fmt(meta, Math.min(...vals)) : null, hi10 = vals.length ? fmt(meta, Math.max(...vals)) : null;
-    setHTML(el.querySelector(".minmax"), lo10 && vals.length > 3 ? `<span>${esc(lo10.num)}–${esc(hi10.num)}${esc(hi10.unit === "°C" || hi10.unit === "°F" ? "°" : hi10.unit.startsWith("/") ? hi10.unit : " " + hi10.unit)}</span> over 10 min` : "");
+    const samples = (R.series[id] || []).map((p) => p[1]).filter(Number.isFinite);
+    setHTML(el.querySelector(".minmax"), samples.length > 3 ? `<span>${esc(fmtText(meta, Math.min(...samples)))}–${esc(fmtText(meta, Math.max(...samples)))}</span> over 10 min` : "");
   } else if (t.style === "ring") {
     el.querySelectorAll(".num").forEach((n) => countTo(n, f.num));
     el.querySelectorAll(".unit").forEach((u) => setHTML(u, esc(f.unit)));
@@ -255,7 +252,7 @@ function updateSensor(el, t) {
     setHTML(el.querySelector(".of"), meta?.max ? `of ${esc(fmtText(meta, meta.max))}` : "");
     const k = v == null ? 0 : clamp((v - lo) / (hi - lo || 1), 0, 1);
     el.querySelector(".hbar .fill").style.width = `${(k * 100).toFixed(1)}%`;
-    const vals = (R.series[id] || []).map((p) => p[1]);
+    const vals = (R.series[id] || []).map((p) => p[1]).filter(Number.isFinite);
     const peak = vals.length ? Math.max(...vals) : null;
     const pk = peak == null ? null : clamp((peak - lo) / (hi - lo || 1), 0, 1);
     const peakEl = el.querySelector(".hbar .peak");
@@ -279,12 +276,19 @@ function updateSensor(el, t) {
       setHTML(lg.querySelector(".unit"), esc(sf.unit));
       const [l, h] = i === 0 || metas[1]?.unit === meta?.unit ? [glo, ghi] : range(sid, m);
       const pts = resample(R.series[sid]);
-      const p = pts.filter((x) => x != null).length ? seriesPath(withLead(pts), l, h, 400, 100, 3) : { d: "", area: "" };
+      const p = pts.filter((x) => x != null).length ? seriesPath(pts, l, h, 400, 100, 3) : { d: "", area: "" };
       setPath(el.querySelector(`.l-${i}`), p.d);
       setPath(el.querySelector(`.a-${i}`), p.area);
     });
     setHTML(el.querySelector(".ax-hi"), esc(fmtText(meta, ghi)));
     setHTML(el.querySelector(".ax-mid"), esc(fmtText(meta, (glo + ghi) / 2)));
+    const differentUnits = metas.length > 1 && metas[1]?.unit !== meta?.unit;
+    el.querySelector(".chart").classList.toggle("mixed-units", differentUnits);
+    const [rlo, rhi] = range(t.sensors[1], metas[1]);
+    for (const [selector, v] of [[".ax-hi.ax-right", rhi], [".ax-mid.ax-right", (rlo + rhi) / 2]]) {
+      const axis = el.querySelector(selector); axis.hidden = !differentUnits;
+      setHTML(axis, differentUnits ? esc(fmtText(metas[1], v)) : "");
+    }
     if (!t.label) setHTML(el.querySelector(".tile-name"), esc(t.sensors.length > 1 ? `${metas[0]?.short || ""} and ${metas[1]?.short || ""}`.trim() : name));
   }
 }
@@ -326,16 +330,22 @@ function updatePresets(el) {
     : `<p class="hint">No profiles yet. Save one from the Lighting tab.</p>`);
 }
 
+function fanSummary(fans) {
+  const managed = [...(fans.ports || []), ...(fans.channels || []).filter((c) => ["curve", "steady"].includes(c.mode) && !c.pump)];
+  const duties = managed.map((c) => c.duty).filter(Number.isFinite), rpms = managed.map((c) => c.rpm).filter(Number.isFinite);
+  const average = (values) => values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : null;
+  return { duty: average(duties), rpm: average(rpms), reporting: rpms.length, count: managed.length,
+    error: managed.some((c) => !!c.error) };
+}
+
 function updateFans(el) {
-  const F = S.state.fans;
-  const followers = (F.channels || []).filter((c) => c.mode === "curve");     // headers and coolers on the curve
-  const drives = F.hub_online || followers.length > 0;
-  el.classList.toggle("missing", !drives);
-  countTo(el.querySelector(".num"), F.duty == null || !drives ? "–" : String(F.duty));
-  const rpms = [...F.ports.map((p) => p.rpm), ...followers.map((c) => c.rpm)].filter((r) => r > 0);
-  setHTML(el.querySelector(".fan-sub"), drives
-    ? (rpms.length ? `${Math.round(rpms.reduce((a, b) => a + b, 0) / rpms.length).toLocaleString()} rpm across ${rpms.length} fan${rpms.length === 1 ? "" : "s"}` : "Fans stopped")
-    : "No fans follow Airglow yet (Fans tab)");
+  const F = S.state.fans, reported = fanSummary(F);
+  el.classList.toggle("missing", R.stale || reported.duty == null);
+  countTo(el.querySelector(".num"), R.stale || reported.duty == null ? "–" : String(reported.duty));
+  el.querySelector(".readout").title = "Average reported speed of Airglow-controlled fans";
+  setHTML(el.querySelector(".fan-sub"), R.stale ? "Waiting for Airglow to reconnect" : reported.error ? "Fan control needs attention (Fans tab)"
+    : reported.rpm != null ? `${reported.rpm.toLocaleString()} rpm average · ${reported.reporting} reporting`
+    : reported.count || F.hub_online ? "No RPM reading yet" : "No controlled fans detected (Fans tab)");
   setHTML(el.querySelector(".fan-curve"), F.curve !== F.base_curve ? `${esc(curveLabel(F.curve))}, by automation` : esc(curveLabel(F.curve)));
   setHTML(el.querySelector(".fan-seg"), Object.keys(S.curves?.curves || {}).map((c) =>
     `<button role="radio" data-curve="${c}" aria-checked="${c === F.base_curve}">${curveLabel(c)}</button>`).join(""));
@@ -349,8 +359,8 @@ function update(el, t) {
   else if (t.type === "control") {
     const c = S.state.control, counts = c?.counts || {};
     const labels = { healthy: "Working normally", failed: "Output needs attention", stale: "Work is taking longer", disconnected: "A source is disconnected", pending: "Waiting for completed work" };
-    el.querySelector(".control-tile-state").textContent = labels[c?.state] || "Waiting for status";
-    el.querySelector(".control-tile-detail").textContent = c
+    el.querySelector(".control-tile-state").textContent = R.stale ? "Waiting for Airglow" : labels[c?.state] || "Waiting for status";
+    el.querySelector(".control-tile-detail").textContent = R.stale ? "Connection lost. Status will update after reconnecting." : c
       ? `${counts.healthy || 0} healthy · ${counts.pending || 0} pending · ${(counts.failed || 0) + (counts.stale || 0) + (counts.disconnected || 0)} need attention`
       : "Status will appear when the next reading arrives.";
   }

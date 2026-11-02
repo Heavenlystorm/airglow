@@ -3,19 +3,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
 
-async function load(name) {
+async function load(name, fixture = {}) {
   const path = new URL(`../web/js/${name}.js`, import.meta.url);
   assert.ok(existsSync(path), `${name} module exists`);
-  const context = vm.createContext({ console, Date, Number, URL, Blob, setTimeout, clearTimeout });
-  const core = new vm.SyntheticModule(["$", "S", "esc", "get", "post", "setHTML", "toast", "fmtTemp"], function () {
-    this.setExport("$", () => null);
-    this.setExport("S", {});
-    this.setExport("esc", (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])));
-    this.setExport("get", async () => ({}));
-    this.setExport("post", async () => ({}));
-    this.setExport("setHTML", (el, html) => { el.innerHTML = html; });
-    this.setExport("toast", () => {});
-    this.setExport("fmtTemp", (v) => `${v}°C`);
+  const context = vm.createContext({ console, Date, Number, URL, Blob, setTimeout, clearTimeout, ...fixture.globals });
+  const coreValues = {
+    $: () => null, $$: () => [], S: {},
+    esc: (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])),
+    get: async () => ({}), post: async () => ({}), setHTML: (el, html) => { el.innerHTML = html; },
+    toast() {}, fmtTemp: (v) => `${v}°C`, cap: (v) => v, clamp: (v, min, max) => Math.min(max, Math.max(min, v)),
+    curveLabel: (v) => v, emit() {}, fail() {}, on() {}, rangeFill() {}, tempLevel: () => "", toUnit: (v) => v, unitF: () => false,
+    ...fixture.core,
+  };
+  const core = new vm.SyntheticModule(Object.keys(coreValues), function () {
+    for (const [key, value] of Object.entries(coreValues)) this.setExport(key, value);
   }, { context });
   const sheet = new vm.SyntheticModule(["openSheet", "closeSheet"], function () {
     this.setExport("openSheet", () => null); this.setExport("closeSheet", () => {});
@@ -35,6 +36,43 @@ test("completed-work ages distinguish never completed, recent and old work", asy
   assert.match(html, /Pending/);
   assert.match(html, /No completed work yet/);
   assert.ok(!html.includes("<device>"));
+});
+
+test("unmanaged fan headers show sensor evidence and a configuration link", async () => {
+  const ui = await load("control-center");
+  const html = ui.statusRow({ label: "Fan #1", state: "unmanaged", owner: "BIOS / device", kind: "lhm-fan",
+    age_seconds: null, detail: "0 RPM; header may be empty, stopped, or have no tach signal.", action: "#fans/%2Ffan%2F1" });
+  assert.match(html, /empty, stopped/);
+  assert.match(html, /href="#fans\/%2Ffan%2F1"/);
+  assert.match(html, /Configure/);
+  assert.doesNotMatch(html, /No completed work yet/);
+});
+
+test("fan controls display measured duty separately from requests and focus a linked channel", async () => {
+  const nodes = new Map();
+  const node = (key) => {
+    if (!nodes.has(key)) nodes.set(key, { style: {}, classList: { toggle() {} }, contains: () => false,
+      querySelector: (selector) => node(key + " " + selector), scrollIntoView() { this.scrolled = true; },
+      focus() { this.focused = true; } });
+    return nodes.get(key);
+  };
+  const ui = await load("fans", {
+    globals: { document: { activeElement: null }, CSS: { escape: (v) => v } },
+    core: { $: (selector) => node(selector), S: { history: [], state: {
+      fans: { ports: [], channels: [{ id: "/fan/1", name: "Fan 1", device: "Board", mode: "curve", duty: 25, target: 75, rpm: 0 }] },
+      sensors: { online: true },
+    } } },
+  });
+  ui.renderFans();
+  const row = '#channels [data-chan="/fan/1"]';
+  assert.equal(node(row + " .bar i").style.width, "25%", "the displayed bar is reported duty, never the request");
+  assert.match(node(row + " .chan-note").textContent, /Requested 75%/);
+  assert.match(node(row + " .chan-note").textContent, /Reported 25%/);
+  assert.match(node(row + " .chan-note").textContent, /stopped/);
+  assert.equal(typeof ui.showFan, "function");
+  ui.showFan("/fan/1");
+  assert.equal(node(row).scrolled, true);
+  assert.equal(node(row + " [data-mode]").focused, true);
 });
 
 test("cooling chart breaks lines at missing readings and places samples by elapsed time", async () => {

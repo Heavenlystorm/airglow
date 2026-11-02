@@ -66,3 +66,12 @@ class ControlStatusTests(unittest.TestCase):
         self.mono += 6
         self.assertEqual(status.snapshot()["devices"][0]["state"], "stale")
         self.assertEqual(len([e for e in status.events() if e["kind"] == "stale"]), 2)
+
+    def test_handing_control_back_does_not_keep_reporting_active_control(self):
+        status = self.make_status()
+        status.observe("d", "Fan", kind="lhm-fan", owner="Airglow")
+        status.succeeded("d")
+        status.observe("d", "Fan", kind="lhm-fan", owner="BIOS / device", expected=False)
+        row = status.snapshot()["devices"][0]
+        self.assertEqual(row["state"], "unmanaged")
+        self.assertIsNotNone(row["last_success_at"])

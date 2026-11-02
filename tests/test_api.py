@@ -78,6 +78,12 @@ class ApiTests(unittest.TestCase):
         status, body = self.request("POST", "/api/fans/channel", {"id": "nonsense", "mode": "off"})
         self.assertEqual(status, 400)
 
+    def test_bios_fan_opt_out_is_saved_even_when_the_header_is_offline(self):
+        sid = "/lpc/offline/control/0"
+        status, body = self.request("POST", "/api/fans/channel", {"id": sid, "mode": "bios"})
+        self.assertEqual((status, body), (200, {"channels": []}))
+        self.assertEqual(config.Store(self.tmp.name).fan_channels().get(sid), {"mode": "bios"})
+
     def test_event_stream_skips_frames_that_did_not_change(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         conn.request("GET", "/api/stream?frames=1", headers={"Host": f"127.0.0.1:{self.port}"})

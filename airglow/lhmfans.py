@@ -3,8 +3,8 @@ pumps and fans of the coolers and fan hubs LHM supports, such as NZXT Kraken X3,
 and hubs, MSI CoreLiquid, Arctic and Razer fan controllers and the NZXT Grid+.
 
 LHM lists each one as a "Control" sensor and changes it through its web server (POST /Sensor?action=Set, LHM 0.8
-and later). Nothing is driven until you choose to: a channel is left alone (the BIOS or the cooler keeps its own
-curve), follows Airglow's fan curve, or holds a steady speed, which suits pumps. When Airglow quits, every channel it
+and later). After setup, detected spinning fans follow Airglow's curve. Pumps and channels without RPM evidence
+need an explicit choice. A saved BIOS choice leaves a channel alone; steady speed suits pumps. When Airglow quits, every channel it
 drove is handed back to its own control (value=null), so the BIOS curve takes over again.
 
 Graphics card fans are left out on purpose: they belong to the card, and a case curve would follow the wrong
@@ -22,7 +22,7 @@ import urllib.request
 
 log = logging.getLogger(__name__)
 
-MODES = ("curve", "steady")
+MODES = ("curve", "steady", "bios")
 MAX_CHANNELS = 32
 _PUMP = re.compile(r"pump", re.I)
 
@@ -45,7 +45,7 @@ def channels(flat):
 
 
 def validate(cfg):
-    """One channel's setting: {"mode": "curve"} or {"mode": "steady", "duty": 20..100}."""
+    """One channel's setting: curve, explicit BIOS ownership, or steady with duty 20..100."""
     from .config import MIN_FAN_DUTY
     if not isinstance(cfg, dict) or cfg.get("mode") not in MODES:
         raise ValueError("pick how this fan should run")

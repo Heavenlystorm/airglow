@@ -1,8 +1,10 @@
 import json
 import time
 import unittest
+from collections import namedtuple
 from unittest import mock
 from pathlib import Path
+from types import SimpleNamespace
 
 from airglow import sensors
 
@@ -32,11 +34,84 @@ class ParseRealDataTests(unittest.TestCase):
         self.assertEqual([f["name"] for f in self.s["fans"]], ["Board fan #2"])
         self.assertTrue(all(f["rpm"] > 0 for f in self.s["fans"]))
 
+    def test_quick_picks_preserve_legitimate_fixture_and_system_values(self):
+        readings = sensors.build(sensors.flatten(FIXTURE), {
+            "cpu_load": 99, "ram_load": 40, "ram_used": 12, "ram_total": 32,
+            "net_down": 1024, "net_up": 512, "disk_read": 4096, "disk_write": 2048,
+        })
+        expected = {
+            "cpu_temp": 40.4, "gpu_temp": 43, "gpu_hotspot": None, "liquid_temp": None,
+            "cpu_load": 10.8, "gpu_load": 5, "cpu_power": 51.4, "gpu_power": 56.3,
+            "total_power": 107.7, "cpu_clock": 4624, "gpu_clock": 2805, "vram_used": 1759,
+            "ram_load": 40, "ram_used": 12, "ram_temp": 33.8, "ssd_temp": None,
+            "net_down": 1024, "net_up": 512, "disk_read": 4096, "disk_write": 2048,
+        }
+        for key, value in expected.items():
+            with self.subTest(alias=key):
+                self.assertEqual(readings["auto/" + key]["value"], value)
+
+
+class SystemSensorAccuracyTests(unittest.TestCase):
+    def setUp(self):
+        # Only the OS reads and clock are replaced; exercise the real sampler across polls.
+        import psutil
+        vm = SimpleNamespace(total=32 * 1024 ** 3, available=20 * 1024 ** 3, percent=37.5,
+                             used=12 * 1024 ** 3, free=20 * 1024 ** 3)
+        self.patch = lambda name, **kw: self.enterContext(mock.patch.object(psutil, name, **kw))
+        self.patch("virtual_memory", return_value=vm)
+        self.patch("cpu_percent", return_value=0.0)
+        self.patch("net_io_counters", return_value=None)
+        self.patch("disk_io_counters", return_value=None)
+        self.enterContext(mock.patch.object(sensors.time, "monotonic", side_effect=range(1, 20)))
+        self.sampler = sensors.SystemSensors()
+
+    def test_first_cpu_sample_is_a_baseline_and_later_zero_is_valid(self):
+        first, second = self.sampler.read(), self.sampler.read()
+        self.assertNotIn("cpu_load", first)
+        self.assertEqual(second["cpu_load"], 0)
+        self.assertEqual(first["ram_used"], 12)
+
+    def test_missing_io_counters_are_not_reported_as_zero_throughput(self):
+        self.sampler.read()
+        result = self.sampler.read()
+        for key in ("net_down", "net_up", "disk_read", "disk_write"):
+            with self.subTest(key=key):
+                self.assertNotIn(key, result)
+
+    def test_returning_counters_need_a_new_baseline(self):
+        snetio = namedtuple("snetio", "bytes_sent bytes_recv packets_sent packets_recv errin errout dropin dropout")
+        sdiskio = namedtuple("sdiskio", "read_count write_count read_bytes write_bytes read_time write_time")
+        net = snetio(bytes_sent=1000, bytes_recv=2000, packets_sent=0, packets_recv=0,
+                     errin=0, errout=0, dropin=0, dropout=0)
+        disk = sdiskio(read_count=0, write_count=0, read_bytes=4000, write_bytes=8000,
+                      read_time=0, write_time=0)
+        self.patch("net_io_counters", side_effect=[net, None, net, net._replace(bytes_recv=2300, bytes_sent=1100)])
+        self.patch("disk_io_counters", side_effect=[disk, None, disk, disk._replace(read_bytes=4400, write_bytes=8000)])
+        self.sampler.read()
+        missing, returning, measured = self.sampler.read(), self.sampler.read(), self.sampler.read()
+        for key in ("net_down", "net_up", "disk_read", "disk_write"):
+            with self.subTest(key=key):
+                self.assertNotIn(key, missing)
+                self.assertNotIn(key, returning)
+        self.assertEqual({key: measured[key] for key in ("net_down", "net_up", "disk_read", "disk_write")},
+                         {"net_down": 300, "net_up": 100, "disk_read": 400, "disk_write": 0})
+
 
 class FormatTests(unittest.TestCase):
     def test_money_per_hour(self):
         self.assertEqual(sensors.fmt({"unit": "€/h"}, 0.123), "€0.12/h")
         self.assertEqual(sensors.fmt({"unit": "€/h"}, None), "n/a")
+
+
+    def test_binary_transfer_rates_use_iec_units(self):
+        for value, expected in ((512, "512 B/s"), (1024, "1.0 KiB/s"),
+                                (3 * 1024 ** 2, "3.0 MiB/s"), (2 * 1024 ** 3, "2.0 GiB/s")):
+            with self.subTest(value=value):
+                self.assertEqual(sensors.fmt({"unit": "B/s"}, value), expected)
+
+    def test_binary_memory_values_use_iec_units(self):
+        self.assertEqual(sensors.fmt({"unit": "MB"}, 2048), "2048 MiB")
+        self.assertEqual(sensors.fmt({"unit": "GB"}, 12.3), "12.3 GiB")
 
 
 class ParseEdgeCaseTests(unittest.TestCase):

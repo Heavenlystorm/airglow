@@ -13,9 +13,12 @@ const states = { healthy: "Healthy", pending: "Pending", failed: "Failed", stale
 
 export function statusRow(row) {
   if (!row) return "";
+  const unmanaged = row.state === "unmanaged";
+  const completion = unmanaged && row.age_seconds == null ? "No Airglow command requested" : formatAge(row.age_seconds);
   return `<li class="wb-status-row"><div class="wb-resource"><strong>${esc(row.label)}</strong><span>${esc(row.owner)}</span></div>
-    <span class="wb-state" data-state="${esc(row.state)}">${esc(states[row.state] || row.state)}</span>
-    <div class="wb-completion"><span>${esc(formatAge(row.age_seconds))}</span>${row.duration_ms == null ? "" : `<small>Operation ${esc(row.duration_ms)} ms</small>`}
+    <span class="wb-state" data-state="${esc(row.state)}">${esc(unmanaged && row.kind === "lhm-fan" ? "BIOS / device" : states[row.state] || row.state)}</span>
+    <div class="wb-completion"><span>${esc(completion)}</span>${row.duration_ms == null ? "" : `<small>Operation ${esc(row.duration_ms)} ms</small>`}
+    ${row.detail ? `<small>${esc(row.detail)}</small>` : ""}${row.action?.startsWith("#fans/") ? `<a href="${esc(row.action)}" data-control-link>Configure</a>` : ""}
     ${row.error ? `<small class="wb-error">${esc(row.error)}</small>` : ""}</div></li>`;
 }
 

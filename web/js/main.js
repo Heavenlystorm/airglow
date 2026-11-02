@@ -6,7 +6,7 @@ import { initAutomations, renderAutomations, pauseAutomations, sentence } from "
 import { openOnlineQuestion, openWelcome } from "./onboarding.js";
 import { renderTrial } from "./profiles.js";
 import { initOverview, onFrames, renderOverview } from "./overview.js";
-import { R, fmt, level, loadCatalog, pushReadings } from "./readings.js";
+import { R, fmt, level, loadCatalog, markReadingsStale, pushReadings, value } from "./readings.js";
 import { countTo, enter, moveMarker } from "./motion.js";
 import { initShortcuts } from "./help.js";
 import { startLive, sync as syncLive } from "./live.js";
@@ -63,7 +63,7 @@ async function route() {
   let m;
   try { m = await loadView(view); } catch (e) { fail(e); return; }
   if (seq !== routeSeq) return;
-  if (view === "fans") m.renderFans();
+  if (view === "fans") { m.renderFans(); if (arg) m.showFan?.(decodeURIComponent(arg)); }
   else if (view === "devices") { if (arg) m.showZone(decodeURIComponent(arg)); m.renderDevices(); }
   else if (view === "settings") m.loadSettings();
   else if (view === "lighting") m.renderLighting();
@@ -137,7 +137,7 @@ function renderPins() {
     box.innerHTML = pins.map((id) => `<span class="pin" data-pin="${esc(id)}">${esc(R.meta[id]?.short || "")} <b></b><i></i></span>`).join("");
   }
   for (const el of box.querySelectorAll("[data-pin]")) {
-    const id = el.dataset.pin, meta = R.meta[id], v = S.state.readings?.[id] ?? null;
+    const id = el.dataset.pin, meta = R.meta[id], v = value(id);
     const f = fmt(meta, v);
     const b = el.querySelector("b");
     b.className = level(id, meta, v);
@@ -322,7 +322,7 @@ async function applyState(state) {
 }
 
 function lost() {
-  if (connected) { connected = false; renderBar(); }
+  if (connected) { connected = false; markReadingsStale(); renderBar(); emit("state"); }
 }
 
 async function refresh() {
