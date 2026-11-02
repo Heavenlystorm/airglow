@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.13.0
 - Studio's heading, workflow and effect collections share one left edge at every window size.
 - Completed setup activates Airglow control for detected spinning motherboard and cooler fans. Explicit BIOS
   choices persist; pumps and headers without rotation evidence require a choice. Fan views distinguish requested
   speed, reported speed and uncertain connections, with direct links from Control center to each channel.
+  Older versions did not retain an explicit BIOS choice; select BIOS / device if you want a detected fan to stay
+  under its own controller instead of following Airglow's curve.
 - Sensor tiles identify their actual source. GPU hot spot, GPU load and package power no longer substitute
   unrelated readings; VRAM usage and capacity come from the same GPU. Combined power is labeled CPU + GPU power.
 - Graphs retain missing samples and brief outages, load history for large layouts, and preserve newer live points
