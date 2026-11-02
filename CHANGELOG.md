@@ -16,7 +16,8 @@
 - Failed saves stay visible with recovery actions. Conflicting writes are serialized, and delayed replies or stale
   retries cannot replace newer edits, reopen dismissed imports, or misreport an effect as applied.
 - Narrow windows get a visible selector for all seven sections, compact cooling readings and a corrected Studio
-  layer menu. Existing themes, saved Overview layouts and responsive scaling are retained.
+  layer menu. The theme chooser keeps keyboard focus after you move between controls. Existing themes, saved
+  Overview layouts and responsive scaling are retained.
 - Strengthened device-writer retirement and reconnect handling, profile/import rollback, shared atomic file writes,
   effect revocation tracking, updater concurrency, diagnostics redaction and local API request validation.
 - Added automated browser workflows to CI alongside expanded Python and JavaScript regression coverage. Hardware
