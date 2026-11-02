@@ -9,6 +9,47 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
 const flush = () => new Promise(setImmediate);
 const draftKey = "airglow.studio.unsaved.v1";
 
+async function themeFocusHarness() {
+  const timers = [], document = { activeElement: null };
+  const control = id => ({ dataset: { designCard: id }, addEventListener() {},
+    focus() { document.activeElement = this; } });
+  const graphite = control("graphite"), paper = control("paper"), done = control(null);
+  const sheet = {
+    querySelectorAll: () => [graphite, paper],
+    querySelector: selector => selector.includes("aria-checked") ? paper : graphite,
+  };
+  const context = vm.createContext({ document, setTimeout(fn) { timers.push(fn); } });
+  const source = readFileSync(new URL("../web/js/settings.js", import.meta.url), "utf8");
+  const imports = new Map([...source.matchAll(/import\s+\{([^}]+)\}\s+from\s+["']([^"']+)["']/g)]
+    .map(m => [m[2], m[1].split(",").map(name => name.trim())]));
+  const values = {
+    $: () => sheet, esc: String, S: {},
+    openSheet: () => { graphite.focus(); return sheet; },
+    currentDesign: () => "paper",
+    DESIGNS: [{ id: "graphite", name: "Graphite" }, { id: "paper", name: "Paper" }],
+  };
+  const module = new vm.SourceTextModule(source + "\nexport { designSheet };", { context });
+  await module.link(specifier => new vm.SyntheticModule(imports.get(specifier), function () {
+    for (const name of imports.get(specifier)) this.setExport(name, values[name] ?? (() => {}));
+  }, { context }));
+  await module.evaluate();
+  return { show: module.namespace.designSheet, document, paper, done, timers };
+}
+
+test("theme chooser focuses the selected design when the modal opens", async () => {
+  const h = await themeFocusHarness();
+  h.show();
+  assert.equal(h.document.activeElement, h.paper);
+});
+
+test("theme chooser cannot steal focus after the user moves to Done", async () => {
+  const h = await themeFocusHarness();
+  h.show();
+  h.done.focus();
+  for (const callback of h.timers) callback();
+  assert.equal(h.document.activeElement, h.done);
+});
+
 async function harness() {
   const elements = new Map(), storage = new Map(), requests = [], timers = new Map();
   let timer = 0, releaseStudio;

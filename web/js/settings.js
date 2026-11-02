@@ -121,7 +121,8 @@ function designSheet() {
   d.querySelectorAll("[data-design-card]").forEach((card) => {
     card.addEventListener("click", () => pickDesign(card.dataset.designCard));
   });
-  setTimeout(() => (d.querySelector('[aria-checked="true"]') || d.querySelector("[data-design-card]"))?.focus({ preventScroll: true }), 30);
+  // openSheet has already opened the modal; deferred focus can override the user's next keypress.
+  (d.querySelector('[aria-checked="true"]') || d.querySelector("[data-design-card]"))?.focus({ preventScroll: true });
 }
 
 export async function loadSettings() {

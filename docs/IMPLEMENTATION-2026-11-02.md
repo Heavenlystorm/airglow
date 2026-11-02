@@ -80,7 +80,9 @@ Rendered review also exposed a narrow Studio menu overlapping the preview becaus
 
 ## Verification
 
-The clean 1.12.0 release checkout, based on 1.11.2 and excluding unrelated analytics/media work, passed **667 Python tests, 81 JavaScript tests, all 11 browser workflows, 135 visual checks, responsive Overview checks, and 56 validation commands**. The standalone browser suite now waits for simulated fan discovery. Its Studio fault injection uses a context route and asserts the injected HTTP 500 before checking the error message, so delayed page-route cleanup cannot silently turn the failure scenario into a successful save. These release corrections change test setup only.
+The clean 1.12.0 release checkout is based on 1.11.2 and excludes unrelated analytics/media work. Its suite includes **667 Python tests, 83 JavaScript tests, 11 browser workflows, 135 visual checks, responsive Overview checks, and 56 validation commands**. The standalone browser suite now waits for simulated fan discovery. Its Studio fault injection uses a context route and asserts the injected HTTP 500 before checking the error message, so delayed page-route cleanup cannot silently turn the failure scenario into a successful save.
+
+The first GitHub CI run also exposed a theme-chooser focus race: its delayed initial focus could override keyboard navigation. Two deterministic regressions reproduced the problem; the chooser now focuses the selected design immediately after opening the modal. The release tag is gated on the corrected CI run.
 
 Original implementation-checkout results (including the already-present analytics tests):
 
