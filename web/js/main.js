@@ -1,6 +1,6 @@
 // Boot, routing, the 2-second state poll, and the top bar.
 
-import { $, $$, S, curveLabel, emit, esc, fail, get, on, post, setHTML, toast } from "./core.js";
+import { $, $$, S, curveLabel, emit, esc, fail, get, on, post, refreshZones, setHTML, toast } from "./core.js";
 import { initStage } from "./stage.js";
 import { initAutomations, renderAutomations, pauseAutomations, sentence } from "./automations.js";
 import { openOnlineQuestion, openWelcome } from "./onboarding.js";
@@ -256,11 +256,15 @@ async function applyState(state) {
   failsafeSeen = fs;
   pushSample();
   pushReadings(S.state.readings);
+  if (!R.loaded || R.lhm !== !!state.sensors?.online || R.revision !== state.catalog_rev) {
+    // Keep current readings on a failed enrichment; the next state retries and concurrent fetches coalesce.
+    loadCatalog().catch(() => {});
+  }
   // device list or connection changed: reload zones so the stage and Devices stay accurate
   const key = JSON.stringify([S.state.zones_rev, S.state.devices.map((d) => [d.id, d.online, d.zones.length])]);
   if (key !== deviceKey) {
     try {
-      S.zones = await get("/api/zones");
+      await refreshZones();
       deviceKey = key;               // only once they arrived: a failed fetch is tried again with the next state
       emit("zones");
     } catch {
@@ -280,6 +284,7 @@ async function refresh() {
   try { await applyState(await get("/api/state")); } catch { lost(); }
 }
 on("refresh", refresh);
+on("catalog", () => { if (S.state) { renderBar(); emit("state"); } });
 on("pins", () => { $("#ambient")._key = null; refresh(); });
 on("frames", onFrames);
 
@@ -287,7 +292,7 @@ async function boot() {
   try {
     const [state, effects, presets, curves, settings, rules, zones, history, overview] = await Promise.all([
       get("/api/state"), get("/api/effects"), get("/api/presets"), get("/api/curves"), get("/api/settings"),
-      get("/api/automations"), get("/api/zones"), get("/api/history"), get("/api/overview"), loadCatalog(),
+      get("/api/automations"), refreshZones(), get("/api/history"), get("/api/overview"), loadCatalog(),
     ]);
     Object.assign(S, { state, effects, presets, curves, settings, rules, zones, overview });
     applyDesign(S.settings?.settings?.design);

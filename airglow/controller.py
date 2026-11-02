@@ -42,12 +42,16 @@ class Controller:
         self._read_sensors = read_sensors        # tests pass a summary; normally the full LHM tree is read
         self._read_flat = read_flat              # tests: LHM's sensors as sensors.flatten() gives them
         self._flat = []                          # the last LHM sensor list (fan channels come from it)
-        self.lhm = sensors.LhmPoller(lambda: store.settings()["lhm_url"], tools.lhm_headers)
+        self._sensor_ready = threading.Event()
+        self.lhm = sensors.LhmPoller(lambda: store.settings()["lhm_url"], tools.lhm_headers,
+                                     on_change=self._sensor_ready.set)
         self.lhm_fans = lhm_fans or lhmfans.LhmFans(lambda: store.settings()["lhm_url"], tools.lhm_headers)
         self.fan_channels = []                   # what LHM can drive, with what Airglow does with each
         self._system = sensors.SystemSensors()
         self.sensors = dict(sensors.OFFLINE)
         self.readings = {}                        # every sensor by id: {name, group, kind, unit, value}
+        self.catalog_rev = 0
+        self._catalog_key = ()
         self.readings_history = SensorHistory(self.HISTORY)
         self.engine = Engine(self.manager, store, sensors=lambda: self.sensors, async_writes=async_writes)
         self.automations = automation.Automations(store, signals or system.snapshot, lambda: self.sensors)
@@ -484,7 +488,7 @@ class Controller:
         watts = self.sensors.get("total_power")
         if watts is None:                       # some LHM builds only report the two halves
             parts = [self.sensors.get("cpu_power"), self.sensors.get("gpu_power")]
-            watts = round(sum(p for p in parts if p is not None), 1) if any(p is not None for p in parts) else None
+            watts = round(sum(parts), 1) if all(p is not None for p in parts) else None
         price = self.store.settings().get("energy_price") or 0.0
         cost = round(watts / 1000 * price, 3) if watts is not None else None
         cost_meta = sensors._meta("app/energy_cost", "Cost per hour", "Quick picks", "cost", "€/h", cost, short="Cost")
@@ -500,6 +504,10 @@ class Controller:
 
     def _update_readings(self, flat):
         self.readings = sensors.build(flat, self._system.read(), self._app_readings())
+        key = tuple((k, m["name"], m["unit"], m.get("source"), m.get("max")) for k, m in self.readings.items())
+        if key != self._catalog_key:
+            self._catalog_key = key
+            self.catalog_rev += 1
         self.readings_history.add(time.time(), {k: m["value"] for k, m in self.readings.items()})
 
     def readings_for(self, ids):
@@ -558,7 +566,20 @@ class Controller:
                     log.exception("controller tick failed (%d in a row)", failures)
                     if failures >= 5:
                         self.failsafe()
-                self._stop.wait(self.TICK)
+                deadline = time.monotonic() + self.TICK
+                while not self._stop.is_set():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    if self._sensor_ready.wait(remaining):
+                        self._sensor_ready.clear()
+                        if self._stop.is_set():
+                            break
+                        try:
+                            # Publish first/recovered identity now, without changing fan ramp or automation cadence.
+                            self._update_readings(self._poll_sensors())
+                        except Exception:
+                            log.exception("publishing sensor availability failed")
         finally:
             if not self._stop.is_set():
                 log.error("controller loop stopped unexpectedly; fans set to failsafe")
@@ -578,12 +599,11 @@ class Controller:
 
     def start(self):
         threading.Thread(target=self._warm_up_inputs, name="warm-up", daemon=True).start()
-        self.manager.maintain(self.store.openrgb_enabled(), force=True)
-        self.manager.start(self.store.openrgb_enabled)
         self.store.ensure_zones([d.info() for d in self.manager.all().values()])
         self._apply_device_params()
         if not self._read_sensors:
             self.lhm.start()
+        self.manager.start(self.store.openrgb_enabled)
         self.engine.start()
         if self._power:
             self._power.start()
@@ -598,6 +618,7 @@ class Controller:
         if self._stop.is_set():
             return
         self._stop.set()
+        self._sensor_ready.set()
         try:
             self.end_trial()
         except Exception:
@@ -642,6 +663,7 @@ class Controller:
                      "hub_online": bool(fan_devs),
                      "channels": self.fan_channels},
             "sensors": self.sensors,
+            "catalog_rev": self.catalog_rev,
             "devices": devs,
             "openrgb": {"enabled": self.store.openrgb_enabled(), "status": self.manager.bridge.status,
                         "connected": bool(self.manager.bridge.client.connected),

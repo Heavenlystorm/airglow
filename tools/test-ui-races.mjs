@@ -8,6 +8,180 @@ import vm from "node:vm";
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(setImmediate);
 
+test("sensor catalog refreshes coalesce and carry the server identity revision", async () => {
+  const h = await harness("readings", []);
+  const first = h.loadCatalog(), second = h.loadCatalog();
+  assert.equal(h.requests.length, 1);
+  h.requests[0].resolve({ sensors: [{ id: "cpu", value: 40, source: "New CPU" }], lhm_online: true, revision: 7 });
+  await Promise.all([first, second]);
+  assert.equal(h.R.revision, 7);
+  assert.equal(h.R.meta.cpu.source, "New CPU");
+  const retry = h.loadCatalog();
+  h.requests[1].reject(new Error("offline"));
+  await assert.rejects(retry, /offline/);
+  assert.equal(h.R.revision, 7);
+  assert.equal(h.R.meta.cpu.source, "New CPU");
+});
+
+test("manual zone saves serialize accumulated edits across a delayed response", async () => {
+  const h = await harness("devices", ["saveZone"]);
+  const cfg = { name: "Strip", enabled: true, order: "RGB", layout: { shape: "strip", leds: 4, reverse: false } };
+  const zone = { key: "d/z", config: cfg, device: { id: "d", name: "Device", kind: "native", online: true },
+    zone: { id: "z", max_leds: 16, default_leds: 4 } };
+  h.core.S.zones = { zones: [zone] };
+  h.core.S.state = { openrgb: {} };
+  const first = h.saveZone("d/z", c => { c.order = "GRB"; });
+  const second = h.saveZone("d/z", c => { c.layout.reverse = true; });
+  await tick();
+  assert.equal(h.requests.length, 1);
+  h.requests[0].resolve({ config: h.requests[0].body });
+  await tick();
+  h.requests[1].resolve({ zones: [{ ...zone, config: h.requests[0].body }] });
+  await first;
+  await tick();
+  assert.equal(h.requests[2].body.order, "GRB");
+  assert.equal(h.requests[2].body.layout.reverse, true);
+  h.requests[2].resolve({ config: h.requests[2].body });
+  await tick();
+  h.requests[3].resolve({ zones: [{ ...zone, config: h.requests[2].body }] });
+  await second;
+  assert.equal(h.core.S.zones.zones[0].config.order, "GRB");
+  assert.equal(h.core.S.zones.zones[0].config.layout.reverse, true);
+});
+
+test("selected zone rotation handles are above every other zone hit area", async () => {
+  const h = await harness("stage", ["st"]);
+  h.st.selected = "d/a";
+  h.st.arranging = true;
+  h.core.S.zones = { zones: ["a", "b"].map(id => ({ key: `d/${id}`, device: { online: true, name: "Hub" },
+    positions: [[0, 0]], config: { name: id, enabled: true,
+      layout: { shape: "fans", x: 0.2, y: 0.4, angle: 90, fans: 1, leds_per_fan: 8, size: 0.16 } } })) };
+  h.renderOverlay();
+  const html = h.element("#stage-svg").innerHTML;
+  assert.ok(html.indexOf('data-rot="d/a"') > html.indexOf('data-key="d/b"'));
+});
+
+test("welcome waits for persistence, retains the dialog on failure and permits retry", async () => {
+  const h = await harness("onboarding", []);
+  h.core.S.state = { sensors: { online: false }, devices: [], setup_pending: 0 };
+  h.core.S.settings = { settings: { online_checks: false } };
+  h.element("#onb-online").checked = true;
+  h.openWelcome();
+  const click = h.element("#onb-start").events.get("click");
+  const first = click();
+  await tick();
+  assert.equal(h.requests.length, 1, "save the consent choice before marking onboarding complete");
+  h.requests[0].resolve({ settings: { online_checks: true } });
+  await tick();
+  assert.equal(h.requests[1].path, "/api/onboarded");
+  h.requests[1].reject(new Error("disk full"));
+  await first;
+  assert.equal(h.errors[0].message, "disk full");
+  assert.equal(h.element("#sheet").open, true);
+  const retry = click();
+  await tick();
+  h.requests[2].resolve({ settings: { online_checks: true } });
+  await tick();
+  h.requests[3].resolve({ ok: true });
+  await retry;
+  assert.equal(h.element("#sheet").open, false);
+});
+
+test("setup completion reports pending lights instead of unconditional success", async () => {
+  const h = await harness("setup", ["finished", "G"]);
+  h.G.skipped = 2;
+  const finish = h.finished();
+  assert.equal(h.requests[0]?.path, "/api/state");
+  h.requests[0].resolve({ setup_pending: 2 });
+  await finish;
+  const html = h.element("#sheet").innerHTML;
+  assert.ok(html.includes("2 lights still need setup"));
+  assert.ok(!html.includes("Your lights are set up"));
+});
+
+test("setup completion distinguishes verified success, skipped work and a failed verification", async () => {
+  for (const [skipped, response, expected] of [
+    [0, { setup_pending: 0 }, "Your lights are set up"],
+    [1, { setup_pending: 0 }, "You skipped some steps"],
+    [0, new Error("state unavailable"), "couldn't check what remains"],
+  ]) {
+    const h = await harness("setup", ["finished", "G"]);
+    h.G.skipped = skipped;
+    const pending = h.finished();
+    if (response instanceof Error) h.requests[0].reject(response);
+    else h.requests[0].resolve(response);
+    await pending;
+    assert.ok(h.element("#sheet").innerHTML.includes(expected));
+    if (skipped || response instanceof Error) assert.ok(!h.element("#sheet").innerHTML.includes("Your lights are set up"));
+  }
+});
+
+test("welcome discovery retains the busy conflict control so failed requests remain retriable", async () => {
+  const h = await harness("onboarding", ["renderWelcomeStatus"]);
+  h.core.S.state = { sensors: { online: false }, devices: [], setup_pending: 0,
+    conflicts: [{ name: "RGB app", conflicts_with: "controller" }] };
+  const button = { dataset: { closeApp: "RGB app" }, disabled: false,
+    focus() { h.document.activeElement = this; } };
+  let visible = button;
+  const status = h.element("#onb-status");
+  status.querySelectorAll = () => [visible];
+  Object.defineProperty(status, "innerHTML", { set() {
+    visible = { dataset: { closeApp: "RGB app" }, disabled: false,
+      replaceWith(retained) { visible = retained; }, focus() { h.document.activeElement = this; } };
+  } });
+  button.focus();
+  const pending = h.closeConflict(button);
+  h.renderWelcomeStatus();
+  assert.equal(visible, button);
+  assert.equal(h.document.activeElement, button);
+  assert.equal(visible.disabled, true);
+  h.requests[0].reject(new Error("close denied"));
+  await pending;
+  assert.equal(visible.disabled, false);
+});
+
+test("probe errors are visible, renewal does not spam and recovery clears the error", async () => {
+  const h = await harness("setup", ["probe", "G"]);
+  h.probe(["d/z"], "blink");
+  h.requests[0].reject(new Error("unplugged"));
+  await tick();
+  assert.equal(h.errors.length, 1);
+  assert.match(h.G.probe.error, /unplugged/);
+  h.fire(5000);
+  h.requests[1].reject(new Error("unplugged"));
+  await tick();
+  assert.equal(h.errors.length, 1);
+  h.document.events.get("click")({ target: { closest: () => true } });
+  h.requests[2].resolve({ ok: true });
+  await tick();
+  assert.equal(h.G.probe.error, "");
+});
+
+test("probe renewal cannot overlap a pending attempt and the latest count is not lost", async () => {
+  const h = await harness("setup", ["probe", "probeCount", "G"]);
+  h.probe(["d/z"], "count", 1);
+  h.fire(5000);
+  assert.equal(h.requests.length, 1);
+  h.probeCount(3);
+  h.fire(60);
+  assert.equal(h.requests.length, 1);
+  h.requests[0].resolve({ ok: true });
+  await tick();
+  assert.equal(h.requests[1].body.n, 3);
+  h.requests[1].resolve({ ok: true });
+  await tick();
+});
+
+test("an older full zones response cannot replace a newer acknowledged snapshot", async () => {
+  const h = await harness("core", []);
+  const a = h.refreshZones(), b = h.refreshZones();
+  h.requests[1].resolve({ zones: [{ key: "b", config: { reverse: true } }] });
+  await b;
+  h.requests[0].resolve({ zones: [{ key: "b", config: { reverse: false } }] });
+  await a;
+  assert.equal(h.S.zones.zones[0].config.reverse, true);
+});
+
 async function harness(file, exports) {
   const source = readFileSync(new URL(`../web/js/${file}.js`, import.meta.url), "utf8");
   const timers = new Map(), requests = [], errors = [], paints = [], storage = new Map(), elements = new Map();
@@ -16,13 +190,17 @@ async function harness(file, exports) {
     if (!elements.has(id)) elements.set(id, {
       events: new Map(), open: true, classList: { toggle() {} },
       addEventListener(type, fn) { this.events.set(type, fn); },
+      setAttribute() {}, querySelectorAll() { return []; }, focus() {},
+      removeEventListener(type, fn) { if (this.events.get(type) === fn) this.events.delete(type); },
     });
     return elements.get(id);
   };
   const document = { visibilityState: "visible", events: new Map(),
     addEventListener(type, fn) { this.events.set(type, fn); } };
   const context = vm.createContext({
-    document, window: {}, structuredClone, performance: { now: () => 0 },
+    document, window: {}, structuredClone, AbortController, performance: { now: () => 0 },
+    fetch(path, options) { return new Promise((resolve, reject) => requests.push({ path, method: options.method,
+      reject, resolve: body => resolve({ ok: true, json: async () => body }) })); },
     location: { hash: "#studio/edit" }, history: { replaceState() {} },
     localStorage: { getItem: (k) => storage.get(k), setItem: (k, v) => storage.set(k, v), removeItem: (k) => storage.delete(k) },
     sessionStorage: { getItem: () => null }, cancelAnimationFrame() {},
@@ -36,10 +214,11 @@ async function harness(file, exports) {
     requests.push(r);
   });
   const core = {
-    S: { state: null, effects: [], presets: [], rules: [] }, $: element, $$: () => [],
-    emit() {}, on() {}, toast() {}, coalesce: (fn) => fn, fail: (error) => errors.push(error),
+    S: { state: null, effects: [], presets: [], rules: [] }, $: element, $$: () => [], esc: String,
+    emit() {}, on() {}, toast() {}, setHTML(el, html) { el.innerHTML = html; }, coalesce: (fn) => fn, fail: (error) => errors.push(error),
     post: (path, body) => request("POST", path, body),
     get: (path) => path === "/api/effects" ? Promise.resolve([]) : request("GET", path),
+    refreshZones: () => request("GET", "/api/zones").then(z => { core.S.zones = z; return z; }),
   };
   const imports = new Map([...source.matchAll(/import\s+\{([^}]+)\}\s+from\s+["']([^"']+)["']/g)]
     .map((m) => [m[2], m[1].split(",").map((name) => name.trim())]));
@@ -47,6 +226,8 @@ async function harness(file, exports) {
   await module.link((specifier) => new vm.SyntheticModule(imports.get(specifier), function () {
     for (const name of imports.get(specifier)) {
       const value = specifier === "./core.js" && name in core ? core[name]
+        : name === "closeSheet" ? () => { element("#sheet").open = false; }
+        : name === "openSheet" ? (html) => { element("#sheet").innerHTML = html; element("#sheet").open = true; }
         : name === "paintMini" ? (canvas, zones) => paints.push({ canvas, zones }) : () => {};
       this.setExport(name, value);
     }

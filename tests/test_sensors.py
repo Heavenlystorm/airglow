@@ -1,6 +1,7 @@
 import json
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from airglow import sensors
@@ -65,7 +66,31 @@ class LhmPollerTests(unittest.TestCase):
             return replies.pop(0) if replies else None
         p = sensors.LhmPoller(lambda: "http://127.0.0.1:8085", read=read)
         p.INTERVAL, p.OFFLINE_RETRY = 0.02, 0.5
+        p.STARTUP_WINDOW = 0                         # these tests cover steady-state retry
         return p, calls
+
+    def test_startup_retries_back_off_and_stop_at_the_normal_limit(self):
+        p = sensors.LhmPoller(lambda: "fixture", read=lambda *a, **kw: None)
+        delays, clock = [], [0.0]
+        def wait(delay):
+            delays.append(delay)
+            clock[0] += delay
+            if len(delays) == 10:
+                p._stop.set()
+        p._wake.wait = wait
+        with mock.patch.object(sensors.time, "monotonic", side_effect=lambda: clock[0]):
+            p._run()
+        self.assertEqual(delays[:5], [0.25, 0.5, 1, 2, 4])
+        self.assertEqual(delays[-1], p.OFFLINE_RETRY)
+        self.assertLessEqual(max(delays), p.OFFLINE_RETRY)
+
+    def test_availability_changes_notify_without_notifying_every_value(self):
+        callback = mock.Mock()
+        replies = [None, {"Children": []}, {"Children": []}, None]
+        p = sensors.LhmPoller(lambda: "fixture", read=lambda *a, **kw: replies.pop(0), on_change=callback)
+        for _ in range(4):
+            p.poll()
+        self.assertEqual(callback.call_count, 2)
 
     def test_offline_lhm_is_retried_slowly(self):
         p, calls = self.poller([])

@@ -128,6 +128,14 @@ class ResetTests(unittest.TestCase):
         self.assertTrue(self.manager._reset_wanted.is_set())
         self.assertEqual(self.dev.opens, 0)                         # nothing happens on the caller's thread
 
+    def test_a_reset_queued_before_close_cannot_reopen_devices(self):
+        import threading
+        self.manager._stop = threading.Event()
+        self.manager.close()
+        self.assertFalse(self.manager.reset(True))
+        self.manager.maintain(True, force=True)
+        self.assertEqual(self.dev.opens, 0)
+
     def test_read_on_closed_hid_device_is_a_device_error(self):
         hub = devices.NzxtControlHub(backend=FakeHidBackend())
         with self.assertRaises(devices.DeviceError):

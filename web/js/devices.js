@@ -1,12 +1,13 @@
 // Devices screen: every device and its zones (LED counts, shape, colour order, identify), and OpenRGB setup.
 
-import { $, $$, S, emit, esc, fail, get, on, post, setHTML, toast } from "./core.js";
+import { $, $$, S, emit, esc, fail, on, post, refreshZones, setHTML, toast } from "./core.js";
 import { fieldHTML, wireFields } from "./lighting.js";
 
 let current = null;              // selected device id, or "openrgb"
 let frames = {};
 
 const ORDERS = ["RGB", "RBG", "BGR", "BRG", "GBR", "GRB"];
+const zoneSaves = new Map();
 
 function devices() {
   const byId = new Map();
@@ -40,7 +41,7 @@ function renderList() {
 }
 
 function zoneCard(z) {
-  const c = z.config, L = c.layout, max = z.zone.max_leds;
+  const c = zoneSaves.get(z.key)?.draft || z.config, L = c.layout, max = z.zone.max_leds;
   const total = L.shape === "fans" ? L.fans * L.leds_per_fan : L.leds;
   const grid = z.zone.matrix;
   return `<div class="zone-card${c.enabled ? "" : " off"}" id="zc-${esc(z.key)}" data-key="${esc(z.key)}">
@@ -116,17 +117,27 @@ function wireParams(d) {
   });
 }
 
-async function saveZone(key, mutate) {
+function saveZone(key, mutate) {
   const z = S.zones.zones.find((x) => x.key === key);
-  const cfg = structuredClone(z.config);
-  mutate(cfg);
-  try {
-    const r = await post(`/api/zones/${encodeURIComponent(key)}`, cfg);
-    z.config = r.config;
-    S.zones = await get("/api/zones");
-    emit("zones");
-    renderList(); renderDetail();
-  } catch (err) { fail(err); renderDetail(); }
+  if (!z) { fail(new Error("That zone isn't connected right now.")); return Promise.resolve(); }
+  const queue = zoneSaves.get(key) || { draft: structuredClone(z.config), revision: 0, tail: Promise.resolve() };
+  zoneSaves.set(key, queue);
+  mutate(queue.draft);
+  const snapshot = structuredClone(queue.draft), revision = ++queue.revision;
+  queue.tail = queue.tail.then(async () => {
+    try {
+      const r = await post(`/api/zones/${encodeURIComponent(key)}`, snapshot);
+      const current = S.zones.zones.find((x) => x.key === key);
+      if (current) current.config = r.config;
+      await refreshZones();
+      emit("zones");
+    } catch (err) { fail(err); }
+    finally {
+      if (revision === queue.revision) zoneSaves.delete(key);
+      renderList(); renderDetail();
+    }
+  });
+  return queue.tail;
 }
 
 function paintStrips() {

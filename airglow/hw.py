@@ -401,6 +401,8 @@ class DeviceManager:
     def maintain(self, openrgb_enabled, force=False):
         """Open/reconnect devices. Called from the device housekeeping thread (and once at start)."""
         with self._maintain_lock:
+            if getattr(self, "_stop", None) and self._stop.is_set():
+                return
             self._maintain(openrgb_enabled, force)
 
     def _maintain(self, openrgb_enabled, force):
@@ -435,14 +437,16 @@ class DeviceManager:
         self._stop = threading.Event()
 
         def loop():
+            first = True
             while not self._stop.is_set():
                 try:
                     if self._reset_wanted.is_set():
                         self._reset_wanted.clear()
                         self.reset(openrgb_enabled())
-                    self.maintain(openrgb_enabled())
+                    self.maintain(openrgb_enabled(), force=first)
                 except Exception:
                     log.exception("device housekeeping failed")
+                first = False
                 self._stop.wait(1.0)
 
         threading.Thread(target=loop, name="devices", daemon=True).start()
@@ -454,6 +458,8 @@ class DeviceManager:
     def reset(self, openrgb_enabled):
         """After sleep: reopen everything. Repeat calls within a few seconds are ignored."""
         with self._maintain_lock:
+            if getattr(self, "_stop", None) and self._stop.is_set():
+                return False
             now = time.monotonic()
             if self._last_reset is not None and now - self._last_reset < self.RESET_DEBOUNCE:
                 log.debug("device reset skipped (one ran %.1f s ago)", now - self._last_reset)
@@ -469,6 +475,7 @@ class DeviceManager:
     def close(self):
         if getattr(self, "_stop", None):
             self._stop.set()
-        for d in self.natives.values():
-            d.close()
-        self.bridge.client.close()
+        with self._maintain_lock:
+            for d in self.natives.values():
+                d.close()
+            self.bridge.client.close()

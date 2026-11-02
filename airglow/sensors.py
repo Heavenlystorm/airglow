@@ -337,29 +337,47 @@ class LhmPoller:
 
     INTERVAL = 2.0
     OFFLINE_RETRY = 12.0
+    STARTUP_RETRY = 0.25
+    STARTUP_WINDOW = 45.0
 
-    def __init__(self, url, headers=lambda: None, read=None):
+    def __init__(self, url, headers=lambda: None, read=None, on_change=lambda: None):
         self._url, self._headers, self._read = url, headers, read or read_tree
+        self._on_change = on_change
         self.tree = None                     # the latest tree, or None while LHM isn't answering
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread = None
 
     def poll(self):
+        was_online = self.tree is not None
         try:
             self.tree = self._read(self._url(), headers=self._headers())
         except Exception:                    # a bad address or a bug here must not end the thread
             logging.getLogger(__name__).exception("reading LibreHardwareMonitor failed")
             self.tree = None
+        if was_online != (self.tree is not None):
+            try:
+                self._on_change()
+            except Exception:
+                logging.getLogger(__name__).exception("reporting sensor availability failed")
         return self.tree
 
     def wake(self):
         self._wake.set()
 
     def _run(self):
+        started, retry, seen_online = time.monotonic(), self.STARTUP_RETRY, False
         while not self._stop.is_set():
             tree = self.poll()
-            self._wake.wait(self.INTERVAL if tree is not None else self.OFFLINE_RETRY)
+            if tree is not None:
+                seen_online = True
+                delay = self.INTERVAL
+            elif not seen_online and time.monotonic() - started < self.STARTUP_WINDOW:
+                delay = min(retry, self.OFFLINE_RETRY)
+                retry = min(retry * 2, self.OFFLINE_RETRY)
+            else:
+                delay = self.OFFLINE_RETRY
+            self._wake.wait(delay)
             self._wake.clear()
 
     def start(self):

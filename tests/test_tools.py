@@ -508,6 +508,66 @@ class SetupFlowTests(unittest.TestCase):
         self.assertFalse(tools.auth_file().exists())
         self.assertEqual(self.store.settings()["lhm_url"], config.DEFAULT_CONFIG["lhm_url"])
 
+    def test_cancelled_setup_restores_only_its_openrgb_detector_changes(self):
+        detector = "Our controller"
+        self.ctrl.manager.natives = {"hub": SimpleNamespace(lighting=True,
+                                                          product=SimpleNamespace(openrgb_detector=detector))}
+        path = self.data / "OpenRGB.json"
+        original = {"Detectors": {"detectors": {detector: True, "Other": True}}, "theme": "dark"}
+        for concurrent in (False, True):
+            with self.subTest(concurrent=concurrent):
+                path.write_text(json.dumps(original), encoding="utf-8")
+                def cancel(args):
+                    current = json.loads(path.read_text(encoding="utf-8"))
+                    self.assertFalse(current["Detectors"]["detectors"][detector])
+                    if concurrent:
+                        current["theme"] = "light"
+                        current["Detectors"]["detectors"]["New controller"] = True
+                        path.write_text(json.dumps(current), encoding="utf-8")
+                    return None
+                with mock.patch.object(tools, "run_elevated", side_effect=cancel):
+                    tools.start_setup(self.ctrl, self.store, ["openrgb"])
+                    self.assertEqual(self.wait()["state"], "cancelled")
+                expected = json.loads(json.dumps(original))
+                if concurrent:
+                    expected["theme"] = "light"
+                    expected["Detectors"]["detectors"]["New controller"] = True
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")), expected)
+
+    def test_cancelled_setup_removes_the_openrgb_file_it_created(self):
+        self.ctrl.manager.natives = {"hub": SimpleNamespace(lighting=True,
+                                      product=SimpleNamespace(openrgb_detector="Our controller"))}
+        with mock.patch.object(tools, "run_elevated", return_value=None):
+            tools.start_setup(self.ctrl, self.store, ["openrgb"])
+            self.assertEqual(self.wait()["state"], "cancelled")
+        self.assertFalse((self.data / "OpenRGB.json").exists())
+
+    def test_cancelled_setup_uses_the_preimage_from_the_detector_write(self):
+        self.ctrl.manager.natives = {"hub": SimpleNamespace(lighting=True,
+                                      product=SimpleNamespace(openrgb_detector="Our controller"))}
+        path = self.data / "OpenRGB.json"
+        path.write_text(json.dumps({"theme": "before"}), encoding="utf-8")
+        original = tools.disable_openrgb_detectors
+        def concurrent_edit(*args, **kwargs):
+            path.write_text(json.dumps({"theme": "concurrent", "Detectors": {"detectors": {"Other": True}}}),
+                            encoding="utf-8")
+            return original(*args, **kwargs)
+        with mock.patch.object(tools, "disable_openrgb_detectors", side_effect=concurrent_edit), \
+             mock.patch.object(tools, "run_elevated", return_value=None):
+            tools.start_setup(self.ctrl, self.store, ["openrgb"])
+            self.assertEqual(self.wait()["state"], "cancelled")
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")),
+                         {"theme": "concurrent", "Detectors": {"detectors": {"Other": True}}})
+
+    def test_failed_elevation_launch_restores_preparation(self):
+        self.ctrl.manager.natives = {"hub": SimpleNamespace(lighting=True,
+                                      product=SimpleNamespace(openrgb_detector="Our controller"))}
+        with mock.patch.object(tools, "run_elevated", side_effect=tools.ElevationError("couldn't start")):
+            tools.start_setup(self.ctrl, self.store)
+            self.assertEqual(self.wait()["state"], "failed")
+        self.assertFalse((self.data / "OpenRGB.json").exists())
+        self.assertFalse(tools.auth_file().exists())
+
     def test_a_failed_elevated_step_is_reported(self):
         def failing(args):
             Path(args[1]).with_name("setup-result.json").write_text(json.dumps({"ok": False, "error": "disk full"}),

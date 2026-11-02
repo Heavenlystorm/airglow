@@ -2,11 +2,11 @@
 // product doesn't say) and where it sits in the case. Built-in lights (graphics card, board, RAM, keyboard) only
 // need the last step. Answers become ordinary zone settings, so Arrange and the Devices tab keep working as before.
 
-import { $, $$, S, emit, esc, fail, get, post } from "./core.js";
+import { $, $$, S, emit, esc, fail, get, post, refreshZones, setHTML } from "./core.js";
 import { closeSheet, openSheet } from "./sheet.js";
 import { placing } from "./stage.js";
 
-const G = { data: null, tasks: [], queue: [], task: null, step: null, back: [], a: {}, probe: null, timer: null, done: 0 };
+const G = { data: null, tasks: [], queue: [], task: null, step: null, back: [], a: {}, probe: null, timer: null, done: 0, skipped: 0 };
 const PROBE_RENEW = 5000;          // the server drops a probe after 15 s without news, so the lights never stay white
 
 // ------------------------------------------------------------ drawn icons
@@ -40,21 +40,52 @@ function deviceIcon(dev, zones) {
 }
 
 // ------------------------------------------------------------ probing (the lights you're looking at)
+function paintProbeStatus() {
+  const el = $(G.docked ? "#guide-dock [data-probe-status]" : "#sheet [data-probe-status]");
+  if (!el) return;
+  const error = G.probe?.error;
+  el.hidden = !error;
+  if (error) setHTML(el, `Couldn't blink the lights: ${esc(error)} Check the device connection.
+    <button type="button" class="btn quiet" data-probe-retry>Try again</button>`);
+}
+
+function sendProbe(p) {
+  if (!p || G.probe !== p) return Promise.resolve();
+  if (p.sending) return p.sending;
+  const n = p.n;
+  p.sending = Promise.all(p.keys.map((zone) => post("/api/setup/probe", { zone, mode: p.mode, n })))
+    .then(() => { if (G.probe === p) { p.error = ""; paintProbeStatus(); } })
+    .catch((err) => {
+      if (G.probe !== p) return;
+      if (p.error !== err.message) fail(err);
+      p.error = err.message;
+      paintProbeStatus();
+    }).finally(() => {
+      p.sending = null;
+      if (G.probe === p && p.n !== n) sendProbe(p);
+    });
+  return p.sending;
+}
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-probe-retry]")) sendProbe(G.probe);
+});
+
 function probe(keys, mode, n = 0) {
   stopProbe(keys);
-  G.probe = { keys, mode, n };
-  const send = () => G.probe && Promise.all(G.probe.keys.map((zone) => post("/api/setup/probe", { zone, mode: G.probe.mode, n: G.probe.n }))).catch(() => {});
-  send();
-  G.timer = setInterval(send, PROBE_RENEW);
+  const p = G.probe = { keys, mode, n, error: "" };
+  sendProbe(p);
+  G.timer = setInterval(() => sendProbe(p), PROBE_RENEW);
 }
 let countTimer = null;
 function probeCount(n) {                      // slider moves: send at most every 60 ms
   if (!G.probe) return;
   G.probe.n = n;
   clearTimeout(countTimer);
-  countTimer = setTimeout(() => post("/api/setup/probe", { zone: G.probe.keys[0], mode: "count", n }).catch(() => {}), 60);
+  const p = G.probe;
+  countTimer = setTimeout(() => sendProbe(p), 60);
 }
 function stopProbe(except = []) {
+  clearTimeout(countTimer);
   clearInterval(G.timer);
   G.timer = null;
   const p = G.probe;
@@ -128,10 +159,12 @@ function frame({ title, lede = "", body = "", back = true, primary = "", seconda
   openSheet(`<div class="body wide setup">
     ${topHTML()}
     <div><h2>${title}</h2>${lede ? `<p class="lede" style="margin-top:6px">${lede}</p>` : ""}</div>
+    <p class="hint" data-probe-status role="alert" hidden></p>
     ${body}
     <div class="actions">${back ? `<button class="btn quiet" id="su-back">Back</button>` : ""}<span class="spacer"></span>${secondary}${primary}</div>
   </div>`);
   $("#su-back")?.addEventListener("click", goBack);
+  paintProbeStatus();
   ($("#sheet [data-autofocus]") || $("#sheet .btn.primary"))?.focus();
 }
 
@@ -192,6 +225,12 @@ function coolerNote() {
 function run(list) {
   G.queue = [...list];
   G.total = list.length;
+  G.skipped = 0;
+  next();
+}
+
+function skipTask() {
+  G.skipped++;
   next();
 }
 
@@ -206,13 +245,25 @@ function next() {
   else go("blink");
 }
 
-function finished() {
+async function finished() {
   stopProbe();
+  openSheet(`<div class="body" id="su-checking"><h2>Checking your setup</h2>
+    <p role="status">Checking which lights still need setup…</p><button class="btn quiet" data-close>Close</button></div>`);
+  const checking = $("#su-checking"), sheet = $("#sheet");
+  let remaining = null;
+  try { remaining = (await get("/api/state")).setup_pending; } catch (err) { fail(err); }
+  if (!sheet.open || $("#su-checking") !== checking) return;
   G.done += G.total;
+  const complete = remaining === 0 && G.skipped === 0;
+  const message = complete
+    ? "Effects now run across your case as it really is. You can fine-tune any position with <b>Arrange</b> on the Lighting tab, and come back here from Devices whenever you add something."
+    : remaining > 0 ? `${remaining} light${remaining === 1 ? " still needs" : "s still need"} setup. Saved changes are kept. Return to the list whenever you're ready to continue.`
+    : remaining === 0 ? "Saved placements are kept. You skipped some steps; return to the list to check them whenever you're ready."
+    : "Saved changes are kept, but Airglow couldn't check what remains. Return to the list to try again.";
   openSheet(`<div class="body wide setup su-done">
     <div class="su-burst" aria-hidden="true">${icon("fan")}</div>
-    <h2>Your lights are set up</h2>
-    <p class="lede" style="margin:0">Effects now run across your case as it really is. You can fine-tune any position with <b>Arrange</b> on the Lighting tab, and come back here from Devices whenever you add something.</p>
+    <h2>${complete ? "Your lights are set up" : "Setup progress saved"}</h2>
+    <p class="lede" style="margin:0">${message}</p>
     <div class="actions"><button class="btn quiet" id="su-list">Back to the list</button><span class="spacer"></span><button class="btn primary" id="su-show">Show me</button></div>
   </div>`);
   $("#su-list").addEventListener("click", home);
@@ -225,7 +276,7 @@ function stepBlink() {
   probe(G.task.keys, "blink");
   frame({
     title: "Which lights are blinking?",
-    lede: `Everything plugged into <b>${esc(G.task.zones[0].zone.name)}</b> is flashing white right now. Have a look inside your case.`,
+    lede: `Airglow is asking everything plugged into <b>${esc(G.task.zones[0].zone.name)}</b> to blink white. Have a look inside your case.`,
     body: `<div class="su-blink" aria-hidden="true">${"<i></i>".repeat(9)}</div>
       <div class="su-nothing" hidden><p class="hint" style="margin:0">If nothing lights up, either nothing is plugged into this header, or its cable isn't seated.</p>
         <div class="btn-row"><button class="btn" id="su-off">Nothing is plugged in here</button><button class="btn quiet" id="su-skip">Skip it for now</button></div></div>`,
@@ -236,7 +287,7 @@ function stepBlink() {
   $("#su-seen").addEventListener("click", () => go("what"));
   $("#su-none").addEventListener("click", () => { $("#sheet .su-nothing").hidden = false; $("#su-off").focus(); });
   $("#su-off").addEventListener("click", () => save({ off: true }));
-  $("#su-skip").addEventListener("click", next);
+  $("#su-skip").addEventListener("click", skipTask);
 }
 
 function stepWhat() {
@@ -323,6 +374,7 @@ function stepLeds() {
     $("#su-num").textContent = n;
     input.style.setProperty("--fill", `${((n - 1) / Math.max(max - 1, 1)) * 100}%`);
     $("#su-per").textContent = fans > 1 ? (n % fans ? `doesn't split evenly over ${fans} fans yet` : `${n / fans} per fan`) : "";
+    $("#su-next").disabled = n < fans || n % fans !== 0;
     probeCount(n);
   };
   probe(G.task.keys, "count", G.a.leds);
@@ -343,7 +395,7 @@ async function snap(spot) {
   G.a.spot = spot;
   if (t.type === "fixed") await post("/api/setup/place", { device: t.dev.id, spot });
   else await post("/api/setup/apply", { zone: t.keys[0], component: G.a.component, count: G.a.count, leds: G.a.leds, spot });
-  S.zones = await get("/api/zones");
+  await refreshZones();
   emit("zones");
   probe(t.keys, "blink");                  // saving ends the probe; keep the real light blinking while you place it
 }
@@ -376,16 +428,18 @@ function renderDock() {
     <div><h2>${fixed ? (own ? "Where are its own lights?" : `Where is the ${esc(t.dev.name)}?`) : "Drag it to where it sits"}</h2>
       <p class="lede">It's glowing on the stage and blinking in your case. Drag it into place, and turn it with the round handle. Or snap it to a spot first:</p></div>
     <div class="su-snaps" role="radiogroup" aria-label="Snap to a spot">${G.data.spots.map((s) => `<button role="radio" data-spot="${s.id}" aria-checked="${G.a.spot === s.id}">${esc(s.label)}</button>`).join("")}</div>
-    <p class="hint">Everything else on the stage can be dragged too.</p>
+    <p class="hint">Positions save as you move them. Closing or skipping keeps saved changes. Everything else on the stage can be dragged too.</p>
+    <p class="hint" data-probe-status role="alert" hidden></p>
     <div class="actions">${fixed ? "" : `<button class="btn quiet" id="su-back">Back</button>`}<span class="spacer"></span>${fixed ? `<button class="btn quiet" id="su-skip">Skip</button>` : ""}<button class="btn primary" id="su-save">${G.queue.length ? "Save and next" : "Save"}</button></div>`;
   d.hidden = false;
+  paintProbeStatus();
   d.querySelector("[data-close]").addEventListener("click", () => { undock(); stopProbe(); G.task = null; });
   d.querySelectorAll("[data-spot]").forEach((b) => b.addEventListener("click", async () => {
     d.querySelectorAll("[data-spot]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
     try { await snap(b.dataset.spot); placing(t.keys); } catch (e) { fail(e); }
   }));
   d.querySelector("#su-back")?.addEventListener("click", () => { undock(); goBack(); });
-  d.querySelector("#su-skip")?.addEventListener("click", () => { undock(); next(); });
+  d.querySelector("#su-skip")?.addEventListener("click", () => { undock(); skipTask(); });
   d.querySelector("#su-save").addEventListener("click", () => {
     undock();
     G.data.pending = G.data.pending.filter((k) => !t.keys.includes(k));
@@ -409,7 +463,7 @@ async function save(body) {
     if (t.type === "fixed") await post("/api/setup/place", body);
     else await post("/api/setup/apply", { zone: t.keys[0], ...body });
     G.data.pending = G.data.pending.filter((k) => !t.keys.includes(k));
-    S.zones = await get("/api/zones");
+    await refreshZones();
     emit("zones");
     emit("refresh");
     next();
@@ -423,7 +477,7 @@ async function save(body) {
 let listening = false;
 export async function openSetup({ start = false, only = null } = {}) {
   try {
-    [G.data, S.zones] = await Promise.all([get("/api/setup"), get("/api/zones")]);
+    [G.data] = await Promise.all([get("/api/setup"), refreshZones()]);
   } catch (e) { fail(e); return; }
   G.done = 0;
   if (!listening) {

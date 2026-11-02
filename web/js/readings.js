@@ -1,16 +1,22 @@
 // Sensor readings for the Overview, the top bar and the picker: catalog, ten-minute history, formatting, ranges.
 
-import { S, get, unitF } from "./core.js";
+import { S, emit, get, unitF } from "./core.js";
 
 export const WINDOW = 600;                 // seconds of history shown in graphs
 export const R = { meta: {}, series: {}, loaded: false };
+let catalogRequest = null;
 
-export async function loadCatalog() {
-  const r = await get("/api/sensors");
-  R.meta = Object.fromEntries(r.sensors.map((m) => [m.id, m]));
-  R.lhm = r.lhm_online;
-  R.loaded = true;
-  return r.sensors;
+export function loadCatalog() {
+  if (catalogRequest) return catalogRequest;
+  catalogRequest = get("/api/sensors").then((r) => {
+    R.meta = Object.fromEntries(r.sensors.map((m) => [m.id, m]));
+    R.lhm = r.lhm_online;
+    R.revision = r.revision;
+    R.loaded = true;
+    emit("catalog");
+    return r.sensors;
+  }).finally(() => { catalogRequest = null; });
+  return catalogRequest;
 }
 
 // Fetch history for sensors we don't have yet (a tile was just added, or on start).
