@@ -1,7 +1,7 @@
 // Run against tools/dev_server.py --demo on 8790, never the installed app.
 // node --test tools/test-responsive-overview.mjs
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { test } from "node:test";
@@ -32,7 +32,8 @@ test("Overview uses large displays and keeps responsive tile editing accurate", 
   assert.equal(settings.settings.lhm_url, "http://127.0.0.1:8791", "The fixture must use simulated sensors");
   const original = await api("/api/overview");
   const browser = await chromium.launch({ channel: process.env.AIRGLOW_BROWSER || "msedge" });
-  const screenshots = mkdtempSync(join(tmpdir(), "airglow-responsive-"));
+  const screenshots = process.env.AIRGLOW_RESPONSIVE_OUTPUT || mkdtempSync(join(tmpdir(), "airglow-responsive-"));
+  mkdirSync(screenshots, { recursive: true });
   try {
     await api("/api/onboarded", {});
     await api("/api/settings", { online_checks: false, design: "darkroom" });

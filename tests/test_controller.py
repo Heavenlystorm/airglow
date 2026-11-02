@@ -143,6 +143,100 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.ctrl.set_scene({"effect": "nope"})
 
+    def test_failed_manual_save_keeps_live_scene_curve_and_selection(self):
+        self.ctrl.apply_preset(self.store.get_presets()[0])
+        before = (self.ctrl.base_scene, self.ctrl.base_curve, self.ctrl.active_preset,
+                  self.ctrl.effective_scene, self.ctrl.effective_curve)
+        for action in (lambda: self.ctrl.set_scene({"effect": "comet"}),
+                       lambda: self.ctrl.set_fan_curve("silent"),
+                       lambda: self.ctrl.mark_preset("different"),
+                       lambda: self.ctrl.apply_preset(self.store.get_presets()[1])):
+            with self.subTest(action=action), mock.patch.object(self.store, "_write", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    action()
+            self.assertEqual((self.ctrl.base_scene, self.ctrl.base_curve, self.ctrl.active_preset,
+                              self.ctrl.effective_scene, self.ctrl.effective_curve), before)
+
+    def test_control_reports_completed_cycles_and_sensor_age(self):
+        self.assertIn("control", self.ctrl.snapshot())
+        self.assertIsNone(self.ctrl.snapshot()["control"]["controller"]["last_success_at"])
+        self.ctrl.tick()
+        first = self.ctrl.snapshot()["control"]
+        self.assertIsNotNone(first["controller"]["last_success_at"])
+        self.assertIsNotNone(first["sensors"]["last_success_at"])
+        with mock.patch.object(self.ctrl, "_run_fans", side_effect=RuntimeError("blocked output")):
+            self.ctrl.tick()  # every other cycle has no fan work
+            completed = self.ctrl.snapshot()["control"]["controller"]["last_success_at"]
+            with self.assertRaises(RuntimeError):
+                self.ctrl.tick()
+        self.assertEqual(self.ctrl.snapshot()["control"]["controller"]["last_success_at"], completed)
+
+    def test_lightweight_tick_does_not_claim_a_failed_fan_cycle_recovered(self):
+        self.ctrl.tick()
+        self.ctrl.tick()
+        with mock.patch.object(self.ctrl, "_run_fans", side_effect=RuntimeError("blocked output")):
+            with self.assertRaises(RuntimeError):
+                self.ctrl.tick()
+        self.ctrl.tick()  # no sensors/fans on this tick
+        self.assertEqual(self.ctrl.snapshot()["control"]["controller"]["state"], "failed")
+        self.ctrl.tick()
+        self.assertEqual(self.ctrl.snapshot()["control"]["controller"]["state"], "healthy")
+
+    def test_recording_and_replay_do_not_issue_fan_commands(self):
+        self.assertTrue(hasattr(self.ctrl, "cooling"))
+        self.ctrl.cooling.start("Idle baseline")
+        self.assertEqual(self.nzxt.hub.duties, [])
+        self.ctrl.tick()
+        commands = list(self.nzxt.hub.duties)
+        session = self.ctrl.cooling.stop()
+        replay = self.ctrl.cooling.replay(session["session"]["id"], [[20, 30], [80, 100]], "cpu")
+        self.assertEqual(len(replay["samples"]), 1)
+        self.assertEqual(self.nzxt.hub.duties, commands)
+
+    def test_failed_trial_discard_preserves_the_live_trial(self):
+        self.ctrl.try_profile({"effect": "solid", "params": {"color": "#ff0000"}, "brightness": 70}, "Test")
+        before = self.ctrl.base_scene
+        with mock.patch.object(self.store, "_write", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.ctrl.end_trial()
+        self.assertIsNotNone(self.ctrl.trial)
+        self.assertEqual(self.ctrl.base_scene, before)
+
+    def test_failed_keep_of_installed_profile_preserves_trial_and_zone_override(self):
+        key = "strip/z1"
+        override = {"effect": "solid", "params": {"color": "#abcdef"}}
+        self.store.set_zone(key, {**self.store.zones()[key], "override": override}, 16)
+        self.ctrl.try_profile({"effect": "solid", "params": {"color": "#ff0000"}, "brightness": 70},
+                              "Test", clear_zones=[key])
+        before = self.ctrl.base_scene
+        write = self.store._write
+        def fail_state(name, data):
+            if name == "state.json":
+                raise OSError("disk full")
+            return write(name, data)
+        with mock.patch.object(self.store, "_write", side_effect=fail_state):
+            with self.assertRaises(OSError):
+                self.ctrl.end_trial(keep_preset=self.store.get_presets()[0])
+        self.assertIsNotNone(self.ctrl.trial)
+        self.assertEqual(self.ctrl.base_scene, before)
+        self.assertEqual(self.store.zones()[key]["override"], override)
+
+    def test_recording_failure_does_not_stop_fan_cycles(self):
+        self.ctrl.cooling.start("Baseline")
+        with mock.patch.object(self.ctrl.cooling, "sample", side_effect=OSError("recording failed")):
+            self.ctrl.tick()
+        self.assertEqual(len(self.nzxt.hub.duties), 1)
+        self.assertEqual(self.ctrl.snapshot()["control"]["controller"]["state"], "healthy")
+        self.assertTrue(any(e["resource"] == "cooling" for e in self.ctrl.control.events()))
+
+    def test_recording_shutdown_failure_cannot_skip_fan_failsafe(self):
+        self.ctrl.cooling.start("Baseline")
+        with mock.patch.object(self.ctrl.cooling, "stop", side_effect=OSError("disk unavailable")):
+            self.ctrl.shutdown()
+        self.assertEqual(len(self.nzxt.hub.duties), 1)
+        self.assertEqual(set(self.nzxt.hub.duties[-1].values()), {self.store.settings()["fan_failsafe_duty"]})
+        self.assertFalse(self.nzxt.online)
+
     def test_lights_off_keeps_preset(self):
         self.ctrl.apply_preset(self.store.get_presets()[1])
         self.ctrl.set_scene({"on": False})

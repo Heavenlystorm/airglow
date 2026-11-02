@@ -35,7 +35,7 @@ _RATE = {"b/s": 1, "kb/s": 1024, "mb/s": 1024 ** 2, "gb/s": 1024 ** 3}
 
 # Sensors that describe a part rather than measure it: hidden from the picker.
 _NOISE = re.compile(r"limit|resolution|warning temperature|critical temperature|threshold|capacity|power on|"
-                    r"^t[A-Z]|^D3D (?!3D)|optical flow|jpeg|security|timer|fullscreen fps", re.I)
+                    r"^(?-i:t[A-Z])|^D3D (?!3D)|optical flow|jpeg|security|timer|fullscreen fps", re.I)
 
 
 def _num(text):
@@ -344,14 +344,20 @@ class LhmPoller:
         self._url, self._headers, self._read = url, headers, read or read_tree
         self._on_change = on_change
         self.tree = None                     # the latest tree, or None while LHM isn't answering
+        self.last_success = self.last_success_at = None
+        self.last_duration = None
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread = None
 
     def poll(self):
         was_online = self.tree is not None
+        started = time.monotonic()
         try:
             self.tree = self._read(self._url(), headers=self._headers())
+            if self.tree is not None:
+                self.last_success, self.last_success_at = time.monotonic(), time.time()
+                self.last_duration = self.last_success - started
         except Exception:                    # a bad address or a bug here must not end the thread
             logging.getLogger(__name__).exception("reading LibreHardwareMonitor failed")
             self.tree = None

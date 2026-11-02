@@ -484,6 +484,51 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("object", r["error"])
 
+    def test_binary_frames_reject_invalid_lengths_and_close_the_connection(self):
+        import socket
+        for length, expected in (("-1", 413), (str(api.MAX_BODY + 1), 413), ("invalid", 400)):
+            with self.subTest(length=length):
+                conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
+                try:
+                    conn.request("POST", "/api/fx/host/frames", body=b"", headers={
+                        "X-Airglow": "1", "Content-Type": "application/octet-stream", "Content-Length": length})
+                    conn.sock.shutdown(socket.SHUT_WR)
+                    response = conn.getresponse()
+                    self.assertEqual(response.status, expected)
+                    self.assertEqual(response.getheader("Connection"), "close")
+                    response.read()
+                finally:
+                    conn.close()
+
+    def test_concurrent_profile_saves_keep_every_acknowledged_profile(self):
+        from concurrent.futures import ThreadPoolExecutor
+        before, state = self.store.get_presets(), dict(self.store.state)
+        original = self.store.get_presets
+        barrier = threading.Barrier(2)
+
+        def stale_snapshot():
+            value = original()
+            barrier.wait(timeout=3)
+            return value
+
+        def save(name):
+            return self.request("POST", "/api/presets/from-current", {"name": name, "include_fans": False})
+
+        try:
+            with mock.patch.object(self.store, "get_presets", side_effect=stale_snapshot):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    replies = list(pool.map(save, ["Concurrent A", "Concurrent B"]))
+            self.assertEqual([status for status, body in replies], [200, 200])
+            ids = {body["id"] for status, body in replies}
+            self.assertEqual(len(ids), 2)
+            self.assertTrue(ids <= {p["id"] for p in config.Store(self.tmp.name).get_presets()},
+                            "a successful response must survive another concurrent profile save")
+        finally:
+            self.store.set_presets(before)
+            self.store.save_state(**state)
+            self.ctrl.active_preset = state["active_preset"]
+
+
 
 
 class ProfileKeepTests(unittest.TestCase):

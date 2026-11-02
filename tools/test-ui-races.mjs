@@ -188,9 +188,9 @@ async function harness(file, exports) {
   let nextTimer = 0;
   const element = (id) => {
     if (!elements.has(id)) elements.set(id, {
-      events: new Map(), open: true, classList: { toggle() {} },
+      events: new Map(), open: true, dataset: {}, classList: { toggle() {}, add() {}, remove() {} },
       addEventListener(type, fn) { this.events.set(type, fn); },
-      setAttribute() {}, querySelectorAll() { return []; }, focus() {},
+      setAttribute() {}, removeAttribute() {}, querySelectorAll() { return []; }, focus() {},
       removeEventListener(type, fn) { if (this.events.get(type) === fn) this.events.delete(type); },
     });
     return elements.get(id);
@@ -220,18 +220,33 @@ async function harness(file, exports) {
     get: (path) => path === "/api/effects" ? Promise.resolve([]) : request("GET", path),
     refreshZones: () => request("GET", "/api/zones").then(z => { core.S.zones = z; return z; }),
   };
-  const imports = new Map([...source.matchAll(/import\s+\{([^}]+)\}\s+from\s+["']([^"']+)["']/g)]
-    .map((m) => [m[2], m[1].split(",").map((name) => name.trim())]));
-  const module = new vm.SourceTextModule(source + `\nexport { ${exports.join(", ")} };`, { context });
-  await module.link((specifier) => new vm.SyntheticModule(imports.get(specifier), function () {
-    for (const name of imports.get(specifier)) {
-      const value = specifier === "./core.js" && name in core ? core[name]
-        : name === "closeSheet" ? () => { element("#sheet").open = false; }
-        : name === "openSheet" ? (html) => { element("#sheet").innerHTML = html; element("#sheet").open = true; }
-        : name === "paintMini" ? (canvas, zones) => paints.push({ canvas, zones }) : () => {};
-      this.setExport(name, value);
-    }
-  }, { context }));
+  const sources = new Map([[`./${file}.js`, source + `\nexport { ${exports.join(", ")} };`]]);
+  for (const name of ["studio-document", "studio-preview", "studio-gallery", "studio-packs"]) {
+    sources.set(`./${name}.js`, readFileSync(new URL(`../web/js/${name}.js`, import.meta.url), "utf8"));
+  }
+  const imports = new Map(), modules = new Map();
+  for (const text of sources.values()) for (const m of text.matchAll(/import\s+\{([^}]+)\}\s+from\s+["']([^"']+)["']/g)) {
+    const names = imports.get(m[2]) || new Set();
+    m[1].split(",").forEach((name) => names.add(name.trim().split(/\s+as\s+/)[0]));
+    imports.set(m[2], names);
+  }
+  function moduleFor(specifier) {
+    if (modules.has(specifier)) return modules.get(specifier);
+    const linked = sources.has(specifier) ? new vm.SourceTextModule(sources.get(specifier), { context, identifier: specifier })
+      : new vm.SyntheticModule([...imports.get(specifier)], function () {
+        for (const name of imports.get(specifier)) {
+          const value = specifier === "./core.js" && name in core ? core[name]
+            : name === "closeSheet" ? () => { element("#sheet").open = false; }
+            : name === "openSheet" ? (html) => { element("#sheet").innerHTML = html; element("#sheet").open = true; }
+            : name === "paintMini" ? (canvas, zones) => paints.push({ canvas, zones }) : () => {};
+          this.setExport(name, value);
+        }
+      }, { context });
+    modules.set(specifier, linked);
+    return linked;
+  }
+  const module = moduleFor(`./${file}.js`);
+  await module.link(moduleFor);
   await module.evaluate();
   const fire = (ms) => {
     const item = [...timers].find(([, t]) => t.ms === ms);

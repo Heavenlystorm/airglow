@@ -40,6 +40,12 @@ class FormatTests(unittest.TestCase):
 
 
 class ParseEdgeCaseTests(unittest.TestCase):
+    def test_catalog_keeps_temperature_and_total_readings_but_hides_memory_timings(self):
+        names = ["Temperature", "Tctl/Tdie", "Total Power", "temperature", "tCL", "tRCD", "Critical Temperature"]
+        flat = [{"id": f"sensor/{i}", "hw": "cpu", "hw_name": "CPU", "type": "temperature",
+                 "name": name, "value": 50.0} for i, name in enumerate(names)]
+        self.assertEqual([s["name"] for s in sensors.catalog_from(flat)], names[:4])
+
     def test_decimal_comma(self):
         self.assertEqual(sensors._num("41,9 °C"), 41.9)
         self.assertEqual(sensors._num("1200 RPM"), 1200)
@@ -58,6 +64,21 @@ class ParseEdgeCaseTests(unittest.TestCase):
 
 
 class LhmPollerTests(unittest.TestCase):
+    def test_success_timestamp_only_advances_after_successful_read(self):
+        from unittest import mock
+        p = sensors.LhmPoller(lambda: "unused", read=lambda *a, **kw: {"Children": []})
+        self.assertTrue(hasattr(p, "last_success"))
+        self.assertIsNone(p.last_success)
+        with mock.patch("airglow.sensors.time.monotonic", return_value=15.0), \
+             mock.patch("airglow.sensors.time.time", return_value=1000.0):
+            p.poll()
+        self.assertEqual(p.last_success, 15.0)
+        self.assertEqual(p.last_success_at, 1000.0)
+        p._read = lambda *a, **kw: None
+        p.poll()
+        self.assertEqual(p.last_success, 15.0)
+        self.assertEqual(p.last_success_at, 1000.0)
+
     def poller(self, replies):
         calls = []
 

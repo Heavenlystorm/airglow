@@ -112,6 +112,37 @@ class StoreTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_concurrent_appends_allocate_unique_ids_and_enforce_the_profile_limit(self):
+        from concurrent.futures import ThreadPoolExecutor
+        store = config.Store(self.dir)
+        template = {**store.get_presets()[0], "name": "Same name"}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            replies = list(pool.map(lambda _: store.add_preset(template), range(2)))
+        self.assertEqual(len({pid for presets, pid in replies}), 2)
+        while len(store.get_presets()) < 23:
+            store.add_preset(template)
+
+        def add(_):
+            try:
+                return store.add_preset(template)[1]
+            except ValueError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            ids = list(pool.map(add, range(2)))
+        self.assertEqual(sum(pid is not None for pid in ids), 1)
+        saved = config.Store(self.dir).get_presets()
+        self.assertEqual(len(saved), 24)
+        self.assertTrue({pid for pid in ids if pid} <= {p["id"] for p in saved})
+
+    def test_failed_profile_append_keeps_existing_profiles(self):
+        store = config.Store(self.dir)
+        before = store.get_presets()
+        with mock.patch.object(store, "_write", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            store.add_preset({**before[0], "name": "Not saved"})
+        self.assertEqual(store.get_presets(), before)
+        self.assertEqual(config.Store(self.dir).get_presets(), before)
+
     def test_profiles_using_a_deleted_studio_effect_survive_a_restart(self):
         s = config.Store(self.dir)
         s.set_presets(s.get_presets() + [{"id": "mine", "name": "My look", "effect": "fx:me.gone",

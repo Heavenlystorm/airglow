@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.12.0
+- A new Control center shows which rule or setting owns lighting and cooling, when work last completed, and recent
+  connection, failure and recovery events. Add its optional status tile to Overview or open it from the toolbar.
+- The Cooling workbench records local temperature, RPM and commanded-duty sessions with workload notes. Compare
+  recordings, replay a draft curve without applying it, and export JSON or CSV. Recording is opt-in and bounded.
+- Profiles can now be updated without changing the IDs used by automations. Choose which lighting areas and fan
+  settings to include; updating a profile preserves an active curve when it becomes independent of that profile.
+- Export a portable rig bundle and preview its import on another setup. Map or skip each source area explicitly;
+  imported automations start disabled, and importing never transfers fan or pump ownership.
+- Studio adds a guided remix workflow, favorite palettes, clearer preview versus applied state, and portable scene
+  packs. Import previews explain conflicts before installing effects; applying them to lights remains explicit.
+- Copy fan settings to named targets, with pumps requiring explicit selection. Partial failures identify the
+  channels that need retry. Add curve points with the keyboard and retain focus while editing automations or Studio.
+- Failed saves stay visible with recovery actions. Conflicting writes are serialized, and delayed replies or stale
+  retries cannot replace newer edits, reopen dismissed imports, or misreport an effect as applied.
+- Narrow windows get a visible selector for all seven sections, compact cooling readings and a corrected Studio
+  layer menu. Existing themes, saved Overview layouts and responsive scaling are retained.
+- Strengthened device-writer retirement and reconnect handling, profile/import rollback, shared atomic file writes,
+  effect revocation tracking, updater concurrency, diagnostics redaction and local API request validation.
+- Added automated browser workflows to CI alongside expanded Python and JavaScript regression coverage. Hardware
+  compatibility and physical thermal or acoustic behavior still require testing on the target rig.
+
 ## 1.11.2
 - CPU and GPU labels refresh when sensor identity becomes available, without waiting for the minute-long catalog
   refresh. Slow metadata requests no longer delay live readings.

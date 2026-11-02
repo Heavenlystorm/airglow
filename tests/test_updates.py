@@ -1,3 +1,4 @@
+import http.client
 import json
 import tempfile
 import unittest
@@ -91,6 +92,14 @@ class MetaTests(unittest.TestCase):
         self.assertEqual(updates.fetch_meta(opener=offline)["notice"], "Maintenance")
         self.assertEqual(updates.fetch_meta(opener=self.opener(b"{not json"))["notice"], "Maintenance")
 
+    def test_truncated_metadata_falls_back_to_the_cache(self):
+        body = json.dumps({"schema": 1, "minSupported": "1.0.0", "effectApi": [1], "notice": "Cached"}).encode()
+        updates.fetch_meta(opener=self.opener(body))
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.side_effect = http.client.IncompleteRead(b"partial", 100)
+        self.assertEqual(updates.fetch_meta(opener=lambda *a, **kw: response)["notice"], "Cached")
+
 
 class UpdaterTests(unittest.TestCase):
     def setUp(self):
@@ -136,11 +145,40 @@ class UpdaterTests(unittest.TestCase):
         self.assertIsNone(stable.downloaded)
         self.assertIsNotNone(beta.downloaded)
 
+    def test_beta_can_download_from_either_feed_when_the_other_fails(self):
+        self.store.update_settings({"update_channel": "beta"})
+        for failed_index in (0, 1):
+            with self.subTest(failed_index=failed_index):
+                available = FakeManager("9.1.0-beta.1" if failed_index == 0 else "9.0.0")
+                managers = [available]
+                managers.insert(failed_index, FakeManager(fail="feed unavailable"))
+                u = self.updater(managers={"beta": managers})
+                status = u.check_now()
+                self.assertEqual((status["state"], status["latest"]), ("ready", available.found))
+                self.assertIsNotNone(available.downloaded)
+
+    def test_failed_feed_does_not_claim_latest_when_no_update_was_found(self):
+        self.store.update_settings({"update_channel": "beta"})
+        for failed_index in (0, 1):
+            with self.subTest(failed_index=failed_index):
+                managers = [FakeManager()]
+                managers.insert(failed_index, FakeManager(fail="feed unavailable"))
+                u = self.updater(managers={"beta": managers})
+                self.assertEqual((u.check_now()["state"], u.status()["error"]),
+                                 ("error", "feed unavailable"))
+
     def test_failures_are_reported_not_raised(self):
         u = self.updater(managers={"stable": [FakeManager(fail="GitHub answered 503")]})
         s = u.check_now()
         self.assertEqual((s["state"], s["error"]), ("error", "GitHub answered 503"))
         self.assertEqual(self.updater(managers={"stable": [FakeManager()]}).check_now()["state"], "latest")
+
+    def test_metadata_failure_is_reported_and_the_same_updater_can_retry(self):
+        u = self.updater(managers={"stable": [FakeManager()]})
+        u._fetch_meta = mock.Mock(side_effect=[http.client.IncompleteRead(b"partial", 100), None])
+        self.assertEqual(u.check_now()["state"], "error")
+        self.assertEqual(u.check_now()["state"], "latest")
+
 
     def test_scoop_installs_never_check(self):
         u = self.updater(kind="scoop", managers={"stable": [FakeManager("9.0.0")]})

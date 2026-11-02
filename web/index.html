@@ -10,6 +10,9 @@
 <link rel="stylesheet" href="css/designs.css">
 <link rel="stylesheet" href="css/experience.css">
 <link rel="stylesheet" href="css/surfaces.css">
+<link rel="stylesheet" href="css/workbench.css">
+<link rel="stylesheet" href="css/migration.css">
+<link rel="stylesheet" href="css/studio-workflow.css">
 <script type="module" src="js/main.js"></script>
 </head>
 <body>
@@ -26,6 +29,10 @@
     <a href="#devices" data-tab="devices" aria-keyshortcuts="Control+6">Devices</a>
     <a href="#settings" data-tab="settings" aria-keyshortcuts="Control+7">Settings</a>
   </nav>
+  <label class="compact-nav"><span class="sr">Section</span><select id="nav-select" class="select" aria-label="Section">
+    <option value="overview">Overview</option><option value="lighting">Lighting</option><option value="studio">Studio</option>
+    <option value="fans">Fans</option><option value="automations">Automations</option><option value="devices">Devices</option><option value="settings">Settings</option>
+  </select></label>
   <div class="bar-right">
     <a class="ambient" id="ambient" href="#overview" title="Pinned readings. Pin others from a tile's settings on the Overview."></a>
     <button class="power" id="power" aria-pressed="true" title="Lights on or off"><svg aria-hidden="true"><use href="#i-power"/></svg><span class="sr">Lights</span></button>
@@ -34,6 +41,7 @@
 
 <div class="why" id="why" role="status" aria-live="polite" hidden></div>
 <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
+<div class="mutation-status" id="mutation-status" aria-live="polite" aria-label="Changes" hidden></div>
 
 <main>
   <!-- ============================================================ Overview -->
@@ -44,7 +52,7 @@
         <button class="btn" id="ov-addtile"><svg aria-hidden="true"><use href="#i-plus"/></svg>Add a tile</button>
         <button class="text-link" id="ov-reset">Reset to default</button>
       </div>
-      <button class="chip-btn" id="ov-edit" aria-pressed="false"><svg aria-hidden="true"><use href="#i-move"/></svg>Customize</button>
+      <div class="btn-row"><button class="chip-btn" data-control-center>Control center</button><button class="chip-btn" id="ov-edit" aria-pressed="false"><svg aria-hidden="true"><use href="#i-move"/></svg>Customize</button></div>
     </div>
     <div class="ov-grid" id="ov-grid"></div>
   </section>
@@ -53,7 +61,6 @@
   <section class="view lighting-view" data-view="lighting" aria-label="Lighting" hidden>
     <div class="stage-wrap">
       <div class="stage" id="stage">
-        <div class="stage-caption" aria-hidden="true"><span class="eyebrow">Lighting canvas</span><span>Your rig. Your atmosphere.</span></div>
         <canvas id="stage-canvas" aria-hidden="true"></canvas>
         <svg id="stage-svg" aria-label="Lighting zones" role="group"></svg>
         <div class="stage-tools">
@@ -82,7 +89,6 @@
     <div class="curve-area">
       <div class="curve-head">
         <div>
-          <p class="eyebrow">Cooling, composed</p>
           <h1>Fan curve</h1>
           <p class="lede" id="curve-lede"></p>
         </div>
@@ -92,6 +98,8 @@
       <div class="curve-foot">
         <p class="hint" id="editor-hint"></p>
         <div class="btn-row">
+          <button class="btn quiet" id="curve-add">Add curve point</button>
+          <button class="btn quiet" id="cooling-workbench">Cooling workbench</button>
           <button class="btn quiet" id="curve-reset">Reset to default</button>
           <button class="btn quiet" id="curve-discard" disabled>Discard changes</button>
           <button class="btn primary" id="curve-save" disabled>Save curve</button>
@@ -109,7 +117,6 @@
   <section class="view auto-view" data-view="automations" aria-label="Automations" hidden>
     <div class="page-head">
       <div>
-        <p class="eyebrow">Set it. Let it flow.</p>
         <h1>Automations</h1>
         <p class="lede">Rules that change your lighting and fans on their own. The highest rule that applies wins, and when it stops applying, your own settings come back.</p>
       </div>
@@ -135,7 +142,6 @@
   <!-- ============================================================ Settings -->
   <section class="view settings-view" data-view="settings" aria-label="Settings" hidden>
     <div class="settings-head">
-      <p class="eyebrow">Make yourself at home</p>
       <h1>Settings</h1>
       <p class="lede">A workspace that feels like yours.</p>
     </div>

@@ -1,0 +1,72 @@
+/* Tools inherit the current Airglow design. Every selector is scoped to these sheets. */
+.sheet:has(.workbench) { width: min(900px, calc(100vw - 32px)); }
+.workbench { --wb-space: var(--space-md, 16px); min-width: 0; }
+.workbench h3 { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
+.workbench > section { border-top: 1px solid var(--line); padding-top: 20px; min-width: 0; }
+.workbench p { margin: 0; }
+.workbench .hint { color: var(--ink-2); line-height: 1.5; }
+.workbench .wb-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.workbench a { color: var(--brass-hi); text-underline-offset: 3px; }
+.workbench .wb-feedback { color: var(--ink-2); font-size: 13px; min-height: 20px; }
+.workbench .wb-error { color: var(--hot); overflow-wrap: anywhere; }
+.workbench .wb-status-list { list-style: none; padding: 0; margin: 0; }
+.workbench .wb-status-row { display: grid; grid-template-columns: minmax(150px, 1fr) 115px minmax(170px, 1fr); align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--line-soft); }
+.workbench .wb-resource, .workbench .wb-completion { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.workbench .wb-resource span, .workbench .wb-completion small { color: var(--ink-2); font-size: 12px; }
+.workbench .wb-completion > span { font-variant-numeric: tabular-nums; font-size: 13px; }
+.workbench .wb-state { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.workbench .wb-state[data-state="healthy"] { color: var(--ok); }
+.workbench .wb-state[data-state="pending"], .workbench .wb-state[data-state="stale"] { color: var(--warm); }
+.workbench .wb-state[data-state="failed"], .workbench .wb-completion .wb-error { color: var(--hot); }
+.workbench .wb-empty { padding: 18px 0; color: var(--ink-2); line-height: 1.5; }
+.workbench .wb-events { display: grid; gap: 0; list-style: none; margin: 0; padding: 0; max-height: 260px; overflow: auto; }
+.workbench .wb-events li { display: grid; grid-template-columns: 90px 1fr; gap: 12px; padding: 9px 0; font-size: 13px; overflow-wrap: anywhere; border-bottom: 1px solid var(--line-soft); }
+.workbench .wb-events time { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.workbench .wb-record { display: grid; gap: 10px; }
+.workbench .wb-record > label { font-size: 13px; color: var(--ink-2); }
+.workbench input, .workbench select, .workbench textarea { box-sizing: border-box; width: 100%; min-width: 0; color: var(--ink); background: var(--well); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 9px 10px; font: inherit; }
+.workbench textarea { resize: vertical; font-variant-numeric: tabular-nums; }
+.workbench input::placeholder { color: var(--ink-2); opacity: 1; }
+.workbench .wb-session-tools { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.workbench .wb-session-tools label { display: grid; gap: 6px; flex: 1 1 220px; min-width: 0; font-size: 13px; color: var(--ink-2); }
+.workbench .wb-chart { margin: 16px 0; padding: 12px; background: var(--well); border-radius: var(--r-ctl); }
+.workbench .wb-chart figcaption { display: flex; justify-content: space-between; gap: 10px; color: var(--ink-2); font-size: 12px; }
+.workbench .wb-chart figcaption strong { color: var(--ink); font-weight: 500; }
+.workbench .wb-chart svg { display: block; width: 100%; height: auto; margin-top: 7px; overflow: visible; }
+.workbench .wb-chart-grid { fill: none; stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.workbench .wb-line { fill: none; stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.workbench .wb-dot { fill: currentColor; }
+.workbench .wb-line-cpu, .workbench .wb-key-cpu { color: var(--brass-hi); }
+.workbench .wb-line-gpu, .workbench .wb-key-gpu { color: var(--data-line); stroke-dasharray: 6 3; }
+.workbench .wb-line-liquid, .workbench .wb-key-liquid { color: var(--ok); stroke-dasharray: 2 3; }
+.workbench .wb-line-duty, .workbench .wb-key-duty, .workbench .wb-line-rpm, .workbench .wb-key-rpm { color: var(--data-line); }
+.workbench .wb-line-draft, .workbench .wb-key-draft { color: var(--brass-hi); stroke-dasharray: 5 3; }
+.workbench .wb-chart-key, .workbench .wb-chart-time { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--ink-2); }
+.workbench .wb-chart-key span::before { content: ""; display: inline-block; width: 14px; border-top: 2px solid currentColor; vertical-align: middle; margin-right: 5px; }
+.workbench .wb-chart-key .wb-key-gpu::before, .workbench .wb-chart-key .wb-key-draft::before { border-top-style: dashed; }
+.workbench .wb-chart-key .wb-key-liquid::before { border-top-style: dotted; }
+.workbench .wb-chart-time { justify-content: space-between; margin-top: 7px; font-variant-numeric: tabular-nums; }
+.workbench .wb-draft-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
+.workbench .wb-draft-fields label { display: grid; align-content: start; gap: 7px; color: var(--ink-2); font-size: 13px; }
+.workbench .wb-table-scroll { overflow-x: auto; }
+.workbench .wb-compare-table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.workbench .wb-compare-table th, .workbench .wb-compare-table td { text-align: right; padding: 10px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.workbench .wb-compare-table th:first-child { text-align: left; }
+.workbench .wb-compare-table thead { color: var(--ink-2); }
+.workbench .wb-compare-table tbody th { font-weight: 400; }
+.workbench .wb-recovery { background: var(--well); padding: 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; color: var(--hot); }
+.workbench .wb-recovery p { flex: 1 1 250px; }
+.workbench .wb-delete { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.workbench [hidden] { display: none !important; }
+@media (max-width: 600px) {
+  .sheet:has(.workbench) { width: calc(100vw - 20px); max-height: calc(100dvh - 24px); }
+  .sheet .body.workbench { padding: 16px; gap: 14px; }
+  .workbench .wb-status-row { grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; }
+  .workbench .wb-completion { grid-column: 1 / -1; }
+  .workbench .wb-draft-fields { grid-template-columns: 1fr; }
+  .workbench .wb-events li { grid-template-columns: 76px minmax(0, 1fr); gap: 8px; }
+  .workbench .wb-chart { padding: 10px; }
+  .workbench .btn { min-height: 38px; white-space: normal; }
+  .workbench .wb-section-head .btn-row { width: 100%; }
+  .workbench .wb-section-head .btn-row .btn { flex: 1; justify-content: center; }
+}

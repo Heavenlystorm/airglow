@@ -12,6 +12,8 @@ import time
 
 from . import automation, devices, fancontrol, fans, lhmfans, sensors, system, tools
 from .config import SAFETY_TEMP, validate_scene
+from .controlstatus import ControlStatus
+from .cooling import Recorder
 from .hw import DeviceManager
 from .history import SensorHistory
 from .lighting import geometry
@@ -53,7 +55,13 @@ class Controller:
         self.catalog_rev = 0
         self._catalog_key = ()
         self.readings_history = SensorHistory(self.HISTORY)
-        self.engine = Engine(self.manager, store, sensors=lambda: self.sensors, async_writes=async_writes)
+        self.control = ControlStatus()
+        self.control.observe("controller", "Controller cycles", kind="component", stale_after=5.0)
+        self.control.observe("sensors", "Temperature samples", kind="component", online=False, stale_after=6.0)
+        self.cooling = Recorder(store.dir)
+        self._lhm_sample_seen = None
+        self.engine = Engine(self.manager, store, sensors=lambda: self.sensors, async_writes=async_writes,
+                             control=self.control)
         self.automations = automation.Automations(store, signals or system.snapshot, lambda: self.sensors)
         self.sleeping = self.locked = self.shutting_down = False
         self.effective_scene = dict(self.base_scene)
@@ -84,18 +92,27 @@ class Controller:
             merged = {**self.base_scene, **{k: v for k, v in patch.items() if k in ("effect", "params", "brightness", "on")}}
             if "effect" in patch and patch["effect"] != self.base_scene["effect"] and "params" not in patch:
                 merged["params"] = {}                     # new effect starts from its defaults
-            self.base_scene = validate_scene(merged)
+            scene = validate_scene(merged)
+            preset = self.active_preset
             if any(k in patch for k in ("effect", "params", "brightness")):
-                self.active_preset = None
-            self._changed()
+                preset = None
+            self._commit_base(scene, self.base_curve, preset)
 
     def set_fan_curve(self, name):
         if name not in self.store.curves():
             raise ValueError(f"unknown fan curve '{name}'")
         with self._lock:
-            self.base_curve = name
-            self.active_preset = None
-            self._changed()
+            self._commit_base(self.base_scene, name, None)
+
+    def _commit_base(self, scene, curve, preset, *, end_trial=False):
+        """Persist a candidate before publishing it to loops, snapshots or the lighting engine."""
+        if self.trial is None or end_trial:
+            self.store.save_state(scene=scene, fan_curve=curve, active_preset=preset)
+        if end_trial and self.trial is not None:
+            self.trial = None
+            self.engine.set_trial_zones(())
+        self.base_scene, self.base_curve, self.active_preset = scene, curve, preset
+        self.apply()
 
     def apply_preset(self, preset):
         steps = []
@@ -108,22 +125,21 @@ class Controller:
                 log.warning("preset %s: %s failed: %s", preset.get("name"), label, e)
                 steps.append({"step": label, "ok": False, "error": str(e)})
 
-        def lighting():
-            self.base_scene = validate_scene({"effect": preset["effect"], "params": preset["params"],
-                                              "brightness": preset["brightness"], "areas": preset.get("areas"),
-                                              "on": True})
-
         with self._lock:
-            if self.trial is not None:
-                self._leave_trial()                # picking a profile ends a trial: Discard won't take it back
-            step("lighting", lighting)
-            curve = self.preset_curve(preset)
-            if curve:
-                step("fans", lambda: setattr(self, "base_curve", curve))
+            scene = validate_scene({"effect": preset["effect"], "params": preset["params"],
+                                    "brightness": preset["brightness"], "areas": preset.get("areas"), "on": True})
+            previous_curve = self.trial["before"]["curve"] if self.trial else self.base_curve
+            curve = self.preset_curve(preset) or previous_curve
+            # An external FanControl action is reported separately; do not claim its success in advance.
+            selected = None if preset.get("fan_profile") else preset["id"]
+            self._commit_base(scene, curve, selected, end_trial=True)
+            steps.append({"step": "lighting", "ok": True})
+            if self.preset_curve(preset):
+                steps.append({"step": "fans", "ok": True})
             if preset.get("fan_profile"):
                 step("FanControl", lambda: fancontrol.apply_profile(self.store.settings(), preset["fan_profile"]))
-            self.active_preset = preset["id"] if all(s["ok"] for s in steps) else None
-            self._changed()
+                if all(s["ok"] for s in steps):
+                    self.mark_preset(preset["id"])
         return steps
 
     # ------------------------------------------------------------ fan curves, including a profile's own
@@ -194,56 +210,46 @@ class Controller:
             if self.trial is None:
                 return
             if keep_preset:
-                for key, max_leds in self.trial["clear_zones"].items():
-                    self._set_override(key, None, max_leds)
+                scene = validate_scene({"effect": keep_preset["effect"], "params": keep_preset["params"],
+                                        "brightness": keep_preset["brightness"], "areas": keep_preset.get("areas"),
+                                        "on": True})
+                curve = self.preset_curve(keep_preset) or self.trial["before"]["curve"]
+                selected = None if keep_preset.get("fan_profile") else keep_preset["id"]
+                self.store.save_trial_state({"scene": scene, "fan_curve": curve, "active_preset": selected},
+                                             clear_zones=self.trial["clear_zones"])
+                self.base_scene, self.base_curve, self.active_preset = scene, curve, selected
                 self.trial = None
                 self.engine.set_trial_zones(())
-                self.apply_preset(keep_preset)
+                self.apply()
+                if keep_preset.get("fan_profile"):
+                    try:
+                        fancontrol.apply_profile(self.store.settings(), keep_preset["fan_profile"])
+                    except Exception as e:
+                        log.warning("preset %s: FanControl failed: %s", keep_preset.get("name"), e)
+                    else:
+                        self.mark_preset(keep_preset["id"])
                 return
-            before = self._leave_trial()
-            self.base_scene, self.active_preset = before["scene"], before["preset"]
-            self._changed()
-
-    def _leave_trial(self):
-        """End the trial: zones get their own effects back and the fans their curve. Returns what it replaced."""
-        before, self.trial = self.trial["before"], None
-        self.engine.set_trial_zones(())
-        self.base_curve = before["curve"] if self.curve_points(before["curve"]) else "balanced"
-        return before
-
-    def _set_override(self, key, override, max_leds):
-        cfg = self.store.zones().get(key)
-        if cfg is None or cfg.get("override") == override:
-            return
-        self.store.set_zone(key, {**cfg, "override": override}, max_leds)
-        self.engine.invalidate(key)
+            before = self.trial["before"]
+            curve = before["curve"] if self.curve_points(before["curve"]) else "balanced"
+            self._commit_base(before["scene"], curve, before["preset"], end_trial=True)
 
     def mark_preset(self, preset_id):
         """The current settings were just saved as this preset."""
         with self._lock:
-            self.active_preset = preset_id
             self.store.save_state(active_preset=preset_id)
+            self.active_preset = preset_id
 
     def presets_changed(self):
         """Presets were edited or removed: rules and the effective scene may point at them."""
         with self._lock:
             if self.active_preset and self.active_preset not in {p["id"] for p in self.store.get_presets()}:
-                self.active_preset = None
                 self.store.save_state(active_preset=None)
+                self.active_preset = None
             try:
                 self.automations.evaluate()
             except Exception:
                 log.exception("automations failed")
             self.apply()
-
-    def _changed(self):
-        if self.trial is not None:
-            # changes while trying a profile adjust what's being tried and are never saved: a restart (or Discard)
-            # goes back to what you had, and "trial" is never written as your fan curve
-            self.apply()
-            return
-        self.store.save_state(scene=self.base_scene, fan_curve=self.base_curve, active_preset=self.active_preset)
-        self.apply()
 
     # ------------------------------------------------------------ overrides
     def apply(self):
@@ -278,6 +284,11 @@ class Controller:
                 self.effective_scene = scene
                 self.engine.set_scene(scene)
             self.effective_curve = curve
+            owner = ("System power / lock" if self.sleeping or self.shutting_down or
+                     (self.locked and settings["lights_off_on_lock"]) else
+                     f"Automation: {lr.get('name', lr['id'])}" if lr else
+                     "Live draft / trial" if self.trial else "Manual settings")
+            self.control.observe("lighting", "Lighting frames", kind="component", owner=owner, stale_after=5.0)
             self.rev += 1
 
     # ------------------------------------------------------------ power events
@@ -343,11 +354,15 @@ class Controller:
         return list(range(hub.FAN_PORTS))
 
     def _run_fans(self):
-        if self._stop.is_set():              # quitting: shutdown() hands the fans back, don't take them again
-            return
-        cfg = self.store.settings()
-        temp = fans.source_temp(self.sensors, cfg["temp_source"])
-        curve = self.curve_points(self.effective_curve)
+        with self._lock:
+            if self._stop.is_set():          # quitting: shutdown() hands the fans back, don't take them again
+                return
+            # A profile update may detach an owned curve. Resolve its identity and points in one snapshot,
+            # with the same controller -> Store lock order as profile transactions, before any hardware I/O.
+            cfg = self.store.settings()
+            temp = fans.source_temp(self.sensors, cfg["temp_source"])
+            curve = self.curve_points(self.effective_curve)
+            hottest = fans.source_temp(self.sensors, "max")
         waited = time.monotonic() - self._started
         if temp is not None and not self._temp_seen:
             self._temp_seen = True
@@ -363,7 +378,6 @@ class Controller:
             why = "the curve" if temp is not None else f"failsafe {cfg['fan_failsafe_duty']}%, no reading"
         # "full speed at 90 °C" holds for the hottest part, not only the one the curve follows (the coolant stays
         # cool while a processor whose pump has stopped overheats)
-        hottest = fans.source_temp(self.sensors, "max")
         if hottest is not None and hottest >= SAFETY_TEMP:
             target = 100
             why = f"full speed, {hottest:.0f} °C on the hottest part"
@@ -371,10 +385,18 @@ class Controller:
         self._fan_reason(duty, why, temp)
         self.fan_temp, self.fan_target, self.fan_duty = temp, round(target), duty
         for dev, hub in self._fan_devices():
+            key = "fan:" + dev.id
+            rule = self.automations.fan_rule
+            owner = f"Automation: {rule.get('name', rule['id'])}" if rule else "Airglow curve"
+            self.control.observe(key, dev.name + " fans", kind="fans", owner=owner, stale_after=6.0)
+            started = time.monotonic()
+            self.control.queued(key)
             try:
                 hub.poll()
                 hub.set_fan_duty({p: duty for p in self._hub_ports(hub)})
+                self.control.succeeded(key, duration=time.monotonic() - started)
             except (devices.DeviceError, OSError) as e:
+                self.control.failed(key, e)
                 log.warning("%s fans: %s", dev.name, e)
                 dev.error = str(e)
                 dev.close()
@@ -412,13 +434,36 @@ class Controller:
                 minimum = c["duty"] if grace else failsafe
                 targets[ch["id"]] = fans.steady_duty(c["duty"], temp, minimum, hottest)
         if self._flat:
+            before = dict(getattr(self.lhm_fans, "sent", {}))
+            started = time.monotonic()
             self.lhm_fans.apply(targets)
+            after = dict(getattr(self.lhm_fans, "sent", {}))
         else:
             self.lhm_fans.resend_all()
+            before = after = {}
         errors = self.lhm_fans.errors
         self.fan_channels = [{**ch, "mode": (chosen.get(ch["id"]) or {}).get("mode"),
                               "steady": (chosen.get(ch["id"]) or {}).get("duty"), "target": targets.get(ch["id"]),
                               "error": errors.get(ch["id"])} for ch in found]
+        present = set()
+        for ch in self.fan_channels:
+            sid, key = ch["id"], "lhm:" + ch["id"]
+            present.add(key)
+            held = sid in after
+            owner = ("Airglow" if held and after[sid][0] is not None else "Airglow requested") if ch["mode"] else (
+                "Release pending" if held else "BIOS / device")
+            self.control.observe(key, ch["name"], kind="lhm-fan", owner=owner,
+                                 online=True, expected=bool(ch["mode"] or held), stale_after=45.0)
+            if errors.get(sid):
+                self.control.failed(key, errors[sid])
+            elif sid in after and after[sid][0] is not None and before.get(sid) != after[sid]:
+                self.control.succeeded(key, duration=time.monotonic() - started)
+            elif sid in targets and (sid not in after or after[sid][0] != targets[sid]):
+                self.control.queued(key)
+            elif sid in before and sid not in after:
+                self.control.succeeded(key, duration=time.monotonic() - started)
+        self.control.reconcile("lhm-fan", present)
+        self.control.reconcile("fans", {"fan:" + d.id for d, _ in self._fan_devices()})
 
     def _fan_reason(self, duty, why, temp):
         """Say why the fans are where they are whenever it changes materially, so "they run faster than I set"
@@ -469,6 +514,7 @@ class Controller:
 
     # ------------------------------------------------------------ sensors
     def _poll_sensors(self):
+        started = time.monotonic()
         if self._read_sensors:
             summary, flat = self._read_sensors(), (self._read_flat() if self._read_flat else [])
         else:
@@ -477,6 +523,14 @@ class Controller:
             summary = sensors.summary(flat) if tree else dict(sensors.OFFLINE)
         self.sensors = summary
         self._flat = flat
+        online = bool(summary.get("online"))
+        self.control.observe("sensors", "Temperature samples", kind="component", online=online, stale_after=6.0)
+        if online and self._read_sensors:
+            self.control.succeeded("sensors", duration=time.monotonic() - started)
+        elif online and self.lhm.last_success is not None and self.lhm.last_success != self._lhm_sample_seen:
+            self.control.succeeded("sensors", at=self.lhm.last_success_at, mono=self.lhm.last_success,
+                                   duration=self.lhm.last_duration)
+            self._lhm_sample_seen = self.lhm.last_success
         return flat
 
     def _app_readings(self):
@@ -519,6 +573,33 @@ class Controller:
         s = self.sensors
         self.history.append({"t": round(time.time()), "cpu": s.get("cpu_temp"), "gpu": s.get("gpu_temp"),
                              "cpu_w": s.get("cpu_power"), "gpu_w": s.get("gpu_power"), "duty": self.fan_duty})
+        if not self.cooling.active_summary():
+            return
+        try:
+            self._record_cooling()
+            self.cooling.sample_error = None
+        except Exception as e:
+            message = str(e) or type(e).__name__
+            if self.cooling.sample_error != message:
+                log.exception("cooling sample failed; fan control continues")
+                self.control.event("cooling", "failure", message)
+            self.cooling.sample_error = message
+
+    def _record_cooling(self):
+        s = self.sensors
+        channels = [{"id": f"{dev.id}/{i}", "name": f"{dev.name} · Fan {i + 1}", "mode": "curve",
+                     "rpm": hub.fans[i].get("rpm"), "duty": hub.fans[i].get("duty"), "target": self.fan_duty}
+                    for dev, hub in self._fan_devices() for i in hub.connected_fans()]
+        channels += self.fan_channels
+        rpms = [c["rpm"] for c in channels if c.get("rpm") is not None]
+        with self._lock:
+            cfg = self.store.settings()
+            curve = {"name": self.effective_curve, "points": self.curve_points(self.effective_curve),
+                     "source": cfg["temp_source"], "failsafe": cfg["fan_failsafe_duty"]}
+        self.cooling.sample({"cpu": s.get("cpu_temp"), "gpu": s.get("gpu_temp"), "liquid": s.get("liquid_temp"),
+                             "temp": self.fan_temp, "duty": self.fan_duty if self.hubs or
+                             any(c.get("mode") == "curve" for c in self.fan_channels) else None,
+                             "rpm": sum(rpms) / len(rpms) if rpms else None, "channels": channels, "curve": curve})
 
     def _apply_device_params(self):
         saved = self.store.device_params()
@@ -527,20 +608,32 @@ class Controller:
                 d.set_params(saved.get(d.id, {}))
 
     def tick(self):
+        started = time.monotonic()
+        try:
+            self._tick()
+        except Exception as e:
+            self.control.failed("controller", e)
+            raise
+        # The light tick between sensor/fan cycles cannot prove a failed output cycle recovered.
+        if self._ticks % 2 == 1:
+            self.control.succeeded("controller", duration=time.monotonic() - started)
+
+    def _tick(self):
         now = time.time()
         if self._last_tick is not None and now - self._last_tick > 10 and self.sleeping:
             self._on_resume()                         # missed the resume broadcast
         self._last_tick = now
         self._ticks += 1
-        before = (self.automations.light_rule or {}).get("id"), (self.automations.fan_rule or {}).get("id")
-        try:
-            self.automations.evaluate()
-        except Exception:
-            log.exception("automations failed")
-        after = (self.automations.light_rule or {}).get("id"), (self.automations.fan_rule or {}).get("id")
-        if before != after:
-            log.info("automation in control: lighting=%s fans=%s", *after)
-            self.apply()
+        with self._lock:
+            before = (self.automations.light_rule or {}).get("id"), (self.automations.fan_rule or {}).get("id")
+            try:
+                self.automations.evaluate()
+            except Exception:
+                log.exception("automations failed")
+            after = (self.automations.light_rule or {}).get("id"), (self.automations.fan_rule or {}).get("id")
+            if before != after:
+                log.info("automation in control: lighting=%s fans=%s", *after)
+                self.apply()
         self.store.ensure_zones([d.info() for d in self.manager.all().values()])
         self._apply_device_params()
         if not self.engine.healthy and self.engine.last_frame is not None and not self._engine_stall_logged:
@@ -626,10 +719,17 @@ class Controller:
         if self._thread:
             self._thread.join(timeout=self.TICK + 1)
         self.lhm.stop()
+        if self.cooling.active_summary():
+            try:
+                self.cooling.stop(reason="interrupted")
+            except Exception:
+                log.exception("saving the interrupted recording failed; shutdown continues")
         self.engine.stop()
         self.failsafe()
         self.release_fans()
         self.manager.close()
+        if not self.cooling.wait_for_save(1.0):
+            log.warning("cooling save is still pending after shutdown; the interrupted marker is retained")
         log.info("controller stopped")
 
     # ------------------------------------------------------------ views
@@ -676,4 +776,5 @@ class Controller:
                        "audio": {"active": self.engine.audio.active, "error": self.engine.audio.error}},
             "fps": round(self.engine.fps, 1),
             "healthy": self.healthy,
+            "control": {**self.control.snapshot(compact=True), "recording": self.cooling.active_summary()},
         }

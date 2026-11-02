@@ -11,6 +11,14 @@ from tests.fakes import FakeLightDevice, FakeManager, FakeNzxt, signals
 
 
 class ScrubTests(unittest.TestCase):
+    def test_unicode_device_names_and_serials_are_redacted_consistently(self):
+        for device, serial in (("vendor-clavier-é", "serial-12345"), ("vendor-键盘", "sérial-设备42")):
+            key = f"openrgb:{device}:{serial}"
+            scrubbed = diagnostics.scrub(key, [])
+            self.assertNotIn(serial, scrubbed)
+            self.assertTrue(scrubbed.startswith(f"openrgb:{device}:s"))
+            self.assertEqual(diagnostics.scrub(f'"{key}/z0" log {key}', []), f'"{scrubbed}/z0" log {scrubbed}')
+
     def test_user_pc_and_serials_are_removed(self):
         text = ('C:\\Users\\jane\\AppData\\Roaming\\Airglow host JANE-PC '
                 '"key": "openrgb:corsair-k70:sn123456/z0" and C:/Users/jane/x')

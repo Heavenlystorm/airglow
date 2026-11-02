@@ -62,6 +62,50 @@ class EngineTests(unittest.TestCase):
         self.engine.tick()
         self.assertEqual(set(self.dev.last("z1")), {(0, 0, 0)})
 
+    def test_disabling_a_lit_zone_sends_black_and_reenabling_restores_the_scene(self):
+        self.engine.tick()
+        cfg = dict(self.store.zones()["d/z1"], enabled=False)
+        self.store.set_zone("d/z1", cfg, 12)
+        self.engine.invalidate("d/z1")
+        self.engine.tick()
+        self.assertEqual(self.dev.last("z1"), [(0, 0, 0)] * 6)
+        self.assertIsNone(self.dev.last("z2"), "never-enabled peripherals must stay untouched")
+        self.store.set_zone("d/z1", {**cfg, "enabled": True}, 12)
+        self.engine.invalidate("d/z1")
+        self.engine.tick()
+        self.assertEqual(self.dev.last("z1"), [(128, 64, 0)] * 6)
+
+    def test_blackout_includes_a_just_disabled_zone(self):
+        self.engine.tick()
+        self.store.set_zone("d/z1", {**self.store.zones()["d/z1"], "enabled": False}, 12)
+        self.engine.invalidate("d/z1")
+        self.engine.blackout()
+        self.assertEqual(self.dev.last("z1"), [(0, 0, 0)] * 6)
+        self.assertIsNone(self.dev.last("z2"))
+
+    def test_identifying_a_disabled_zone_returns_to_black_when_identify_expires(self):
+        self.store.set_zone("d/z1", {**self.store.zones()["d/z1"], "enabled": False}, 12)
+        self.engine.identify("d/z1")
+        self.engine.tick()
+        self.engine._identify["d/z1"] = time.monotonic() - 1
+        self.engine.tick()
+        self.assertEqual(self.dev.last("z1"), [(0, 0, 0)] * 6)
+
+    def test_disabled_zone_blackout_waits_through_throttling_and_async_writes(self):
+        self.dev.max_fps = 1
+        eng = Engine(self.manager, self.store, async_writes=True)
+        self.addCleanup(eng.stop)
+        eng.set_scene({"effect": "solid", "params": {"color": "#ff0000"}, "brightness": 100, "on": True})
+        eng.tick()
+        self.assertTrue(eng._writers["d"].wait_idle(2))
+        self.store.set_zone("d/z1", {**self.store.zones()["d/z1"], "enabled": False}, 12)
+        eng.invalidate("d/z1")
+        eng.tick()                         # throttled: the off transition must not be forgotten
+        eng._dev_sent["d"] -= 2
+        eng.tick()
+        self.assertTrue(eng._writers["d"].wait_idle(2))
+        self.assertEqual(self.dev.last("z1"), [(0, 0, 0)] * 6)
+
     def test_zone_override(self):
         cfg = dict(self.store.zones()["d/z1"], override={"effect": "solid", "params": {"color": "#0000ff"}})
         self.store.set_zone("d/z1", cfg, 12)
@@ -114,6 +158,69 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(set(self.dev.last("z1")), {(0, 0, 0)})
         eng.stop()
 
+    def test_queued_output_is_pending_until_flush_finishes(self):
+        import threading
+        entered, release = threading.Event(), threading.Event()
+        self.dev.flush = lambda: (entered.set(), release.wait(2))
+        eng = Engine(self.manager, self.store, async_writes=True)
+        self.addCleanup(eng.stop)
+        try:
+            eng.tick()
+            self.assertTrue(entered.wait(1))
+            self.assertTrue(hasattr(eng, "control"))
+            row = eng.control.snapshot()["devices"][0]
+            self.assertEqual(row["state"], "pending")
+            self.assertIsNone(row["last_success_at"])
+        finally:
+            release.set()
+        self.assertTrue(eng._writers["d"].wait_idle(2))
+        row = eng.control.snapshot()["devices"][0]
+        self.assertEqual(row["state"], "healthy")
+        self.assertIsNotNone(row["last_success_at"])
+
+    def test_failed_flush_does_not_publish_completion(self):
+        from unittest import mock
+        with mock.patch.object(self.dev, "flush", side_effect=OSError("flush failed")):
+            self.engine.tick()
+        row = self.engine.control.snapshot()["devices"][0]
+        self.assertEqual(row["state"], "failed")
+        self.assertIsNone(row["last_success_at"])
+
+    def test_retirement_drops_queued_work_and_rejects_new_frames(self):
+        import threading
+        from airglow.lighting.engine import DeviceWriter
+        entered, release = threading.Event(), threading.Event()
+        original = self.dev.write_zone
+        def blocked(zone, colors):
+            entered.set()
+            release.wait(2)
+            original(zone, colors)
+        self.dev.write_zone = blocked
+        writer = DeviceWriter(self.dev)
+        try:
+            writer.submit("z1", [(1, 2, 3)])
+            self.assertTrue(entered.wait(1))
+            writer.submit("z2", [(4, 5, 6)])
+            writer.stop()
+            self.assertIs(writer.submit("z2", [(7, 8, 9)]), False)
+        finally:
+            release.set()
+            writer.thread.join(2)
+        self.assertFalse(writer.thread.is_alive())
+        self.assertIsNone(self.dev.last("z2"))
+
+    def test_removed_device_retires_writer_without_waiting_for_another_write(self):
+        eng = Engine(self.manager, self.store, async_writes=True)
+        self.addCleanup(eng.stop)
+        eng.tick()
+        writer = eng._writers["d"]
+        self.assertTrue(writer.wait_idle(2))
+        del self.manager.natives["d"]
+        eng.tick()
+        writer.thread.join(2)
+        self.assertFalse(writer.thread.is_alive())
+        self.assertNotIn("d", eng._writers)
+
     def test_writer_survives_an_unexpected_error_from_a_device(self):
         from airglow.lighting.engine import DeviceWriter
         original, calls = self.dev.write_zone, []
@@ -160,6 +267,7 @@ class EngineTests(unittest.TestCase):
         eng = Engine(self.manager, self.store, async_writes=True)
         eng.tick()
         old = eng._writers["d"]
+        self.assertTrue(old.wait_idle(2))
         new_dev = FakeLightDevice("d", "Dev", zones=(("z1", 6), ("z2", 0)))   # OpenRGB reloaded its device list
         new_dev.open()
         self.manager.natives["d"] = new_dev

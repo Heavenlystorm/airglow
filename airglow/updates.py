@@ -8,6 +8,7 @@ Copies Velopack didn't install (running from source, a test build in dist\\) can
 release page. Scoop installs are updated by Scoop.
 """
 
+import http.client
 import json
 import logging
 import re
@@ -105,7 +106,7 @@ def fetch_meta(url=META_URL, timeout=6, opener=urllib.request.urlopen):
         req = urllib.request.Request(url, headers={"User-Agent": f"Airglow/{__version__}"})
         with opener(req, timeout=timeout) as resp:
             meta = clean_meta(json.loads(resp.read(65536).decode("utf-8")))
-    except (urllib.error.URLError, OSError, ValueError) as e:
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
         log.info("app-meta.json not updated: %s", e)
         return cached_meta()
     try:
@@ -250,8 +251,8 @@ class Updater:
         return self.status()
 
     def _run_check(self):
-        self.meta = self._fetch_meta() or self.meta
         try:
+            self.meta = self._fetch_meta() or self.meta
             if self.kind == "velopack":
                 self._check_velopack()
             else:
@@ -265,11 +266,19 @@ class Updater:
     def _check_velopack(self):
         channel = self.store.settings().get("update_channel", "stable")
         found = []
+        failures = []
         for mgr in self._managers(channel):
-            info = mgr.check_for_updates()
+            try:
+                info = mgr.check_for_updates()
+            except Exception as e:
+                log.warning("update feed check failed: %s", e)
+                failures.append(e)
+                continue
             if info is not None:
                 found.append((mgr, info))
         if not found:
+            if failures:
+                raise failures[0]                  # an incomplete check cannot claim we're up to date
             self._set(state="latest", latest=__version__)
             return
         mgr, info = max(found, key=lambda f: parse_version(f[1].TargetFullRelease.Version))

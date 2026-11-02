@@ -209,6 +209,35 @@ class LibraryTests(unittest.TestCase):
         self.lib.install(v2, hashlib.sha256(v2.encode()).hexdigest())
         self.assertEqual(self.lib.rollback(e["fx_id"])["layers"][1]["params"]["density"], 30)
 
+    def test_failed_community_update_preserves_the_active_effect_and_rollback(self):
+        v1 = builder(author="jane-dev")
+        v2 = v1.replace('"density": 30', '"density": 80')
+        v3 = v1.replace('"density": 30', '"density": 90')
+        for failure in ("write", "active-promotion", "backup-promotion"):
+            with self.subTest(failure=failure):
+                self.lib.install(v1, hashlib.sha256(v1.encode()).hexdigest())
+                current = self.lib.install(v2, hashlib.sha256(v2.encode()).hexdigest())
+                path, prev = Path(current["path"]), Path(current["path"] + ".prev")
+                before, rollback, revision = path.read_bytes(), prev.read_bytes(), self.lib.rev
+                replace = os.replace
+
+                def fail_promotion(src, dst):
+                    target = path if failure == "active-promotion" else prev
+                    if Path(dst) == target and Path(src).name.endswith(".next"):
+                        raise PermissionError("promotion blocked")
+                    return replace(src, dst)
+
+                patcher = (mock.patch.object(fxlibrary, "_write", side_effect=OSError("disk full"))
+                           if failure == "write" else mock.patch.object(fxlibrary.os, "replace", fail_promotion))
+                with patcher, self.assertRaises(OSError):
+                    self.lib.install(v3, hashlib.sha256(v3.encode()).hexdigest())
+                self.assertTrue(path.exists(), "a failed update must never remove the installed effect")
+                self.assertEqual(path.read_bytes(), before)
+                self.assertEqual(prev.read_bytes(), rollback)
+                self.assertEqual(self.lib.get(current["fx_id"])["sha256"], current["sha256"])
+                self.assertEqual(self.lib.rev, revision)
+                self.assertEqual(self.lib.rollback(current["fx_id"])["layers"][1]["params"]["density"], 30)
+
     def test_same_size_edits_on_one_timestamp_are_seen(self):
         # two writes inside one file-time tick keep (mtime, size), so the library mustn't trust its cache for its own writes
         write = fxlibrary._write

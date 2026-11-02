@@ -1,0 +1,32 @@
+/* Profile scope and local rig migration share the current theme's controls and spacing. */
+.profile-save-mode, .profile-save-scope { display: grid; gap: 12px; margin: 0; padding: 14px; min-width: 0; border: 1px solid var(--line); border-radius: var(--r-ctl); }
+.profile-save-mode legend, .profile-save-scope legend { padding: 0 6px; font-weight: 600; }
+.profile-save-mode .check, .profile-save-scope .check { align-items: start; line-height: 1.45; }
+.profile-save-mode p, .profile-save-scope p { margin: 0; line-height: 1.5; }
+.profile-save-mode b, .profile-save-scope p { overflow-wrap: anywhere; }
+.sheet:has(.rig-import) { width: min(900px, calc(100vw - 32px)); }
+.rig-import { min-width: 0; }
+.rig-import .lede { margin: 0; }
+.rig-import .hint { color: var(--ink-2); line-height: 1.5; }
+.rig-import .err { overflow-wrap: anywhere; }
+.rig-import input[type=file] { box-sizing: border-box; width: 100%; min-width: 0; }
+.rig-import input[type=file]::file-selector-button { margin-right: 12px; padding: 8px 12px; color: var(--ink); background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-ctl); font: inherit; cursor: pointer; }
+.rig-import h3 { margin: 0 0 10px; font-size: 17px; }
+.rig-import section { padding-top: 20px; border-top: 1px solid var(--line); margin-top: 16px; min-width: 0; }
+.rig-zone-grid { display: grid; gap: 12px; margin-top: 16px; }
+.rig-zone { display: grid; grid-template-columns: minmax(170px, .9fr) minmax(0, 1.1fr); column-gap: 16px; row-gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--panel); min-width: 0; }
+.rig-zone > span { min-width: 0; overflow-wrap: anywhere; }
+.rig-zone small { display: block; color: var(--ink-2); font-size: 12px; margin-top: 4px; line-height: 1.4; }
+.rig-zone select { width: 100%; min-width: 0; }
+.rig-zone .rig-zone-status { grid-column: 2; margin: 0; overflow-wrap: anywhere; }
+.rig-change { border-bottom: 1px solid var(--line-soft); padding: 10px 0; overflow-wrap: anywhere; }
+.rig-change summary { cursor: pointer; font-weight: 500; }
+.rig-change ul, .rig-warnings { margin: 10px 0; padding-left: 22px; line-height: 1.6; }
+.rig-warnings { color: var(--warm); }
+.rig-import .actions { flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .rig-zone { grid-template-columns: minmax(0, 1fr); }
+  .rig-zone .rig-zone-status { grid-column: 1; }
+  .rig-import .actions .spacer { display: none; }
+  .rig-import .actions .btn { flex: 1 1 140px; }
+}

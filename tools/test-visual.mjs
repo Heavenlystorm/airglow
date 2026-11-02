@@ -74,7 +74,8 @@ try {
   }
 
   async function visit(view) {
-    await page.locator(`[data-tab="${view}"]`).click();
+    if (await page.locator("#nav-select").isVisible()) await page.locator("#nav-select").selectOption(view);
+    else await page.locator(`[data-tab="${view}"]`).click();
     await page.locator(`[data-view="${view}"]`).waitFor({ state: "visible" });
     await page.locator(READY[view]).first().waitFor({ state: "visible" });
     assert.equal(await page.locator(`[data-tab="${view}"]`).getAttribute("aria-current"), "page");

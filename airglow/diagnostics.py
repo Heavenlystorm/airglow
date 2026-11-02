@@ -19,7 +19,8 @@ from . import __version__, conflicts, paths, sensors, tools
 
 # Vendors whose USB controllers Airglow could drive natively (listed so a report shows what's plugged in).
 USB_VENDORS = {0x1E71: "NZXT", 0x0B05: "ASUS"}
-_OPENRGB_ID = re.compile(r"(openrgb:[a-z0-9\-]+:)([a-z0-9\-]+)")
+# OpenRGBDevice's slug keeps Unicode alphanumerics as well as ASCII and dashes.
+_OPENRGB_ID = re.compile(r"(openrgb:(?:[^\W_]|-)+:)((?:[^\W_]|-)+)")
 
 
 def _secrets():

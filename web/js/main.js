@@ -1,6 +1,6 @@
 // Boot, routing, the 2-second state poll, and the top bar.
 
-import { $, $$, S, curveLabel, emit, esc, fail, get, on, post, refreshZones, setHTML, toast } from "./core.js";
+import { $, $$, S, curveLabel, dismissMutation, emit, esc, fail, get, mutationStates, on, post, refreshZones, retryMutation, setHTML, toast } from "./core.js";
 import { initStage } from "./stage.js";
 import { initAutomations, renderAutomations, pauseAutomations, sentence } from "./automations.js";
 import { openOnlineQuestion, openWelcome } from "./onboarding.js";
@@ -56,6 +56,8 @@ async function route() {
   if (currentView === "studio" && view !== "studio") views.studio?.leaveStudio();
   if (currentView !== null && currentView !== view) enter($(`.view[data-view="${view}"]`));
   currentView = view;
+  if ($("#nav-select")) $("#nav-select").value = view;
+  paintMutations();
   if (view === "overview") { renderOverview(); return; }
   if (view === "automations") { renderAutomations(); return; }
   let m;
@@ -69,6 +71,50 @@ async function route() {
 }
 window.addEventListener("hashchange", () => { route().catch(fail); });
 on("studio:open", (req) => { loadView("studio").then((m) => m.openStudio(req)).catch(fail); });
+$("#nav-select")?.addEventListener("change", (e) => { location.hash = "#" + e.target.value; });
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-control-center]")) import("./control-center.js").then((m) => m.openControlCenter()).catch(fail);
+});
+
+// Keep failed operations visible until resolved or explicitly dismissed, including after changing views.
+function paintMutations() {
+  const box = $("#mutation-status");
+  if (!box) return;
+  const states = mutationStates(), failed = states.filter((s) => s.status === "failed");
+  const busy = states.filter((s) => s.status === "saving" || s.status === "queued");
+  box.hidden = !failed.length && !busy.length;
+  if (box.hidden) return;
+  setHTML(box, failed.map((s) => `<div class="mutation-line" data-error="true"><span><b>${esc(s.label)} failed.</b> ${esc(s.error)}${s.retry ? "" : " Check the current state before repeating this action."}</span>
+    <div class="btn-row"><a class="text-link" href="#${esc(s.view)}">Open controls</a>${s.retry ? `<button class="btn quiet" data-retry-mutation="${esc(s.key)}" data-id="${s.id}">Retry save</button>` : ""}<button class="icon-btn" data-dismiss-mutation="${esc(s.key)}" data-id="${s.id}" aria-label="Dismiss ${esc(s.label)} error"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div></div>`).join("")
+    + (busy.length ? `<div class="mutation-line"><span>Saving ${busy.map((s) => esc(s.label.toLowerCase())).join(", ")}…</span></div>` : ""));
+}
+on("mutations", paintMutations);
+$("#mutation-status")?.addEventListener("click", async (e) => {
+  const dismiss = e.target.closest("[data-dismiss-mutation]");
+  if (dismiss) return dismissMutation(dismiss.dataset.dismissMutation, +dismiss.dataset.id);
+  const button = e.target.closest("[data-retry-mutation]");
+  if (!button) return;
+  const key = button.dataset.retryMutation;
+  const state = mutationStates().find((s) => s.key === key && s.id === +button.dataset.id);
+  if (!state) return;
+  try {
+    const request = retryMutation(key, state.id);
+    const retryId = mutationStates().find((s) => s.key === key)?.id;
+    const result = await request;
+    if (result === false) return;
+    if (mutationStates().find((s) => s.key === key)?.id !== retryId) return;
+    if (state.path === "/api/settings") S.settings = result;
+    else if (state.path.startsWith("/api/curves/")) S.curves.curves[state.path.split("/")[3]] = result.points;
+    else if (state.path.startsWith("/api/presets")) S.presets = Array.isArray(result) ? result : result.presets;
+    else if (state.path === "/api/automations") S.rules = result;
+    if (state.path === "/api/presets/from-current" && result.curves) S.curves.curves = result.curves;
+    if (result?.retained_curve) {
+      S.curves.curves[result.retained_curve.id] = result.retained_curve.points;
+      S.state.fans.base_curve = result.retained_curve.id;
+    }
+    emit("refresh"); emit("state"); toast(`${state.label} saved`);
+  } catch { /* the resource's persistent error is updated by post() */ }
+});
 
 window.addEventListener("resize", () => moveMarker($(".tab-ink"), $(".tabs a[aria-current]"), true));
 
