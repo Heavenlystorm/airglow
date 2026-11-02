@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from .. import lightsetup
+from ..controlstatus import ControlStatus
 from ..devices import DeviceError, ORDERS
 from ..openrgb import OpenRGBError
 from . import effects, geometry, studio
@@ -25,7 +26,7 @@ class DeviceWriter:
     """One per device: keeps only the newest frame for each zone and writes it on its own thread, so slow USB
     devices update in parallel (not one after another) and a slow device never holds up rendering."""
 
-    def __init__(self, dev):
+    def __init__(self, dev, on_complete=None):
         self.dev = dev
         self._pending = {}
         self._lock = threading.Lock()
@@ -33,20 +34,26 @@ class DeviceWriter:
         self._idle = threading.Event()
         self._idle.set()
         self._stopped = False
+        self._on_complete = on_complete
         self.thread = threading.Thread(target=self._run, name=f"write-{dev.id}", daemon=True)
         self.thread.start()
 
     def submit(self, zone_id, colors):
         with self._lock:
+            if self._stopped:
+                return False
             self._pending[zone_id] = colors            # replaces an older frame nobody has written yet
             self._idle.clear()
         self._wake.set()
+        return True
 
     def wait_idle(self, timeout):
         return self._idle.wait(timeout)
 
     def stop(self):
-        self._stopped = True
+        with self._lock:
+            self._stopped = True
+            self._pending.clear()
         self._wake.set()
 
     def _run(self):
@@ -54,19 +61,32 @@ class DeviceWriter:
             self._wake.wait(0.5)
             self._wake.clear()
             with self._lock:
+                if self._stopped:
+                    self._idle.set()
+                    return
                 batch, self._pending = self._pending, {}
             if batch and self.dev.online:
+                started, error = time.monotonic(), None
                 try:
                     for zone_id, colors in batch.items():
+                        if self._stopped:
+                            break
                         self.dev.write_zone(zone_id, colors)
-                    self.dev.flush()
+                    if not self._stopped:
+                        self.dev.flush()
+                        self.dev.error = None
                 except (DeviceError, OpenRGBError, OSError) as e:
+                    error = str(e)
                     log.warning("%s: %s", self.dev.name, e)
                     self.dev.error = str(e)
                     self.dev.close()                   # the device manager reconnects it in the background
                 except Exception as e:                 # a bug in a device's code must not end this thread for good
+                    error = str(e) or type(e).__name__
                     log.exception("%s: writing failed", self.dev.name)
                     self.dev.error = str(e) or type(e).__name__
+                with self._lock:
+                    if not self._stopped and self._on_complete:
+                        self._on_complete(error, time.monotonic() - started, bool(self._pending))
             with self._lock:
                 if not self._pending:
                     self._idle.set()
@@ -83,9 +103,11 @@ class Engine:
     PREVIEW_SECONDS = 10.0   # the gallery keeps asking while a profile's preview is on screen
     PROBE_LEVEL = 0.25       # white at a quarter: a long strip at full white can draw more than a header supplies
 
-    def __init__(self, manager, store, sensors=lambda: {}, async_writes=True):
+    def __init__(self, manager, store, sensors=lambda: {}, async_writes=True, control=None):
         self.manager, self.store, self._sensors = manager, store, sensors
         self.async_writes = async_writes  # tests write synchronously so they can check results right away
+        self.control = control or ControlStatus()
+        self.control.observe("lighting", "Lighting frames", kind="component", stale_after=5.0)
         self._writers = {}               # device id -> DeviceWriter
         self._online = {}                # device id -> the device object if it was online last frame (re-send on change)
         self.scene = dict(store.state["scene"])
@@ -102,6 +124,7 @@ class Engine:
         self.preview_frames = {}
         self._bad_zones = set()          # zones whose layout can't be drawn (logged once each)
         self._last = {}                  # zone key -> (bytes, time sent)
+        self._driven = {}                # zone key -> LED count sent; survives invalidation so Off can send black
         self._dev_sent = {}              # device id -> time a frame was last sent to it (for Device.max_fps)
         self._geom = {}                  # zone key -> (layout snapshot, namespace)
         self._missing = set()            # effects not on this PC (drawn as Solid), logged once each
@@ -326,8 +349,26 @@ class Engine:
         frames = {}
         self._moving = False
         seen = set()
-        for dev in list(self.manager.all().values()):
+        current = self.manager.all()
+        for key, writer in list(self._writers.items()):
+            if current.get(key) is not writer.dev or not writer.dev.online:
+                writer.stop()
+                self._writers.pop(key, None)
+        present = {"light:" + key for key in current}
+        self.control.reconcile("lighting", present)
+        for key in set(self._online) - set(current):
+            self._online.pop(key, None)
+            self._dev_sent.pop(key, None)
+            for zone_key in [k for k in self._driven if k.startswith(key + "/")]:
+                self._driven.pop(zone_key, None)
+                self._last.pop(zone_key, None)
+                self._geom.pop(zone_key, None)
+        for dev in list(current.values()):
             online = dev.online
+            status_key = "light:" + dev.id
+            enabled = any((zones.get(f"{dev.id}/{z.id}") or {}).get("enabled") for z in dev.zones)
+            self.control.observe(status_key, dev.name, kind="lighting", owner="Airglow" if enabled else "Device",
+                                 online=online, expected=enabled, stale_after=15 if getattr(dev, "keepalive", True) else None)
             # (re)connected, or reloaded as a new object (OpenRGB's device list changed): send every zone again
             if online and self._online.get(dev.id) is not dev:
                 for k in [k for k in self._last if k.startswith(dev.id + "/")]:
@@ -343,6 +384,7 @@ class Engine:
             min_change = getattr(dev, "min_change", 0)
             keepalive = getattr(dev, "keepalive", True)
             wrote = False
+            write_started = time.monotonic()
             for zone in dev.zones:
                 key = f"{dev.id}/{zone.id}"
                 seen.add(key)
@@ -361,8 +403,11 @@ class Engine:
                         rgb, bri = np.zeros((zone.max_leds, 3)), 100
                     elif not zcfg:
                         continue
-                    elif not zcfg.get("enabled") and key not in self._identify:
-                        continue                  # identify works on a switched-off zone, like the probe does
+                    elif not zcfg.get("enabled") and self._identify.get(key, 0) <= now:
+                        count = self._driven.get(key, 0)
+                        if not count:
+                            continue              # leave never-enabled peripherals under their own control
+                        rgb, bri = np.zeros((count, 3)), 100
                     else:
                         try:
                             if geometry.total_leds(zcfg["layout"]) == 0:
@@ -397,15 +442,25 @@ class Engine:
                     if writer is None or writer.dev is not dev:
                         if writer:                     # OpenRGB reloaded the device as a new object
                             writer.stop()
-                        writer = self._writers[dev.id] = DeviceWriter(dev)
+                        def completed(error, duration, pending, key=status_key):
+                            if error:
+                                self.control.failed(key, error)
+                            else:
+                                self.control.succeeded(key, duration=duration, pending=pending)
+                        writer = self._writers[dev.id] = DeviceWriter(dev, completed)
+                    self.control.queued(status_key)
                     writer.submit(zone.id, [tuple(px) for px in ints.tolist()])
                     self._last[key] = (raw, now)
+                    self._driven[key] = len(ints)
                     continue
                 try:
+                    self.control.queued(status_key)
                     dev.write_zone(zone.id, [tuple(px) for px in ints.tolist()])
                     self._last[key] = (raw, now)
+                    self._driven[key] = len(ints)
                     wrote = True
                 except (DeviceError, OpenRGBError, OSError) as e:
+                    self.control.failed(status_key, e)
                     log.warning("%s: %s", dev.name, e)
                     dev.error = str(e)
                     dev.close()
@@ -413,8 +468,11 @@ class Engine:
             if wrote:
                 try:
                     dev.flush()
+                    dev.error = None
+                    self.control.succeeded(status_key, duration=time.monotonic() - write_started)
                 except (DeviceError, OpenRGBError, OSError) as e:
                     dev.error = str(e)
+                    self.control.failed(status_key, e)
         for key, probe in list(self._probe.items()):
             if key not in seen and probe[2] <= now:
                 # its zone went away (unplugged, or OpenRGB reloaded the device): a stale probe would count as
@@ -431,6 +489,7 @@ class Engine:
             self._render_preview(zones, now, t)      # builds its own dict: no lock, no tearing for the reader
         self.frame_id += 1
         self.last_frame = time.monotonic()
+        self.control.succeeded("lighting", duration=self.last_frame - now)
         self._identify = {k: d for k, d in self._identify.items() if d > now}
         with self._lock:
             busy = self._probe or self._probe_done or self._preview
@@ -448,7 +507,8 @@ class Engine:
             self._kick.clear()
             try:
                 self.tick()
-            except Exception:
+            except Exception as e:
+                self.control.failed("lighting", e)
                 log.exception("lighting frame failed")
                 time.sleep(0.5)
             count += 1
@@ -481,9 +541,13 @@ class Engine:
             if writer and writer.dev is not dev:       # a replaced device's writer: write this one directly
                 writer = None
             for zone in dev.zones:
-                zcfg = self.store.zones().get(f"{dev.id}/{zone.id}")
+                key = f"{dev.id}/{zone.id}"
+                zcfg = self.store.zones().get(key)
+                count = self._driven.get(key, 0)
                 if zcfg and zcfg.get("enabled"):
-                    black = [(0, 0, 0)] * geometry.total_leds(zcfg["layout"])
+                    count = max(count, geometry.total_leds(zcfg["layout"]))
+                if count:
+                    black = [(0, 0, 0)] * count
                     if writer:
                         writer.submit(zone.id, black)
                     else:

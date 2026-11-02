@@ -1,6 +1,7 @@
 // Fans screen: temperature/power readouts with history, the curve editor, and fan speeds.
 
 import { $, $$, S, cap, clamp, curveLabel, emit, esc, fail, fmtTemp, on, post, rangeFill, setHTML, tempLevel, toUnit, toast, unitF } from "./core.js";
+import { openSheet } from "./sheet.js";
 
 const HISTORY_SECONDS = 600;
 const num = (v) => `<span class="num">${v}</span>`;
@@ -70,7 +71,7 @@ function renderEditor() {
     : "whichever part is hotter";
   // Rebuilding the whole graph every two seconds threw away the focus of a point you had picked with the keyboard.
   // Only draw when something it shows has changed, and put the focus back when it does.
-  const key = JSON.stringify([E.curve, E.draft, E.sel, E.drag ? E.drag.i : null, F.curve, F.temp, named, minDuty,
+  const key = JSON.stringify([E.curve, E.draft, E.sel, E.drag ? E.drag.i : null, F.curve, F.temp, F.duty, named, minDuty,
                                safety, dirty(), S.settings?.settings?.temp_source, S.state.sensors.liquid_temp]);
   if (key === E.drawn) return;
   E.drawn = key;
@@ -91,8 +92,8 @@ function renderEditor() {
     <text class="zone-label" x="${ED.L + 8}" y="${ED.B - 8}">Below ${minDuty}% some fans stall, so curves stay above it</text>`;
   if (dirty()) g += `<polyline class="ghost" points="${line(saved())}"/>`;
   g += `<polygon class="curve-fill" points="${ex(ED.tMin)},${ED.B} ${line(pts)} ${ex(ED.tMax)},${ED.B}"/><polyline class="curve-line" points="${line(pts)}"/>`;
-  if (F.temp != null && E.curve === F.curve) {
-    const t = clamp(F.temp, ED.tMin, ED.tMax), d = F.temp >= safety ? 100 : interp(pts, t);
+  if (F.temp != null && F.duty != null && E.curve === F.curve) {
+    const t = clamp(F.temp, ED.tMin, ED.tMax), d = F.duty;
     const right = ex(t) < ED.R - 150;
     g += `<line class="now-line" x1="${ex(t)}" x2="${ex(t)}" y1="${ED.T}" y2="${ED.B}"/><circle class="now-dot" cx="${ex(t)}" cy="${ey(d)}" r="5"/>
       <text class="now-label" x="${ex(t) + (right ? 10 : -10)}" y="${ey(d) - 12}" text-anchor="${right ? "start" : "end"}">Now ${fmtTemp(F.temp)}, ${Math.round(d)}%</text>`;
@@ -105,12 +106,14 @@ function renderEditor() {
   if (focusPt != null) $(`#editor .pt[data-i="${focusPt}"]`)?.focus({ preventScroll: true });
   $("#curve-save").disabled = !dirty();
   $("#curve-discard").disabled = !dirty();
+  $("#curve-reset").disabled = !S.curves.defaults[E.curve];
+  if ($("#curve-add")) $("#curve-add").disabled = E.draft.length >= 8;
   $("#curve-lede").textContent = !(F.curve in S.curves.curves)
     ? `The fans follow ${F.curve === "trial" ? "the curve of the profile you're trying" : `${curveLabel(F.curve)}'s own curve`}. Pick a curve here to switch back to one of yours.`
     : F.curve !== F.base_curve
     ? `An automation has switched the fans to ${curveLabel(F.curve)} for now. ${curveLabel(F.base_curve)} comes back when it stops.`
     : `Fans that Airglow drives follow this curve, tracking ${tracking}.`;
-  $("#editor-hint").textContent = dirty() ? "Unsaved changes. The dashed line is the saved curve." : "Drag points, double-click to add one, Delete removes the selected point, arrow keys fine-tune it.";
+  $("#editor-hint").textContent = dirty() ? "Draft changes. The dashed line is the saved curve; fans keep following it until you save." : "Drag points or use Add curve point. Arrow keys fine-tune a focused point; Delete removes it.";
 }
 
 function svgPoint(e) {
@@ -121,6 +124,16 @@ const fromSvg = ([x, y]) => [Math.round(ED.tMin + ((x - ED.L) / (ED.R - ED.L)) *
 function movePoint(i, t, d) {
   const p = E.draft, lo = i > 0 ? p[i - 1][0] + 1 : ED.tMin, hi = i < p.length - 1 ? p[i + 1][0] - 1 : ED.tMax;
   p[i] = [clamp(t, lo, hi), clamp(d, S.curves.min_duty, 100)];
+}
+
+function addCurvePoint(t, d) {
+  if (!E.draft || E.draft.length >= 8) return toast("A curve can have up to 8 points", true);
+  if (t < ED.tMin || t > ED.tMax || E.draft.some((p) => p[0] === t)) return;
+  E.draft.push([t, clamp(d, S.curves.min_duty, 100)]);
+  E.draft.sort((a, b) => a[0] - b[0]);
+  E.sel = E.draft.findIndex((p) => p[0] === t);
+  renderEditor();
+  $(`#editor .pt[data-i="${E.sel}"]`)?.focus({ preventScroll: true });
 }
 
 function wireEditor() {
@@ -137,14 +150,16 @@ function wireEditor() {
   svg.addEventListener("pointercancel", end);
   svg.addEventListener("dblclick", (e) => {
     if (e.target.closest(".pt")) return;
-    const [t, d] = fromSvg(svgPoint(e));
-    if (E.draft.length >= 8) return toast("A curve can have up to 8 points", true);
-    if (t < ED.tMin || t > ED.tMax || E.draft.some((p) => p[0] === t)) return;
-    E.draft.push([t, clamp(d, S.curves.min_duty, 100)]);
-    E.draft.sort((a, b) => a[0] - b[0]);
-    E.sel = E.draft.findIndex((p) => p[0] === t);
-    renderEditor();
+    addCurvePoint(...fromSvg(svgPoint(e)));
   });
+  $("#curve-add")?.addEventListener("click", () => {
+    if (!E.draft) return;
+    const boundaries = [ED.tMin, ...E.draft.map((p) => p[0]), ED.tMax];
+    const gaps = boundaries.slice(1).map((t, i) => [boundaries[i], t]).sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
+    const t = Math.round((gaps[0][0] + gaps[0][1]) / 2);
+    addCurvePoint(t, Math.round(interp(E.draft, t)));
+  });
+  $("#cooling-workbench")?.addEventListener("click", () => import("./cooling-workbench.js").then((m) => m.openCoolingWorkbench()).catch(fail));
   svg.addEventListener("keydown", (e) => {
     const c = e.target.closest(".pt");
     if (!c) return;
@@ -166,7 +181,7 @@ function wireEditor() {
     renderEditor();
   });
   $("#curve-discard").addEventListener("click", () => { E.draft = null; E.sel = null; renderEditor(); });
-  $("#curve-reset").addEventListener("click", () => { E.draft = S.curves.defaults[E.curve].map((p) => p.slice()); E.sel = null; renderEditor(); if (dirty()) toast("Default curve loaded. Save to keep it."); });
+  $("#curve-reset").addEventListener("click", () => { if (!S.curves.defaults[E.curve]) return; E.draft = S.curves.defaults[E.curve].map((p) => p.slice()); E.sel = null; renderEditor(); if (dirty()) toast("Default curve loaded. Save to keep it."); });
   $("#curve-save").addEventListener("click", async () => {
     const name = E.curve, draft = E.draft, before = JSON.stringify(draft);
     const previous = curveSaves.get(name);
@@ -217,7 +232,7 @@ function channelRow(c) {
   const steady = c.steady ?? (c.pump ? 70 : 50);
   return `<li class="chan" data-chan="${esc(c.id)}">
     <div class="chan-name"><strong>${esc(c.name)}${c.pump ? ` <span class="tag">Pump</span>` : ""}</strong><span>${esc(c.device)}</span>
-      <button type="button" class="text-link" data-chan-all title="Give every fan below the same setting">Use for all</button></div>
+      <button type="button" class="text-link" data-chan-all>Copy settings to…</button></div>
     <span class="bar" title="What it runs at now"><i></i></span><span class="rpm"></span>
     <select class="select" data-mode aria-label="How ${esc(c.name)} runs">${MODES.map(([v, l]) => `<option value="${v}"${v === mode ? " selected" : ""}>${l}</option>`).join("")}</select>
     <span class="chan-steady"${mode === "steady" ? "" : " hidden"}><input type="range" min="${S.curves?.min_duty ?? 20}" max="100" step="5" value="${steady}" data-steady aria-label="Steady speed"><output>${steady}%</output></span>
@@ -269,6 +284,47 @@ async function saveChannel(row, patch) {
   } catch (err) { fail(err); chanKey = ""; renderPorts(); }
 }
 
+export async function copyChannelSettings(targets, patch) {
+  const applied = [], failed = [];
+  for (const target of targets) {
+    try {
+      const result = await post("/api/fans/channel", { id: target.id, mode: patch.mode, duty: patch.duty });
+      S.state.fans.channels = result.channels;
+      applied.push(target.id);
+    } catch (error) { failed.push({ id: target.id, name: target.name, error: error.message }); }
+  }
+  return { applied, failed };
+}
+
+function copyChannelSheet(source, patch) {
+  const targets = (S.state.fans.channels || []).filter((c) => c.id !== source.id);
+  const action = !patch.mode ? "leave control with its own software" : patch.mode === "curve" ? "follow the current fan curve" : `hold ${patch.duty}%`;
+  openSheet(`<form id="copy-channels"><h2>Copy ${esc(source.name)} settings</h2>
+    <p>Selected targets will ${esc(action)}. Pumps are left unselected until you choose them.</p>
+    <fieldset class="copy-targets"><legend>Apply to</legend>${targets.map((c) => `<label class="check"><input type="checkbox" data-copy-target value="${esc(c.id)}"${c.pump ? "" : " checked"}><span>${esc(c.name)} <span class="hint">${c.pump ? "Pump" : "Fan"}${c.group ? ` · ${esc(c.group)}` : ""}</span></span></label>`).join("") || `<p class="hint">No other controllable fans or pumps are available.</p>`}</fieldset>
+    <p id="copy-results" role="status" hidden></p>
+    <div class="actions"><span class="spacer"></span><button type="button" class="btn quiet" data-close>Close</button><button class="btn primary" id="copy-apply">Apply to selected</button></div></form>`);
+  const form = $("#copy-channels"), button = form.querySelector("#copy-apply");
+  const fields = [...form.querySelectorAll("[data-copy-target]")];
+  const update = () => { button.disabled = !fields.some((c) => c.checked && !c.disabled); };
+  form.addEventListener("change", update); update();
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (button.disabled) return;
+    const selected = new Set(fields.filter((c) => c.checked && !c.disabled).map((c) => c.value));
+    fields.forEach((c) => { c.disabled = true; }); button.disabled = true;
+    const { applied, failed } = await copyChannelSettings(targets.filter((c) => selected.has(c.id)), patch);
+    chanKey = ""; renderPorts();
+    const result = form.querySelector("#copy-results");
+    result.hidden = false;
+    result.className = failed.length ? "err" : "hint";
+    result.textContent = `${applied.length} of ${selected.size} targets updated.${failed.length ? " " + failed.map((c) => `${c.name}: ${c.error}`).join("; ") : " Their settings are saved."}`;
+    fields.forEach((c) => { if (applied.includes(c.value)) c.checked = false; c.disabled = false; });
+    button.textContent = failed.length ? "Retry selected targets" : "Apply to selected";
+    update(); emit("refresh");
+  });
+}
+
 export function renderFans() {
   if (!S.state) return;
   renderReadouts();
@@ -292,28 +348,16 @@ export function initFans() {
     rangeFill(e.target);
     e.target.nextElementSibling.textContent = `${e.target.value}%`;
   });
-  // "Use for all": the same setting for every header and cooler Airglow drives, one call each.
+  // Copy only to the targets selected in the review sheet; pump inclusion is always explicit.
   box.addEventListener("click", async (e) => {
     const b = e.target.closest("[data-chan-all]");
     if (!b) return;
     const row = b.closest("[data-chan]");
     const src = (S.state.fans.channels || []).find((c) => c.id === row.dataset.chan);
     if (!src) return;
-    const mode = src.mode || "";
+    const mode = row.querySelector("[data-mode]")?.value ?? src.mode ?? "";
     const duty = +(row.querySelector("[data-steady]")?.value ?? 50);
-    const others = (S.state.fans.channels || []).filter((c) => c.id !== src.id);
-    let failed = null;
-    for (const c of others) {
-      try {
-        const r = await post("/api/fans/channel", { id: c.id, mode, duty });
-        S.state.fans.channels = r.channels;
-      } catch (err) { failed = err; break; }
-    }
-    chanKey = "";
-    renderPorts();
-    const what = !mode ? "keeps its own curve" : mode === "curve" ? "follows the fan curve" : `holds ${duty}%`;
-    if (failed) toast(`${src.name}'s setting was applied until ${failed.message}`, true);
-    else toast(`All ${others.length + 1} fans now ${what}`);
+    copyChannelSheet(src, { mode, duty });
   });
   on("state", () => { if (!$('[data-view="fans"]').hidden) renderFans(); });
   window.addEventListener("beforeunload", (e) => { if (dirty()) e.preventDefault(); });

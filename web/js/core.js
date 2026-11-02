@@ -36,7 +36,79 @@ async function request(method, path, body, timeout = 8000) {
   }
 }
 export const get = (p, timeout) => request("GET", p, undefined, timeout);
-export const post = (p, b, timeout) => request("POST", p, b, timeout);
+
+// Serialize writes to the same resource across editors. Reads and unrelated resources remain independent.
+const mutationTails = new Map(), mutations = new Map();
+let mutationId = 0;
+function mutationInfo(path, body) {
+  if (path === "/api/scene") return ["lighting", "Lighting", "lighting", true];
+  if (/^\/api\/presets\/[^/]+\/apply$/.test(path) || /^\/api\/profiles\/(try|discard|keep)$/.test(path))
+    return ["lighting", "Profile application", "lighting", false];
+  if (path === "/api/studio/use") return ["lighting", "Effect application", "studio", false];
+  if (path === "/api/studio/draft") return ["lighting", "Live preview", "studio", false, true];
+  if (/^\/api\/zones\/[^/]+$/.test(path)) return [path, "Zone settings", "devices", true];
+  if (/^\/api\/curves\/[^/]+(?:\/reset)?$/.test(path)) return [path.replace(/\/reset$/, ""), "Fan curve", "fans", true];
+  if (path === "/api/fan_curve") return ["fan-curve", "Active fan curve", "fans", true];
+  if (path === "/api/fans/channel") return [`fan:${body?.id}`, "Fan or pump setting", "fans", true];
+  if (path === "/api/settings") return ["settings", "Settings", "settings", true];
+  if (path === "/api/overview") return ["overview", "Overview layout", "overview", true];
+  if (path === "/api/automations") return ["automations", "Automations", "automations", true];
+  if (path === "/api/presets" || path === "/api/presets/from-current")
+    return ["profiles", "Profiles", "lighting", path === "/api/presets" || !!body?.id];
+  return null;
+}
+
+export const mutationStates = () => [...mutations.values()].filter((s) => !s.silent).map(({ body, timeout, ...s }) => ({ ...s }));
+const mutationChanged = () => emit("mutations", mutationStates());
+export function dismissMutation(key, id) {
+  if (mutations.get(key)?.id !== id || mutations.get(key)?.status !== "failed") return;
+  mutations.delete(key); mutationChanged();
+}
+export function retryMutation(key, id) {
+  const s = mutations.get(key);
+  if (!s || s.id !== id || s.status !== "failed" || !s.retry) return Promise.resolve(false);
+  return post(s.path, s.body, s.timeout);
+}
+
+export function post(path, body, timeout) {
+  const info = mutationInfo(path, body);
+  if (!info) return request("POST", path, body, timeout);
+  const [key, label, view, retry, silent = false] = info;
+  const snapshot = structuredClone(body ?? {}), id = ++mutationId;
+  if (!silent) {
+    mutations.set(key, { key, id, label, view, retry, silent, path, body: snapshot, timeout, status: "queued", error: "" });
+    while (mutations.size > 64) mutations.delete(mutations.keys().next().value);
+    mutationChanged();
+  } else if (mutations.delete(key)) {
+    // A newer preview owns this resource even though it has its own status UI.
+    // An older failed scene write must never remain available to interrupt it.
+    mutationChanged();
+  }
+  const update = (status, error = "") => {
+    if (mutations.get(key)?.id === id) {
+      Object.assign(mutations.get(key), { status, error }); mutationChanged();
+    }
+  };
+  const run = async () => {
+    update("saving");
+    try {
+      const result = await request("POST", path, snapshot, timeout);
+      update("saved");
+      const applied = /^\/api\/presets\/([^/]+)\/apply$/.exec(path);
+      if (applied && result.ok === true) emit("profile:applied", decodeURIComponent(applied[1]));
+      return result;
+    } catch (error) {
+      update("failed", error.message || String(error));
+      throw error;
+    }
+  };
+  const previous = mutationTails.get(key), result = previous ? previous.then(run) : run();
+  const tail = result.then(() => {}, () => {}).finally(() => {
+    if (mutationTails.get(key) === tail) mutationTails.delete(key);
+  });
+  mutationTails.set(key, tail);
+  return result;
+}
 
 let toastTimer;
 export function toast(msg, isErrorOrOptions = false) {
@@ -136,13 +208,18 @@ export function debounce(fn, ms) {
 
 // Coalesce rapid writes (sliders): first call goes out within `ms`, later calls merge into the next send.
 export function coalesce(send, ms = 70) {
-  let pending = null, timer = null;
-  return (patch) => {
-    pending = { ...(pending || {}), ...patch };
-    if (timer) return;
+  let pending = null, timer = null, sending = false;
+  const schedule = () => {
+    if (timer || sending || !pending) return;
     timer = setTimeout(async () => {
       const body = pending; pending = null; timer = null;
+      sending = true;
       try { await send(body); } catch (e) { fail(e); }
+      finally { sending = false; schedule(); }
     }, ms);
+  };
+  return (patch) => {
+    pending = { ...(pending || {}), ...patch };
+    schedule();
   };
 }

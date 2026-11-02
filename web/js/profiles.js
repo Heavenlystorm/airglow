@@ -2,7 +2,7 @@
 // A profile is the lighting look, per-area effects, optionally its own fan curve, and when shared, the automations
 // that switch to it. The gallery lives in profiles/ in the Airglow repository; sharing opens GitHub in the browser.
 
-import { $, $$, S, curveLabel, effectName, emit, esc, fail, get, post, sceneSwatch, toast } from "./core.js";
+import { $, $$, S, curveLabel, effectName, emit, esc, fail, get, on, post, sceneSwatch, toast } from "./core.js";
 import { sentence } from "./automations.js";
 import { closeSheet, openSheet } from "./sheet.js";
 import { paintMini } from "./stage.js";
@@ -21,26 +21,84 @@ function lookLine(p) {
 }
 
 // ------------------------------------------------------------ save current
+let editingTarget = null;
+try { editingTarget = sessionStorage.getItem("airglow.profile-editing-target") || null; } catch { /* session only */ }
+function retainTarget(id) {
+  if (!id) return;
+  editingTarget = id;
+  try { sessionStorage.setItem("airglow.profile-editing-target", id); } catch { /* memory still retains it */ }
+}
+on("profile:applied", retainTarget);
+on("state", () => retainTarget(S.state?.active_preset));
+
 export function saveProfileSheet(done) {
+  retainTarget(S.state?.active_preset);
+  const target = S.presets.find((profile) => profile.id === editingTarget);
   const curve = S.state.fans.base_curve;
   const named = Object.keys(S.curves.curves).includes(curve);
-  openSheet(`<form id="sp-form"><h2>Save as profile</h2>
-    <p class="hint">Saves the current effect, its settings and brightness, and any effects you gave single zones, by where they sit in your case. Shared, they land on the same areas of someone else's rig.</p>
-    <label class="field"><span class="lab">Name</span><input class="text" id="sp-name" required maxlength="40" autocomplete="off" placeholder="Movie night"></label>
-    <label class="field"><span class="lab">Description <span class="hint">(optional)</span></span><input class="text" id="sp-desc" maxlength="200" autocomplete="off" placeholder="What it looks like, when you use it"></label>
-    <label class="check"><input type="checkbox" id="sp-fans" checked> Switch fans to ${named ? `the ${esc(curveLabel(curve))} curve` : "the current curve"} too</label>
-    <p class="err" id="sp-err" hidden></p>
-    <div class="actions"><span class="spacer"></span><button type="button" class="btn quiet" data-close>Cancel</button><button class="btn primary">Save profile</button></div></form>`);
+  const areas = { ...(S.state.scene?.areas || {}) }, overrides = {};
+  for (const zone of S.zones?.zones || []) {
+    if (zone.config.enabled && zone.config.override && zone.spot && !overrides[zone.spot]) overrides[zone.spot] = zone.config.override;
+  }
+  Object.assign(areas, overrides);
+  let mode = target ? "update" : "new", saving = false;
+  openSheet(`<form id="sp-form"><h2>Save current settings</h2>
+    ${target ? `<fieldset class="profile-save-mode"><legend>Save destination</legend>
+      <label class="check"><input type="radio" name="sp-mode" id="sp-update" checked> Update this profile: <b>${esc(target.name)}</b></label>
+      <label class="check"><input type="radio" name="sp-mode" id="sp-new"> Save as new</label>
+    </fieldset><p class="hint">Updating keeps the profile's identity and its automation links, including after you adjust its lighting.</p>`
+      : `<p class="hint">Save as a new profile. Apply an existing profile first to update it.</p>`}
+    <label class="field"><span class="lab">Name</span><input class="text" id="sp-name" required maxlength="40" autocomplete="off" placeholder="Movie night" value="${esc(target?.name || "")}"></label>
+    <label class="field"><span class="lab">Description <span class="hint">(optional)</span></span><input class="text" id="sp-desc" maxlength="200" autocomplete="off" placeholder="What it looks like, when you use it" value="${esc(target?.description || "")}"></label>
+    <fieldset class="profile-save-scope"><legend>Included settings</legend>
+      <p>Lighting: <b>${esc(effectName(S.state.scene?.effect))}</b> at ${S.state.scene?.brightness ?? 100}% brightness.</p>
+      <label class="check"><input type="checkbox" id="sp-areas" checked> Include per-area effects and zone overrides</label>
+      <p class="hint">${Object.entries(areas).map(([area, scene]) => `${esc(AREA_LABEL[area] || area)}: ${esc(effectName(scene.effect))}`).join(" · ") || "No per-area overrides in the current look."}</p>
+      <label class="check"><input type="checkbox" id="sp-fans"${!target || target.fan_curve || target.fan_points || target.fan_profile ? " checked" : ""}> Include ${named ? `the ${esc(curveLabel(curve))} fan curve` : "the current fan curve"}</label>
+      <p class="hint">Fan settings are used when you apply this profile. Saving keeps the current fan settings.${target?.fan_profile ? ` Updating with fans included also keeps its FanControl assignment: ${esc(target.fan_profile)}.` : ""}</p>
+    </fieldset>
+    <p class="err" id="sp-err" role="alert" hidden></p><p class="hint" id="sp-status" role="status" aria-live="polite">Draft</p>
+    <div class="actions"><span class="spacer"></span><button type="button" class="btn quiet" data-close>Cancel</button><button class="btn primary" id="sp-submit">${target ? "Update profile" : "Save as new"}</button></div></form>`);
   $("#sp-name").focus();
-  $("#sp-form").addEventListener("submit", async (e) => {
+  const form = $("#sp-form");
+  form.addEventListener("change", (event) => {
+    if (!["sp-update", "sp-new"].includes(event.target.id) || !event.target.checked) return;
+    mode = event.target.id === "sp-update" ? "update" : "new";
+    $("#sp-submit").textContent = mode === "update" ? "Update profile" : "Save as new";
+    if (mode === "new") $("#sp-fans").checked = true; // preserve the existing default for new saves
+  });
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (saving) return;
     const name = $("#sp-name").value.trim();
+    const body = { name, description: $("#sp-desc").value.trim(), include_fans: $("#sp-fans").checked,
+      include_areas: $("#sp-areas").checked, ...(mode === "update" && target ? { id: target.id } : {}) };
+    saving = true;
+    form.querySelectorAll("input, button").forEach((element) => { element.disabled = true; });
+    $("#sp-status").textContent = "Saving…";
+    $("#sp-err").hidden = true;
     try {
-      const r = await post("/api/presets/from-current", { name, description: $("#sp-desc").value.trim(), include_fans: $("#sp-fans").checked });
+      const r = await post("/api/presets/from-current", body);
       S.presets = r.presets;
+      if (r.curves) S.curves.curves = r.curves;
+      if (r.retained_curve) {
+        S.curves.curves[r.retained_curve.id] = r.retained_curve.points;
+        S.state.fans.base_curve = r.retained_curve.id;
+      }
       S.state.active_preset = r.id;
-      closeSheet(); done?.(); toast(`${name} saved`);
-    } catch (err) { $("#sp-err").textContent = err.message; $("#sp-err").hidden = false; }
+      retainTarget(r.id);
+      if ($("#sp-form") === form) closeSheet();
+      done?.(); emit("refresh"); toast(`${name} ${mode === "update" ? "updated" : "saved"}${r.retained_curve ? ". The current fan curve was kept separately." : ""}`);
+    } catch (err) {
+      if ($("#sp-form") === form) {
+        $("#sp-err").textContent = `${err.message}. Your entries are still here.`;
+        $("#sp-err").hidden = false;
+        $("#sp-status").textContent = "Save failed";
+      }
+    } finally {
+      saving = false;
+      if ($("#sp-form") === form) form.querySelectorAll("input, button").forEach((element) => { element.disabled = false; });
+    }
   });
 }
 
@@ -80,7 +138,7 @@ export function editProfilesSheet(done) {
     emit("refresh");
   };
   const render = () => {
-    openSheet(`<form id="ep-form" class="wide"><h2>Profiles</h2><p class="hint">Rename, describe, set their fans, share or delete them. To change a profile's lighting, apply it, adjust, and save it again.</p>
+    openSheet(`<form id="ep-form" class="wide"><h2>Profiles</h2><p class="hint">Rename, describe, set their fans, share or delete them. To change a profile's lighting, apply it, adjust, then choose Update this profile when saving.</p>
       <div class="pf-rows" id="ep-rows">${draft.map(row).join("") || `<p class="hint">No profiles yet.</p>`}</div>
       <p class="err" id="ep-err" hidden></p>
       <div class="actions"><button type="button" class="btn quiet" id="ep-gallery">Browse the gallery</button><span class="spacer"></span><button type="button" class="btn quiet" data-close>Cancel</button><button class="btn primary">Save profiles</button></div></form>`);

@@ -15,7 +15,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (__version__, autostart, conflicts, coolers, diagnostics, fancontrol, gallery, lightsetup, paths, profiles,
+from . import (__version__, autostart, conflicts, coolers, diagnostics, fancontrol, gallery, lightsetup, paths,
                system, tools, updates)
 from .automation import validate_rule, whole_number
 from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP
@@ -231,7 +231,7 @@ class Handler(BaseHTTPRequestHandler):
     def _host_frames(self):
         """The effect host's colours for one frame, packed (web/js/fxhost.js): 30 of these a second, so no JSON."""
         n = int(self.headers.get("Content-Length") or 0)
-        if n > MAX_BODY:
+        if n > MAX_BODY or n < 0:
             raise ApiError(413, "request too large")
         body = self.rfile.read(n)
         if not studio.HOST.check_token(self.headers.get("X-Airglow-Token")):
@@ -316,24 +316,6 @@ def _catalog():
     return _CATALOG
 
 
-def _preset(store, pid):
-    p = next((p for p in store.get_presets() if p["id"] == pid), None)
-    if not p:
-        raise ApiError(404, "That profile no longer exists.")
-    return p
-
-
-def _current_areas(ctrl, store):
-    """Per-area effects for "save current": the scene's own, then each area's first zone you gave its own effect."""
-    areas = dict(ctrl.base_scene.get("areas") or {})
-    mine = {}
-    for cfg in store.zones().values():
-        if cfg.get("enabled") and cfg.get("override"):
-            mine.setdefault(lightsetup.zone_spot(cfg), {"effect": cfg["override"]["effect"],
-                                                        "params": cfg["override"]["params"]})
-    return {**areas, **mine}
-
-
 _COOLERS = {"at": -1e9, "found": []}
 _COOLERS_LOCK = threading.Lock()
 
@@ -360,6 +342,15 @@ def _setup_pending(ctrl, store):
 
 def route(server, method, path, body, query=None):
     ctrl, store, hooks = server.ctrl, server.store, server.hooks
+    if path.startswith(("/api/control/", "/api/cooling/")):
+        from . import operationsapi
+        return operationsapi.route(server, method, path, body, query)
+    if path.startswith("/api/rig/"):
+        from . import rigapi
+        return rigapi.route(server, method, path, body, query)
+    if path == "/api/presets" or path.startswith(("/api/presets/", "/api/profiles/")) or path == "/api/preview":
+        from . import profileapi
+        return profileapi.route(server, method, path, body, query)
     if path.startswith("/api/studio/"):
         from . import studioapi
         try:
@@ -391,8 +382,6 @@ def route(server, method, path, body, query=None):
             return list(ctrl.history)
         if path == "/api/frames":
             return {"id": ctrl.engine.frame_id, "fps": round(ctrl.engine.fps, 1), "zones": ctrl.engine.frames}
-        if path == "/api/presets":
-            return store.get_presets()
         if path == "/api/effects":
             return effects.catalog()
         if path == "/api/zones":
@@ -444,90 +433,7 @@ def route(server, method, path, body, query=None):
         store.set_fan_channel(sid, cfg)
         ctrl.fan_channels_changed()
         return {"channels": ctrl.fan_channels}
-    if path == "/api/presets":
-        presets = store.set_presets(body.get("presets"))
-        ctrl.presets_changed()
-        return presets
-    if path == "/api/presets/from-current":
-        name = str(body.get("name") or "").strip()
-        presets = store.get_presets()
-        if len(presets) >= 24:
-            raise ApiError(400, "You have 24 profiles already. Remove one first (Profiles, Edit).")
-        pid = profiles.new_id(name, {p["id"] for p in presets})
-        scene = ctrl.base_scene
-        new = {"id": pid, "name": name, "effect": scene["effect"], "params": scene["params"],
-               "brightness": scene["brightness"], "areas": _current_areas(ctrl, store), "fan_curve": None,
-               "fan_profile": None, "description": body.get("description") or ""}
-        if body.get("include_fans", True):
-            if ctrl.base_curve in store.curves():
-                new["fan_curve"] = ctrl.base_curve
-            else:                                   # a profile's own curve, or one being tried: keep its points
-                new["fan_points"] = ctrl.curve_points(ctrl.base_curve)
-        presets = store.set_presets(presets + [new])
-        ctrl.mark_preset(pid)
-        return {"presets": presets, "id": pid}
-    if path == "/api/preview":
-        if body.get("profile"):
-            ctrl.engine.preview(profiles.scene_of(profiles.validate_shared(body["profile"])))
-        elif body.get("preset"):
-            p = _preset(store, body["preset"])
-            ctrl.engine.preview(profiles.scene_of(profiles.to_shared(p, store.get_rules(), curves=store.curves())))
-        else:
-            ctrl.engine.preview(None)
-        return {"ok": True}
-    if path == "/api/profiles/try":
-        shared = profiles.validate_shared(body.get("profile"))
-        covered = set((shared.get("areas") or {}))
-        clear = [k for k, c in store.zones().items() if c.get("override") and lightsetup.zone_spot(c) in covered]
-        ctrl.try_profile(profiles.scene_of(shared), shared["name"],
-                         fan_points=(shared.get("fans") or {}).get("curve") if body.get("include_fans") else None,
-                         clear_zones=clear)
-        return {"ok": True}
-    if path == "/api/profiles/discard":
-        ctrl.end_trial()
-        return {"ok": True}
-    if path == "/api/profiles/keep":
-        shared = profiles.validate_shared(body.get("profile"))
-        presets = store.get_presets()
-        if len(presets) >= 24:
-            raise ApiError(400, "You have 24 profiles already. Remove one first (Profiles, Edit).")
-        pid = profiles.new_id(shared["name"], {p["id"] for p in presets})
-        preset = profiles.to_preset(shared, pid, include_fans=bool(body.get("include_fans")))
-        new = []
-        if body.get("include_automations") and shared.get("automations"):
-            rules = store.get_rules()
-            new = profiles.rules_to_install(shared, pid, {r["id"] for r in rules})
-        presets = ctrl.keep_profile(preset, new)
-        return {"presets": presets, "id": pid}
-    if path == "/api/profiles/share":
-        p = _preset(store, body.get("id"))
-        shared = profiles.to_shared(p, store.get_rules(), author=str(body.get("author") or "").strip(),
-                                    description=str(body.get("description") or p.get("description") or "").strip(),
-                                    include_fans=bool(body.get("include_fans")),
-                                    include_automations=bool(body.get("include_automations")),
-                                    curves=store.curves())
-        if not shared["author"]:
-            raise ApiError(400, "Add your GitHub name, so the gallery can credit you.")
-        url, filled = gallery.share_url(shared)
-        if body.get("open", True) and hooks.get("open_url") and gallery.is_share_url(url):
-            hooks["open_url"](url)
-        return {"url": url, "filled": filled, "source": gallery.share_file(shared),
-                "path": f"{gallery.FOLDER}/{shared['id']}.json", "profile": shared}
-    if path == "/api/profiles/open-share":          # after the page put a long profile on the clipboard
-        url = str(body.get("url"))
-        if not gallery.is_share_url(url):
-            raise ApiError(400, "not a share address")
-        if hooks.get("open_url"):
-            hooks["open_url"](url)
-        return {"ok": True}
-    m = re.fullmatch(r"/api/presets/([a-z0-9\-]{1,64})/apply", path)
-    if m:
-        preset = next((p for p in store.get_presets() if p["id"] == m.group(1)), None)
-        if not preset:
-            raise ApiError(404, "That preset no longer exists.")
-        steps = ctrl.apply_preset(preset)
-        return {"ok": all(s["ok"] for s in steps), "steps": steps}
-    m = re.fullmatch(r"/api/curves/([a-z]+)(/reset)?", path)
+    m = re.fullmatch(r"/api/curves/([a-z0-9-]{1,64})(/reset)?", path)
     if m:
         points = store.reset_curve(m.group(1)) if m.group(2) else store.set_curve(m.group(1), body.get("points"))
         return {"points": points}

@@ -1,0 +1,53 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "web/index.html"
+        ],
+        "createdAt": "2026-11-02T18:26:15.736Z",
+        "reason": "Agent: retained existing on/off lighting indicators and theme selection accents; source review and the current fixture show these are intentional control states, not new decorative surfaces."
+      },
+      {
+        "rule": "wide-tracking",
+        "value": "*",
+        "files": [
+          "web/index.html"
+        ],
+        "createdAt": "2026-11-02T19:05:27.032Z",
+        "reason": "Agent: source review finds no wide tracking on body or running paragraphs. Tracking above .05em is confined to short uppercase control labels and the existing wordmark/brand caption; these declarations predate this implementation."
+      },
+      {
+        "rule": "pulsing-dot",
+        "value": "*",
+        "files": [
+          "web/index.html"
+        ],
+        "createdAt": "2026-11-02T19:05:27.087Z",
+        "reason": "Agent: .su-blink i is an instructional preview of the white hardware-identification blink requested by setup.js stepBlink, not a decorative connection or liveness status. The setup code and CSS match the starting snapshot."
+      },
+      {
+        "rule": "marquee",
+        "value": "*",
+        "files": [
+          "web/index.html"
+        ],
+        "createdAt": "2026-11-02T19:05:27.138Z",
+        "reason": "Agent: the three findings are rainbow, gradient and temperature lighting-effect thumbnails, not scrolling text. app.css pauses the thumbnails until hover or keyboard focus. The CSS matches the starting snapshot."
+      },
+      {
+        "rule": "radial-halo",
+        "value": "*",
+        "files": [
+          "web/index.html"
+        ],
+        "createdAt": "2026-11-02T19:05:27.191Z",
+        "reason": "Agent: the radial gradients are inside the .t-studio lighting-effect thumbnail, representing the light effect rather than a page background. The CSS matches the starting snapshot."
+      }
+    ]
+  }
+}

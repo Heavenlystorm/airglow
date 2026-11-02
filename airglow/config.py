@@ -3,13 +3,12 @@
 import copy
 import json
 import logging
-import os
 import re
 import threading
 import time
 from pathlib import Path
 
-from . import paths
+from . import fileio, paths
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +66,7 @@ DEFAULT_PRESETS = [
 ]
 
 # The Overview: a grid of tiles (4 columns). Sensor tiles name readings by id ("auto/..." shortcuts work on any PC).
-TILE_TYPES = ("sensor", "lighting", "presets", "fans")
+TILE_TYPES = ("sensor", "lighting", "presets", "fans", "control")
 TILE_STYLES = ("spark", "ring", "graph", "bar")
 GRID_COLUMNS = 4
 DEFAULT_OVERVIEW = {
@@ -556,23 +555,43 @@ class Store:
         if name in self._protected_files:
             raise ValueError(f"{name} could not be read at startup. Restart Airglow before saving changes; "
                              "the original file has been kept.")
-        tmp = self.dir / f"{name}.{os.getpid()}.{threading.get_ident()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(json.dumps(data, indent=2, ensure_ascii=False))
-            f.flush()
-            os.fsync(f.fileno())
-        for wait in (0.05, 0.1, 0.2, 0.4, None):
+        fileio.atomic_write_text(self.dir / name, json.dumps(data, indent=2, ensure_ascii=False))
+
+    def _commit_files(self, writes):
+        """Commit validated candidates under the store lock; restore exact originals on ordinary failures.
+
+        All originals must be readable before the first change. This is not a power-loss transaction across
+        files: each individual replacement is atomic, but a process or power failure can interrupt the group.
+        """
+        originals = {}
+        for name, _ in writes:
+            if name in self._protected_files:
+                raise ValueError(f"{name} could not be read at startup. Restart Airglow before saving changes; "
+                                 "the original file has been kept.")
             try:
-                tmp.replace(self.dir / name)
-                return
-            except PermissionError:                 # antivirus or the search indexer has the file open for a moment
-                if wait is None:
-                    try:
-                        tmp.unlink()
-                    except OSError:
-                        pass
-                    raise
-                time.sleep(wait)
+                originals[name] = (self.dir / name).read_bytes().decode("utf-8")
+            except FileNotFoundError:
+                originals[name] = None
+        written = []
+        try:
+            for name, value in writes:
+                self._write(name, value)
+                written.append(name)
+        except Exception as error:
+            failures = []
+            for name in reversed(written):
+                try:
+                    if originals[name] is None:
+                        (self.dir / name).unlink(missing_ok=True)
+                    else:
+                        fileio.atomic_write_text(self.dir / name, originals[name])
+                except OSError:
+                    failures.append(name)
+                    log.exception("could not restore %s after a failed save", name)
+            if failures:
+                raise OSError(f"Save failed ({error}); could not restore {', '.join(failures)}. "
+                              "Live settings were kept. Check the data folder before restarting.") from error
+            raise
 
     def _save_config(self, changes):
         """With the store lock held, persist a candidate before making it visible to readers."""
@@ -723,14 +742,16 @@ class Store:
             return copy.deepcopy(self.config["fan_curves"])
 
     def set_curve(self, name, points):
-        if name not in DEFAULT_CURVES:
-            raise ValueError(f"unknown fan curve '{name}'")
         clean = validate_curve(points)
         with self._lock:
+            if name not in self.config["fan_curves"]:
+                raise ValueError(f"unknown fan curve '{name}'")
             self._save_config({"fan_curves": {**self.config["fan_curves"], name: clean}})
         return clean
 
     def reset_curve(self, name):
+        if name not in DEFAULT_CURVES:
+            raise ValueError("this imported curve has no factory default")
         return self.set_curve(name, DEFAULT_CURVES[name])
 
     # -- zones
@@ -860,6 +881,60 @@ class Store:
             self.presets = clean
         return clean
 
+    def add_preset(self, preset):
+        """Allocate an id and append under one lock, so concurrent saves cannot lose a profile."""
+        from .profiles import new_id
+        with self._lock:
+            if len(self.presets) >= 24:
+                raise ValueError("You have 24 profiles already. Remove one first (Profiles, Edit).")
+            pid = new_id(preset["name"], {p["id"] for p in self.presets})
+            clean = validate_presets(self.presets + [{**preset, "id": pid}], self.config["fan_curves"])
+            self._write("presets.json", clean)
+            self.presets = clean
+            return copy.deepcopy(clean), pid
+
+    def save_current_profile(self, preset, preset_id=None):
+        """Save a new profile or replace one stable identity, including the saved selection."""
+        from .profiles import new_id
+        with self._lock:
+            previous = None
+            if preset_id is not None:
+                previous = next((p for p in self.presets if p["id"] == preset_id), None)
+                if previous is None:
+                    raise ValueError("That profile no longer exists. Save as new to keep these settings.")
+                pid = preset_id
+                candidates = [{**preset, "id": pid} if p["id"] == pid else p for p in self.presets]
+            else:
+                if len(self.presets) >= 24:
+                    raise ValueError("You have 24 profiles already. Remove one first (Profiles, Edit).")
+                pid = new_id(preset["name"], {p["id"] for p in self.presets})
+                candidates = self.presets + [{**preset, "id": pid}]
+            clean = validate_presets(candidates, self.config["fan_curves"])
+            selected = {**self.state, "active_preset": pid}
+            candidate_config = self.config
+            replacement = next(p for p in clean if p["id"] == pid)
+            old_points = (previous or {}).get("fan_points")
+            if selected.get("fan_curve") == f"profile:{pid}" and old_points and old_points != replacement.get("fan_points"):
+                # The running manual curve must outlive a profile becoming lighting-only. Reuse equal points or
+                # keep a separate named curve, and save its identity in the same transaction as the replacement.
+                curves = self.config["fan_curves"]
+                retained = next((name for name, points in curves.items() if points == old_points), None)
+                if retained is None:
+                    if len(curves) >= 32:
+                        raise ValueError("There are already 32 saved curves. Choose a different active fan curve "
+                                         "in Fans before removing this profile's fan settings.")
+                    taken = set(curves) | {r["then"]["curve"] for r in self.rules if r["then"]["type"] == "fan_curve"}
+                    retained = new_id(f"{pid}-saved", taken)
+                    candidate_config = {**self.config, "fan_curves": {**curves, retained: copy.deepcopy(old_points)}}
+                selected["fan_curve"] = retained
+            writes = []
+            if candidate_config is not self.config:
+                writes.append(("config.json", candidate_config))
+            writes.extend([("presets.json", clean), ("state.json", selected)])
+            self._commit_files(writes)
+            self.config, self.presets, self.state = candidate_config, clean, selected
+            return copy.deepcopy(clean), pid
+
     def install_profile(self, preset, rules=(), state=None, clear_zones=()):
         """Validate Keep in full, and restore earlier files if any later write fails."""
         from .automation import validate_rule
@@ -873,26 +948,34 @@ class Store:
                 if key in config["zones"]:
                     config["zones"][key]["override"] = None
             selected = {**self.state, **state} if state is not None else self.state
-            writes = [("presets.json", presets, self.presets)]
+            writes = [("presets.json", presets)]
             if rules:
-                writes.append(("automations.json", combined, self.rules))
+                writes.append(("automations.json", combined))
             if config != self.config:
-                writes.append(("config.json", config, self.config))
+                writes.append(("config.json", config))
             if state is not None:
-                writes.append(("state.json", selected, self.state))
-            written = []
-            try:
-                for name, value, old in writes:
-                    self._write(name, value)
-                    written.append((name, old))
-            except Exception:
-                for name, old in reversed(written):
-                    self._write(name, old)
-                raise
+                writes.append(("state.json", selected))
+            self._commit_files(writes)
             self.presets, self.rules = presets, combined
             self.zones_rev += config != self.config
             self.config, self.state = config, selected
             return copy.deepcopy(presets)
+
+    def save_trial_state(self, state, clear_zones=()):
+        """Keep an already-installed profile trial without clearing live overrides before its state is saved."""
+        with self._lock:
+            candidate = copy.deepcopy(self.config)
+            for key in clear_zones:
+                if key in candidate["zones"]:
+                    candidate["zones"][key]["override"] = None
+            selected = {**self.state, **state}
+            writes = []
+            if candidate != self.config:
+                writes.append(("config.json", candidate))
+            writes.append(("state.json", selected))
+            self._commit_files(writes)
+            self.zones_rev += candidate != self.config
+            self.config, self.state = candidate, selected
 
     # -- automations
     def get_rules(self):

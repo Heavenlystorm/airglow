@@ -172,6 +172,8 @@ class OpenRGBClient:
                                   timeout=1.0)
             self.version = min(CLIENT_PROTOCOL, struct.unpack("<I", reply[:4])[0])
         except socket.timeout:
+            if not self.connected:                   # a partial reply is not a protocol-0 server's silence
+                raise
             self.version = 0                            # protocol 0 servers don't answer this request
         self._send(0, SET_CLIENT_NAME, self.name.encode() + b"\0")
         log.info("connected to OpenRGB at %s:%d (protocol %d)", self.host, self.port, self.version)
@@ -204,7 +206,12 @@ class OpenRGBClient:
     def _recv_exact(self, n):
         buf = b""
         while len(buf) < n:
-            chunk = self._socket().recv(n - len(buf))
+            try:
+                chunk = self._socket().recv(n - len(buf))
+            except socket.timeout:
+                if buf:
+                    self.close()                       # consumed bytes cannot be recovered on the next request
+                raise
             if not chunk:
                 raise OpenRGBError("OpenRGB closed the connection")
             buf += chunk
@@ -215,7 +222,11 @@ class OpenRGBClient:
         if head[:4] != MAGIC:
             raise OpenRGBError("unexpected data from OpenRGB")
         dev_idx, pkt_id, size = struct.unpack("<III", head[4:])
-        return dev_idx, pkt_id, self._recv_exact(size) if size else b""
+        try:
+            return dev_idx, pkt_id, self._recv_exact(size) if size else b""
+        except socket.timeout:
+            self.close()                               # the header was consumed even if no body bytes arrived
+            raise
 
     def _request(self, dev_idx, pkt_id, payload=b"", expect_reply=True, timeout=None):
         self._send(dev_idx, pkt_id, payload)
@@ -227,13 +238,18 @@ class OpenRGBClient:
             sock.settimeout(timeout)
         try:
             while True:
-                _, rid, data = self._read_packet()
+                response_dev, rid, data = self._read_packet()
                 if rid == DEVICE_LIST_UPDATED:          # asynchronous notification; remember and keep reading
                     self.devices_changed = True
                     continue
-                if rid == pkt_id:
+                if rid == pkt_id and response_dev == dev_idx:
                     return data
         except socket.timeout:
+            if pkt_id != REQUEST_PROTOCOL_VERSION:
+                self.close()
+            raise
+        except OpenRGBError:
+            self.close()
             raise
         except OSError as e:
             self.close()
@@ -283,7 +299,7 @@ class OpenRGBClient:
             self._send(dev_idx, UPDATE_LEDS, encode_leds(colors))
 
     def poll_notifications(self):
-        """Drain pending notifications without blocking (called from the engine loop)."""
+        """Drain pending notifications; a started packet has a finite read timeout."""
         if not self.sock:
             return
         with self._lock:
@@ -294,16 +310,15 @@ class OpenRGBClient:
                         head = self.sock.recv(16, socket.MSG_PEEK)
                     except (BlockingIOError, InterruptedError):
                         break
-                    if len(head) < 16:
-                        if not head:
-                            self.close()
+                    if not head:
+                        self.close()
                         break
                     self.sock.settimeout(self.timeout)       # the rest is on its way; never wait for ever
                     _, pid, _ = self._read_packet()
                     self.sock.setblocking(False)
                     if pid == DEVICE_LIST_UPDATED:
                         self.devices_changed = True
-            except OSError:
+            except (OSError, OpenRGBError):
                 self.close()
             finally:
                 if self.sock:

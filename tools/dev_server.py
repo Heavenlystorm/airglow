@@ -16,6 +16,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -188,7 +189,7 @@ class DemoFeed:
 
 
 if __name__ == "__main__":
-    data = Path(tempfile.gettempdir()) / ("airglow-demo" if DEMO else "airglow-dev2")
+    data = Path(os.environ["AIRGLOW_FIXTURE_DATA"]) if os.environ.get("AIRGLOW_FIXTURE_DATA") else Path(tempfile.gettempdir()) / ("airglow-demo" if DEMO else "airglow-dev2")
     store = config.Store(data)
     if DEMO:
         serve_demo_lhm()
@@ -199,12 +200,17 @@ if __name__ == "__main__":
     manager.bridge.status = "Connected, 2 devices"
     gpu.open(); kb.open()
     ctrl = Controller(store, manager=manager)
+    if os.environ.get("AIRGLOW_FIXTURE") == "1":
+        # Browser CI exercises simulated controls; it must never capture the host's display/audio or open WebView2.
+        ctrl._warm_up_inputs = lambda: None
+        ctrl.engine.screen = SimpleNamespace(active=False, error=None, frame=None, touch=lambda **kw: None)
+        ctrl.engine.audio = SimpleNamespace(active=False, error=None, frame=None, touch=lambda **kw: None)
     ctrl.start()
     updater = updates.Updater(store, kind="velopack", managers=lambda channel: [DemoFeed()], fetch_meta=lambda: None)
     server = api.Server(8790, ctrl, store, updater=updater)
     from airglow import fxlibrary
     from airglow.lighting import studio
     fxlibrary.LIBRARY = fxlibrary.Library(data / "effects")     # the dev server keeps its effects with its data
-    studio.HOST.url = "http://127.0.0.1:8790"
+    studio.HOST.url = None if os.environ.get("AIRGLOW_FIXTURE") == "1" else "http://127.0.0.1:8790"
     print("dev UI on http://127.0.0.1:8790  (data in", data, ")", "with demo sensors" if DEMO else "")
     server.serve_forever()

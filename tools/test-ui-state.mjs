@@ -32,12 +32,12 @@ async function harness() {
   const document = Object.assign(element(), { createElement: element, visibilityState: "hidden" });
   const context = vm.createContext({
     document, window: element(), location: { hash: "#lighting" }, console,
-    structuredClone, AbortController, performance, confirm: () => true,
+    structuredClone, AbortController, TextEncoder, performance, confirm: () => true,
     localStorage: {
       getItem: (key) => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key),
     },
-    setTimeout(fn) { timers.set(++timer, fn); return timer; },
+    setTimeout(fn, ms) { timers.set(++timer, { fn, ms }); return timer; },
     clearTimeout(id) { timers.delete(id); },
     fetch(path, options) {
       if (options.method === "GET") {
@@ -50,7 +50,7 @@ async function harness() {
       }));
     },
   });
-  const real = new Set(["core", "studio", "studio-start", "fans", "main", "lighting"]);
+  const real = new Set(["core", "studio", "studio-start", "studio-document", "studio-preview", "studio-gallery", "studio-packs", "fans", "main", "lighting"]);
   const extra = {
     studio: "export { E, save, quietSave, newDoc, snapDoc, saveDraftNow, pending };",
     fans: "export { E, renderEditor, movePoint };",
@@ -90,8 +90,155 @@ async function harness() {
     return module;
   }
   const core = (await load("core")).namespace;
-  return { load, core, context, node, requests, storage, releaseStudio };
+  function fireTimer(ms) {
+    const next = [...timers].find(([, value]) => value.ms === ms);
+    if (!next) return false;
+    timers.delete(next[0]);
+    next[1].fn();
+    return true;
+  }
+  return { load, core, context, node, requests, storage, releaseStudio, fireTimer };
 }
+
+test("conflicting mutations serialize snapshots while unrelated zones stay responsive", async () => {
+  const h = await harness();
+  const body = { params: { speed: 1 } };
+  const first = h.core.post("/api/scene", body);
+  body.params.speed = 99;
+  const second = h.core.post("/api/scene", { brightness: 80 });
+  const other = h.core.post("/api/zones/device%2Fzone", { name: "Front" });
+  await flush();
+  assert.equal(h.requests.length, 2, "only one request per lighting resource may be in flight");
+  assert.equal(h.requests[0].body.params.speed, 1);
+  h.requests[1].resolve({ config: {} });
+  await other;
+  h.requests[0].resolve({ scene: body });
+  await first;
+  await flush();
+  assert.equal(h.requests.length, 3);
+  assert.equal(h.requests[2].body.brightness, 80);
+  h.requests[2].resolve({ scene: {} });
+  await second;
+  assert.equal(h.core.mutationStates().find((s) => s.key === "lighting").status, "saved");
+});
+
+test("failed saves stay recoverable but an obsolete failure cannot replay over a newer edit", async () => {
+  const h = await harness();
+  const first = h.core.post("/api/scene", { brightness: 20 }).catch((e) => e);
+  await flush();
+  h.requests[0].reject(new Error("disk full"));
+  await first;
+  const failed = h.core.mutationStates().find((s) => s.key === "lighting");
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.error, "disk full");
+  assert.equal(failed.retry, true);
+  const second = h.core.post("/api/scene", { brightness: 80 });
+  await flush();
+  h.requests[1].resolve({ scene: { brightness: 80 } });
+  await second;
+  assert.equal(await h.core.retryMutation("lighting", failed.id), false);
+  assert.equal(h.requests.length, 2, "the old value must never be replayed after success");
+});
+
+test("recovery retries idempotent saves but never uncertain profile creation", async () => {
+  const h = await harness();
+  const first = h.core.post("/api/settings", { energy_price: 0.3 }).catch((e) => e);
+  await flush(); h.requests[0].reject(new Error("temporarily unavailable")); await first;
+  const failed = h.core.mutationStates().find((s) => s.key === "settings");
+  const retry = h.core.retryMutation(failed.key, failed.id);
+  await flush();
+  assert.deepEqual(h.requests[1].body, { energy_price: 0.3 });
+  h.requests[1].resolve({}); await retry;
+  const creation = h.core.post("/api/presets/from-current", { name: "Evening" }).catch((e) => e);
+  await flush(); h.requests[2].reject(new Error("request timed out")); await creation;
+  const profile = h.core.mutationStates().find((s) => s.key === "profiles");
+  assert.equal(profile.retry, false);
+  assert.equal(await h.core.retryMutation(profile.key, profile.id), false);
+});
+
+test("a silent Studio mutation invalidates recovery of an older lighting edit", async () => {
+  const h = await harness();
+  const failedWrite = h.core.post("/api/scene", { brightness: 10 }).catch(e => e);
+  await flush(); h.requests[0].reject(new Error("save failed")); await failedWrite;
+  const failed = h.core.mutationStates().find(s => s.key === "lighting");
+  const draft = h.core.post("/api/studio/draft", { lights: true });
+  await flush(); h.requests[1].resolve({ lights: true }); await draft;
+  const retry = h.core.retryMutation("lighting", failed.id);
+  await flush();
+  assert.equal(h.requests.length, 2, "a newer silent draft invalidates the old retry");
+  assert.equal(await retry, false);
+});
+
+test("global automation recovery installs the confirmed list before the next edit", async () => {
+  const h = await harness(); await h.load("main");
+  const rule = { id: "retained", when: { type: "idle", minutes: 10 }, then: { type: "lights_off" } };
+  const write = h.core.post("/api/automations", { rules: [rule] }).catch(e => e);
+  await flush(); h.requests[0].reject(new Error("save failed")); await write;
+  const failed = h.core.mutationStates().find(s => s.key === "automations");
+  const button = { dataset: { retryMutation: "automations", id: String(failed.id) } };
+  const recovery = h.node("#mutation-status").fire("click", { target: { closest: selector => selector === "[data-retry-mutation]" ? button : null } });
+  await flush(); h.requests[1].resolve([rule]); await recovery;
+  assert.deepEqual(plain(h.core.S.rules), [rule]);
+  const next = h.core.post("/api/automations", { rules: [...h.core.S.rules, { ...rule, id: "new" }] });
+  await flush(); assert.deepEqual(h.requests[2].body.rules.map(r => r.id), ["retained", "new"]);
+  h.requests[2].resolve(h.requests[2].body.rules); await next;
+});
+
+test("scene pack download checks the actual UTF-8 serialization including small floats and Unicode", async () => {
+  const h = await harness(), packs = (await h.load("studio-packs")).namespace;
+  const pack = { name: "café", values: { speed: 1e-6 }, source: "" };
+  const overhead = Buffer.byteLength(JSON.stringify(pack, null, 2), "utf8");
+  pack.source = "x".repeat(240 * 1024 - overhead);
+  assert.equal(Buffer.byteLength(packs.serializePack(pack), "utf8"), 240 * 1024);
+  pack.source += "é";
+  assert.throws(() => packs.serializePack(pack), /240 KiB/);
+});
+
+test("coalesced slider writes wait for the active save and persist the latest merged edit", async () => {
+  const h = await harness(), sends = [];
+  let saved;
+  const change = h.core.coalesce((body) => new Promise((resolve) => sends.push({ body,
+    resolve() { saved = body; resolve(); },
+  })), 70);
+  change({ brightness: 20 });
+  assert.equal(h.fireTimer(70), true);
+  change({ brightness: 40 });
+  h.fireTimer(70);
+  change({ brightness: 80, params: { speed: 2 } });
+  h.fireTimer(70);
+  assert.equal(sends.length, 1, "slow saves must not overlap and arrive out of order");
+  sends[0].resolve();
+  await flush();
+  h.fireTimer(70);
+  assert.equal(sends.length, 2, "intermediate slider positions are merged into one pending write");
+  assert.deepEqual(plain(sends[1].body), { brightness: 80, params: { speed: 2 } });
+  sends[1].resolve();
+  await flush();
+  assert.equal(saved.brightness, 80);
+  assert.equal(h.fireTimer(70), false);
+});
+
+test("a failed coalesced save still sends the latest queued edit and allows future edits", async () => {
+  const h = await harness(), sends = [];
+  const change = h.core.coalesce((body) => new Promise((resolve, reject) => sends.push({ body, resolve, reject })), 70);
+  change({ brightness: 20 });
+  h.fireTimer(70);
+  change({ brightness: 80 });
+  h.fireTimer(70);
+  assert.equal(sends.length, 1);
+  sends[0].reject(new Error("temporary save failure"));
+  await flush();
+  h.fireTimer(70);
+  assert.equal(sends.length, 2);
+  assert.equal(sends[1].body.brightness, 80);
+  sends[1].resolve();
+  await flush();
+  change({ brightness: 60 });
+  h.fireTimer(70);
+  assert.equal(sends.length, 3);
+  sends[2].resolve();
+  await flush();
+});
 
 async function studioHarness() {
   const h = await harness(), studio = (await h.load("studio")).namespace;
@@ -239,6 +386,49 @@ async function fansHarness() {
   fans.movePoint(0, 30, 40);
   return { ...h, fans };
 }
+
+test("the fan graph shows commanded live duty while a different curve draft is unsaved", async () => {
+  const h = await fansHarness();
+  Object.assign(h.core.S.state.fans, { temp: 50, duty: 37, target: 58 });
+  h.fans.renderEditor();
+  assert.match(h.node("#editor").innerHTML, /Now 50°C, 37%/);
+  h.fans.movePoint(0, 30, 70);
+  assert.match(h.node("#editor").innerHTML, /Now 50°C, 37%/);
+  h.core.S.state.fans.duty = 42;
+  h.fans.renderEditor();
+  assert.match(h.node("#editor").innerHTML, /Now 50°C, 42%/, "ramping duty must repaint even at a steady temperature");
+  h.core.S.state.fans.duty = null;
+  h.fans.renderEditor();
+  assert.ok(!h.node("#editor").innerHTML.includes("Now 50°C"), "missing live duty must not be guessed from a draft");
+});
+
+test("Add curve point creates a keyboard-editable draft without applying it", async () => {
+  const h = await fansHarness();
+  await h.node("#curve-add").fire("click");
+  assert.deepEqual(plain(h.fans.E.draft), [[30, 40], [55, 70], [80, 100]]);
+  assert.equal(h.fans.E.sel, 1);
+  assert.equal(h.requests.length, 0, "adding a point edits only the local draft");
+  assert.deepEqual(plain(h.core.S.curves.curves.balanced), [[30, 30], [80, 100]]);
+});
+
+test("bulk fan copy uses only explicit targets and reports partial failure", async () => {
+  const h = await fansHarness();
+  const channels = [{ id: "source", name: "Source" }, { id: "fan1", name: "Front" },
+    { id: "fan2", name: "Rear" }, { id: "pump", name: "Pump", pump: true }];
+  h.core.S.state.fans.channels = channels;
+  const copying = h.fans.copyChannelSettings(channels.slice(1, 3), { mode: "steady", duty: 50 });
+  await flush();
+  assert.equal(h.requests[0].body.id, "fan1");
+  h.requests[0].resolve({ channels });
+  await flush();
+  assert.equal(h.requests[1].body.id, "fan2");
+  h.requests[1].reject(new Error("Disconnected"));
+  const result = await copying;
+  assert.deepEqual(plain(result.applied), ["fan1"]);
+  assert.equal(result.failed[0].id, "fan2");
+  assert.equal(result.failed[0].error, "Disconnected");
+  assert.ok(h.requests.every((r) => r.body.id !== "pump"), "pumps need explicit selection");
+});
 
 test("a Balanced save response leaves the selected Performance curve and its edits alone", async () => {
   const h = await fansHarness(), { fans } = h;

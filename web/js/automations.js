@@ -139,7 +139,14 @@ async function openBuilder(rule, isNew) {
   let apps = [];
   try { apps = await get("/api/apps"); } catch { /* typing the name still works */ }
   const curves = Object.keys(S.curves.curves);
+  const previewText = () => {
+    if (["app_running", "app_focused"].includes(r.when.type) && !r.when.exe)
+      return "Type the program's file name, or pick one that's open right now, to finish this rule.";
+    try { return sentence(r); } catch { return "Fill in the details to see the rule."; }
+  };
   const render = (err = "") => {
+    const active = document.activeElement;
+    const focusId = active?.closest?.("#rb-form") && active.id ? active.id : null;
     const w = r.when, t = r.then;
     const whenFields = {
       app_running: () => appField(w), app_focused: () => appField(w),
@@ -156,34 +163,33 @@ async function openBuilder(rule, isNew) {
       dim: () => `<span>to</span><input class="text" type="number" min="0" max="100" data-t="brightness" aria-label="Brightness" value="${t.brightness ?? 20}" style="width:80px"><span>%</span>`,
       fan_curve: () => `<select class="select" data-t="curve" aria-label="Fan curve" style="width:auto">${curves.map((c) => `<option value="${c}"${c === t.curve ? " selected" : ""}>${curveLabel(c)}</option>`).join("")}</select>`,
     }[t.type]();
-    let preview = "";
-    const needsExe = ["app_running", "app_focused"].includes(w.type) && !w.exe;
-    try { preview = needsExe ? "" : sentence(r); } catch { preview = ""; }
-    if (needsExe) preview = "Type the program's file name, or pick one that's open right now, to finish this rule.";
     openSheet(`<form id="rb-form"><h2>${isNew ? "New automation" : "Edit automation"}</h2>
       <div class="builder">
         <div class="row"><span>When</span><select class="select" id="rb-when" aria-label="When">${[["app_running", "A program is running"], ["app_focused", "A program is in front"], ["idle", "The PC is idle"], ["time", "It's between two times"], ["locked", "The PC is locked"], ["temp_above", "It's running hot"]].map(([v, l]) => `<option value="${v}"${v === w.type ? " selected" : ""}>${l}</option>`).join("")}</select></div>
         ${whenFields ? `<div class="row"><span></span><div class="sub">${whenFields}</div></div>` : ""}
         <div class="row"><span>Then</span><select class="select" id="rb-then" aria-label="Then">${[["preset", "Use a profile"], ["lights_off", "Turn the lights off"], ["dim", "Dim the lights"], ["fan_curve", "Switch the fan curve"]].map(([v, l]) => `<option value="${v}"${v === t.type ? " selected" : ""}>${l}</option>`).join("")}</select></div>
         ${thenFields ? `<div class="row"><span></span><div class="sub">${thenFields}</div></div>` : ""}
-        <div class="preview-sentence">${preview || "Fill in the details to see the rule."}</div>
+        <div class="preview-sentence" id="rb-preview">${previewText()}</div>
         <p class="hint">When the condition stops being true, your own lighting and fan settings come back by themselves.</p>
       </div>
       ${err ? `<p class="err">${esc(err)}</p>` : ""}
-      <div class="actions"><span class="spacer"></span><button type="button" class="btn quiet" data-close>Cancel</button><button class="btn primary">${isNew ? "Add automation" : "Save automation"}</button></div></form>`);
+      <div class="actions"><span class="spacer"></span><button type="button" class="btn quiet" data-close>Cancel</button><button class="btn primary" id="rb-save">${isNew ? "Add automation" : "Save automation"}</button></div></form>`);
     const form = $("#rb-form");
+    const updatePreview = () => setHTML(form.querySelector("#rb-preview"), previewText());
     form.querySelector("#rb-when").addEventListener("change", (e) => { r.when = { type: e.target.value }; render(); });
     form.querySelector("#rb-then").addEventListener("change", (e) => { r.then = { type: e.target.value, ...(e.target.value === "preset" ? { preset: S.presets[0]?.id } : e.target.value === "fan_curve" ? { curve: "silent" } : {}) }; render(); });
-    form.querySelectorAll("[data-w]").forEach((el) => el.addEventListener("change", () => {
+    form.querySelectorAll("[data-w]").forEach((el) => el.addEventListener(el.tagName === "INPUT" ? "input" : "change", () => {
       const v = el.type === "number" ? +el.value : el.value;
-      r.when[el.dataset.w] = el.dataset.w === "temp" ? tempOut(v) : v; render();
+      r.when[el.dataset.w] = el.dataset.w === "temp" ? tempOut(v) : v; updatePreview();
     }));
-    form.querySelectorAll("[data-t]").forEach((el) => el.addEventListener("change", () => { r.then[el.dataset.t] = el.type === "number" ? +el.value : el.value; render(); }));
-    form.querySelector("[data-app-pick]")?.addEventListener("change", (e) => { if (e.target.value) { r.when.exe = e.target.value; render(); } });
+    form.querySelectorAll("[data-t]").forEach((el) => el.addEventListener(el.tagName === "INPUT" ? "input" : "change", () => { r.then[el.dataset.t] = el.type === "number" ? +el.value : el.value; updatePreview(); }));
+    form.querySelector("[data-app-pick]")?.addEventListener("change", (e) => {
+      if (e.target.value) { r.when.exe = e.target.value; form.querySelector('[data-w="exe"]').value = e.target.value; updatePreview(); }
+    });
     form.querySelectorAll("[data-day]").forEach((b) => b.addEventListener("click", () => {
       const d = +b.dataset.day, days = new Set(r.when.days ?? [0, 1, 2, 3, 4, 5, 6]);
       days.has(d) ? days.delete(d) : days.add(d);
-      r.when.days = [...days].sort(); render();
+      r.when.days = [...days].sort(); b.setAttribute("aria-pressed", String(days.has(d))); updatePreview();
     }));
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -195,6 +201,7 @@ async function openBuilder(rule, isNew) {
       try { await writeRules(next); closeSheet(); emit("refresh"); toast(isNew ? "Automation added" : "Automation saved"); }
       catch (err2) { render(err2.message); }
     });
+    if (focusId) form.querySelector(`#${CSS.escape(focusId)}`)?.focus({ preventScroll: true });
   };
   const appField = (w) => `<input class="text" data-w="exe" aria-label="Program file name" value="${esc(w.exe ?? "")}" placeholder="Cyberpunk2077.exe" spellcheck="false" style="width:220px">
       ${apps.length ? `<select class="select" data-app-pick aria-label="Pick a running program" style="width:auto"><option value="">Pick a running program</option>${apps.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select>` : ""}`;

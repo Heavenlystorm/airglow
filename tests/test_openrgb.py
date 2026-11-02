@@ -3,6 +3,7 @@ import struct
 import threading
 import time
 import unittest
+from unittest import mock
 
 from airglow import openrgb
 
@@ -119,6 +120,9 @@ class FakeServer(threading.Thread):
                     conn.sendall(openrgb.header(dev, pid, len(blob)) + blob)
         except (ConnectionError, OSError):
             pass
+        finally:
+            conn.close()
+            self.sock.close()
 
 
 class ProtocolFiveTests(unittest.TestCase):
@@ -223,8 +227,76 @@ class DeviceWriteTests(unittest.TestCase):
         dev.flush()                                                      # nothing new: nothing sent
         self.assertEqual(client.calls, [])
 
+    def test_engine_disabling_one_zone_keeps_it_dark_in_later_whole_device_frames(self):
+        import tempfile
+        from airglow import config
+        from airglow.lighting.engine import Engine
+        from tests.fakes import FakeManager
+
+        dev, client = self.device()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = config.Store(tmp)
+            store.ensure_zones([dev.info()])
+            eng = Engine(FakeManager(dev), store, async_writes=False)
+            eng.set_scene({"effect": "solid", "params": {"color": "#ff0000"}, "brightness": 100, "on": True})
+            eng.tick()
+            key = dev.id + "/z0"
+            store.set_zone(key, {**store.zones()[key], "enabled": False}, 1)
+            eng.invalidate(key)
+            eng.tick()
+            self.assertEqual(client.calls[-1], ("leds", [(0, 0, 0), (255, 0, 0), (255, 0, 0)]))
+            eng.set_scene({"effect": "solid", "params": {"color": "#0000ff"}, "brightness": 100, "on": True})
+            eng.tick()
+            self.assertEqual(client.calls[-1], ("leds", [(0, 0, 0), (0, 0, 255), (0, 0, 255)]))
+
 
 class ClientTests(unittest.TestCase):
+    def test_interrupted_discovery_discards_the_socket_and_a_fresh_connection_works(self):
+        for parts in ([openrgb.header(0, openrgb.REQUEST_CONTROLLER_COUNT, 4)[:8], socket.timeout()],
+                      [openrgb.header(0, openrgb.REQUEST_CONTROLLER_COUNT, 4), socket.timeout()],
+                      [b"invalid framing!"], [b""]):
+            with self.subTest(parts=parts):
+                c = openrgb.OpenRGBClient()
+                sock = c.sock = mock.Mock()
+                sock.recv.side_effect = parts
+                with self.assertRaises((socket.timeout, openrgb.OpenRGBError)):
+                    c.controllers()
+                self.assertFalse(c.connected, "a desynchronized connection must not be reused")
+                srv = FakeServer()
+                srv.start()
+                c.port = srv.port
+                try:
+                    c.connect()
+                    self.assertEqual(len(c.controllers()), 1)
+                finally:
+                    c.close()
+                    srv.join(2)
+
+    def test_request_ignores_a_late_reply_for_another_controller(self):
+        c = openrgb.OpenRGBClient()
+        c.sock = mock.Mock()
+        c.sock.recv.side_effect = [openrgb.header(0, openrgb.REQUEST_CONTROLLER_DATA, 3), b"old",
+                                  openrgb.header(1, openrgb.REQUEST_CONTROLLER_DATA, 3), b"new"]
+        self.assertEqual(c._request(1, openrgb.REQUEST_CONTROLLER_DATA), b"new")
+
+    def test_protocol_zero_can_ignore_negotiation_but_partial_negotiation_must_reconnect(self):
+        for partial in (False, True):
+            with self.subTest(partial=partial):
+                sock = mock.Mock()
+                sock.recv.side_effect = ([openrgb.header(0, openrgb.REQUEST_PROTOCOL_VERSION, 4)[:8]]
+                                        if partial else []) + [socket.timeout()]
+                c = openrgb.OpenRGBClient()
+                with mock.patch.object(openrgb.socket, "create_connection", return_value=sock):
+                    if partial:
+                        with self.assertRaises((socket.timeout, openrgb.OpenRGBError)):
+                            c.connect()
+                        self.assertFalse(c.connected)
+                    else:
+                        c.connect()
+                        self.assertTrue(c.connected)
+                        self.assertEqual(c.version, 0)
+                c.close()
+
     def test_negotiates_version_and_lists_controllers(self):
         srv = FakeServer(server_version=5)
         srv.start()
@@ -250,6 +322,39 @@ class ClientTests(unittest.TestCase):
         c.connect()
         self.assertEqual(len(c.controllers()), 1)
         c.close()
+
+    def test_partial_notification_header_disconnects_on_eof_or_timeout(self):
+        for peer_closes in (False, True):
+            with self.subTest(peer_closes=peer_closes):
+                client, peer = socket.socketpair()
+                c = openrgb.OpenRGBClient(timeout=0.05)
+                c.sock = client
+                try:
+                    peer.sendall(openrgb.header(0, openrgb.DEVICE_LIST_UPDATED, 0)[:8])
+                    if peer_closes:
+                        peer.close()
+                    c.poll_notifications()
+                    self.assertFalse(c.connected, "a partial header must not stay queued forever")
+                finally:
+                    c.close()
+                    peer.close()
+
+    def test_notification_poll_preserves_idle_and_complete_connections(self):
+        client, peer = socket.socketpair()
+        c = openrgb.OpenRGBClient(timeout=0.05)
+        c.sock = client
+        try:
+            c.poll_notifications()
+            self.assertTrue(c.connected)
+            self.assertFalse(c.devices_changed)
+            peer.sendall(openrgb.header(0, openrgb.DEVICE_LIST_UPDATED, 0))
+            c.poll_notifications()
+            self.assertTrue(c.connected)
+            self.assertTrue(c.devices_changed)
+            self.assertEqual(client.gettimeout(), c.timeout)
+        finally:
+            c.close()
+            peer.close()
 
     def test_server_going_away_closes_client_without_hanging(self):
         """Regression: close() inside a locked section deadlocked the lighting engine when OpenRGB quit."""

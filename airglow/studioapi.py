@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import fxformat, fxgallery, fxlibrary
+from . import fxformat, fxgallery, fxlibrary, scenepacks
 from .lighting import effects, studio
 
 log = logging.getLogger(__name__)
@@ -96,12 +96,16 @@ def route(server, method, path, body, query):
         return _route(ctrl, hooks, method, path, body or {}, query or {})
     except fxformat.FormatError as e:
         raise StudioError(400, str(e)) from None
+    except scenepacks.PackError as e:
+        raise StudioError(e.status, str(e)) from None
     except RuntimeError as e:
         raise StudioError(502, str(e)) from None
 
 
 def _route(ctrl, hooks, method, path, body, query):
     lib = _lib()
+    if path.startswith("/api/studio/packs/"):
+        return scenepacks.route(lib, method, path, body)
     if method == "GET":
         if path == "/api/studio/effects":
             return {"rev": lib.rev, "effects": [_summary(e) for e in lib.all()], "host": studio.HOST.status()}
@@ -138,14 +142,17 @@ def _route(ctrl, hooks, method, path, body, query):
             if ctrl.trial and ctrl.trial.get("kind") == "studio":
                 ctrl.end_trial()
             lib.clear_draft()
-            return {"lights": False}
-        eff = lib.set_draft(_source(body), based_on=body.get("fx_id"))
-        studio.HOST.retry(fxlibrary.DRAFT)
+            return {"lights": False, "scene": ctrl.base_scene, "effective": ctrl.effective_scene,
+                    "trial": None if not ctrl.trial else {"kind": ctrl.trial.get("kind")}}
+        source = _source(body)
+        eff = fxformat.validate(source)
         params = effects.clean_values(eff["schema"], body.get("values"))
+        eff = lib.set_draft(source, based_on=body.get("fx_id"))
+        studio.HOST.retry(fxlibrary.DRAFT)
         scene = {"effect": fxlibrary.DRAFT, "params": params,
                  "brightness": ctrl.base_scene.get("brightness", 100), "on": True}
         ctrl.try_profile(scene, f"Studio: {eff['name']}", kind="studio")
-        return {"lights": True}
+        return {"lights": True, "scene": ctrl.base_scene, "effective": ctrl.effective_scene, "trial": {"kind": "studio"}}
     if path == "/api/studio/save":
         eff = lib.save_mine(_source(body), body.get("fx_id") or None)
         studio.HOST.retry(eff["fx_id"])
@@ -168,7 +175,7 @@ def _route(ctrl, hooks, method, path, body, query):
             ctrl.end_trial()
         studio.HOST.retry(fx_id)
         ctrl.set_scene({"effect": fx_id, "params": effects.clean_values(eff["schema"], body.get("values")), "on": True})
-        return {"scene": ctrl.base_scene}
+        return {"scene": ctrl.base_scene, "effective": ctrl.effective_scene}
     if path == "/api/studio/retry":
         studio.HOST.retry(body.get("fx_id"))
         return {"ok": True}

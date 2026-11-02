@@ -1,5 +1,21 @@
 /* Shared page rhythm; each design keeps its palette, type and control signatures. */
-.auto-view, .settings-view, .st-home { padding: 30px 28px 40px; }
+:root { --page-inline: 28px; --page-block: 30px; --section-gap: 20px; --control-gap: 8px; --control-min-height: 34px; }
+.auto-view, .settings-view, .st-home { padding: var(--page-block) var(--page-inline) 40px; }
+.btn, .select, .text { min-height: var(--control-min-height); }
+.btn-row { gap: var(--control-gap); }
+.compact-nav { display: none; }
+.mutation-status { flex: none; max-height: 28vh; overflow-y: auto; border-bottom: 1px solid var(--line); background: var(--panel); }
+.mutation-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px; padding: 10px var(--page-inline); font-size: 13px; }
+.mutation-line > span { flex: 1 1 300px; min-width: 0; overflow-wrap: anywhere; }
+.mutation-line[data-error] b { color: var(--warm); }
+.mutation-line .btn-row { flex: none; }
+.copy-targets { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-ctl); }
+.copy-targets legend { padding-inline: 6px; color: var(--ink-2); }
+.copy-targets .hint { display: block; }
+.control-tile-state { font-size: clamp(16px, 1.35cqw, 28px); font-weight: 600; }
+.control-tile-detail { margin: 8px 0 12px; }
+.tile-control .tile-inner { padding: 16px; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; }
+#curve-seg { display: flex; flex-wrap: wrap; max-width: 100%; }
 .page-head { align-items: center; gap: 20px 30px; margin-bottom: 28px; }
 .page-head > div:first-child { flex: 1 1 360px; }
 .page-head .lede { max-width: 66ch; margin-top: 10px; }
@@ -41,7 +57,7 @@
 .readouts { padding: 24px 20px; gap: 14px; min-width: 0; }
 .ro { min-width: 0; }
 .ro .head { flex-wrap: wrap; gap: 3px 10px; }
-.curve-area { padding: 30px 28px; gap: 20px; }
+.curve-area { padding: var(--page-block) var(--page-inline); gap: var(--section-gap); }
 .curve-head { gap: 18px; }
 .curve-head .lede { margin-top: 9px; }
 .curve-foot .hint { flex: 1 1 240px; }
@@ -92,7 +108,7 @@
 .dev-list h2 { padding: 18px 10px 8px; }
 .dev-item { padding: 12px 10px; gap: 4px 10px; }
 .dev-item > span { min-width: 0; overflow-wrap: anywhere; }
-.dev-detail { padding: 30px 28px 40px; gap: 22px; }
+.dev-detail { padding: var(--page-block) var(--page-inline) 40px; gap: 22px; }
 .zone-card { padding: 20px; gap: 18px 20px; }
 .zone-card .zname { min-width: 0; }
 .zone-card .zfields { gap: 16px 24px; }
@@ -214,7 +230,13 @@
   .st-saved { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 @media (max-width: 700px) {
-  .auto-view, .settings-view, .st-home { padding: 24px 16px 32px; }
+  :root { --page-inline: 16px; --page-block: 24px; --section-gap: 16px; --control-min-height: 36px; }
+  .auto-view, .settings-view, .st-home { padding: var(--page-block) var(--page-inline) 32px; }
+  .tabs { display: none; }
+  .compact-nav { display: block; grid-column: 1 / -1; grid-row: 2; padding-bottom: 12px; }
+  .compact-nav select { width: 100%; font-size: 14px; }
+  .mutation-line { gap: 10px; }
+  .mutation-line .btn-row { flex-wrap: wrap; }
   .page-head { gap: 18px; margin-bottom: 24px; }
   .page-head > div:first-child { flex-basis: 100%; }
   .page-head .btn-row { width: 100%; }
@@ -223,8 +245,11 @@
   .stage-empty { padding: 24px; }
   .deck { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
   .readouts { padding: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-  :where([data-design="graphite"]) .ro { padding: 14px 12px; }
-  :where([data-design="graphite"]) .ro .big { font-size: 36px; }
+  .fans-view .readouts .ro { padding: 10px 12px; min-height: 0; }
+  .fans-view .readouts .ro > svg { display: none; }
+  .fans-view .readouts .ro .big { margin: 5px 0 0; font-size: 28px; line-height: 1.1; }
+  .fans-view .readouts .ro .head { font-size: 11px; }
+  .fans-view .readouts .ro .head span:last-child { display: none; }
   .curve-area { padding: 24px 16px; }
   .curve-foot .btn-row { margin-left: 0; }
   .chan { grid-template-columns: minmax(100px, 1fr) minmax(50px, .8fr) 70px; gap: 10px; }
@@ -243,12 +268,7 @@
   :where([data-design="graphite"]) .set-group { padding: 20px 18px 4px; }
   .settings-nav .settings-saved { max-width: 80px; font-size: 10px; }
   .st-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-  .st-edit, .st-edit.is-code { display: flex; flex-direction: column; }
   .st-top { flex: none; padding: 12px; }
-  .st-left { flex: none; max-height: 300px; border-right: 0; }
-  .st-edit.is-code .st-left { height: 320px; max-height: none; }
-  .st-mid { flex: none; height: 420px; }
-  .st-right { flex: none; }
   .st-name { font-size: 16px; width: 130px; }
   .sheet form, .sheet .body { padding: 22px 18px; }
   .sheet .sheet-head { gap: 12px; }

@@ -53,7 +53,6 @@
 .ambient { padding: 8px 10px; border-radius: var(--r-ctl); background: var(--well); }
 .power { width: 36px; height: 36px; }
 
-.eyebrow { color: var(--brass); font: 600 10px/1.5 var(--text); text-transform: uppercase; letter-spacing: .15em; margin: 0 0 9px; }
 .overview-view { container-type: size; }
 .ov-bar, .ov-grid { max-width: none; }
 .ov-bar { padding: 12px 28px 10px; min-height: 58px; }
@@ -108,8 +107,6 @@
 :where([data-design="graphite"]) input[type=range]::-webkit-slider-runnable-track { border-radius: 3px; }
 
 /* This caption occupies the existing tool strip, never the rendered LED canvas. */
-.stage-caption { position: absolute; top: 16px; right: 20px; z-index: 1; text-align: right; pointer-events: none; color: #a5aaa9; font-size: 11px; }
-.stage-caption .eyebrow { display: block; margin: 0 0 2px; font-size: 9px; color: #e3c28c; }
 
 @container (min-height: 280px) {
   :where([data-design="graphite"]) .readout .num { font-size: 72px; }
@@ -181,7 +178,6 @@
   .ov-grid > .tile:is([data-w="3"], [data-w="4"]) { grid-column: span 2 !important; }
   .ov-editbar { flex-wrap: wrap; gap: 8px; }
   .ov-editbar span { flex-basis: 100%; }
-  .stage-caption { display: none; }
 }
 @media (max-width: 440px) {
   .ov-grid { grid-template-columns: minmax(0, 1fr); }
@@ -191,5 +187,3 @@
 }
 /* High contrast keeps solid rules and unambiguous focus/selection indicators. */
 [data-design="contrast"] .tabs a[aria-current="page"] { background: var(--brass); color: var(--ground); }
-[data-design="contrast"] .stage-caption { color: #fff; }
-[data-design="contrast"] .stage-caption .eyebrow { color: #ffff00; }

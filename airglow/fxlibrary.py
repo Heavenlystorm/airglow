@@ -10,9 +10,10 @@ import hashlib
 import logging
 import os
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
-from . import fxformat, paths
+from . import fileio, fxformat, paths
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,12 @@ class Library:
         self._cache = {}              # path -> (mtime_ns, size, effect)
         self._draft = None
         self.rev = 0                  # bumps on every change, so the UI knows to reload the effect list
+
+    @contextmanager
+    def transaction(self):
+        """Keep a reviewed local-library decision and its commit in one critical section."""
+        with self._lock:
+            yield self
 
     def _dir(self, origin, create=True):
         d = self.root / origin
@@ -126,6 +133,69 @@ class Library:
             self._cache.pop(Path(eff["path"]), None)
             self.rev += 1
 
+    def install_pack(self, items):
+        """Install a validated copy-only batch without publishing a partial library on ordinary failures.
+
+        Community provenance/revocation checks belong to the caller; checksums are checked here too. Existing
+        effects are never replaced. Mine copies receive new IDs, leaving every profile reference intact.
+        """
+        if not isinstance(items, list) or len(items) > 24:
+            raise fxformat.FormatError("a scene pack holds up to 24 effects")
+        validated = []
+        for item in items:
+            if not isinstance(item, dict) or item.get("origin") not in ORIGINS or item.get("fx_id"):
+                raise fxformat.FormatError("scene packs may only install new mine or community effects")
+            source = item.get("source")
+            eff = fxformat.validate(source)
+            if item["origin"] == "community":
+                if not eff["author"] or eff["sha256"] != item.get("sha256"):
+                    raise fxformat.FormatError("the community effect does not match its author and checksum")
+            validated.append((item["origin"], source, eff, item.get("copy") is True))
+        with self._lock:
+            planned, stems = [], set()
+            for origin, source, eff, copy in validated:
+                if origin == "community":
+                    stem = eff["id"]
+                    if not copy and (stem in stems or any((self.root / folder / f"{stem}.html").exists() for folder in ORIGINS)):
+                        raise fxformat.FormatError("that community effect is already installed; keep it or make a copy")
+                    author, slug = eff["id"].split(".", 1)
+                    n = 2
+                    while stem in stems or any((self.root / folder / f"{stem}.html").exists() for folder in ORIGINS):
+                        suffix = f"-{n}"
+                        stem, n = f"{author}.{slug[:40 - len(suffix)]}{suffix}", n + 1
+                else:
+                    slug, n = fxformat.slug(eff["name"]), 2
+                    stem = f"me.{slug}"
+                    while stem in stems or any((self.root / folder / f"{stem}.html").exists() for folder in ORIGINS):
+                        suffix = f"-{n}"
+                        stem, n = f"me.{slug[:40 - len(suffix)]}{suffix}", n + 1
+                stems.add(stem)
+                planned.append((self.root / origin / f"{stem}.html", source, origin))
+            written = []
+            cache = dict(self._cache)
+            try:
+                for path, source, origin in planned:
+                    self._dir(origin)
+                    _write(path, source)
+                    written.append(path)
+                installed = [self._read(path, origin) for path, _, origin in planned]
+                if any(eff is None for eff in installed):
+                    raise OSError("an installed effect could not be read back")
+            except Exception as error:
+                self._cache = cache
+                failures = []
+                for path in reversed(written):
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        failures.append(path.name)
+                if failures:
+                    raise OSError(f"Scene pack failed ({error}); could not remove {', '.join(failures)}.") from error
+                raise
+            if installed:
+                self.rev += 1
+            return installed
+
     # ------------------------------------------------------------ community
     def install(self, source, sha256):
         """Install (or update) a community effect after checking it's exactly what the gallery index lists. The
@@ -138,9 +208,27 @@ class Library:
         with self._lock:
             path = self._dir("community") / f"{eff['id']}.html"
             if path.exists():
-                os.replace(path, str(path) + ".prev")
+                pending, backup = Path(str(path) + ".next"), Path(str(path) + ".prev.next")
+                promoted = False
+                try:
+                    # Prepare both files while the working effect and its rollback remain available.
+                    _write(pending, source)
+                    _write(backup, path.read_text(encoding="utf-8"))
+                    os.replace(pending, path)
+                    promoted = True
+                    try:
+                        os.replace(backup, str(path) + ".prev")
+                    except OSError:
+                        os.replace(backup, path)       # restore the active version if its rollback cannot be kept
+                        raise
+                finally:
+                    pending.unlink(missing_ok=True)
+                    if not promoted:
+                        backup.unlink(missing_ok=True)
+                    # If even restoration failed, leave .prev.next on disk for recovery.
                 self._cache.pop(Path(str(path) + ".prev"), None)
-            _write(path, source)
+            else:
+                _write(path, source)
             self._cache.pop(path, None)
             self.rev += 1
             return self._read(path, "community")
@@ -183,9 +271,7 @@ class Library:
 
 
 def _write(path, text):
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(text, encoding="utf-8", newline="\n")
-    os.replace(tmp, path)
+    fileio.atomic_write_text(path, text)
 
 
 LIBRARY = None

@@ -16,6 +16,7 @@ const CONTROL = {
   lighting: { name: "Lighting", desc: "A live miniature of your rig, with on/off and brightness.", w: 2, h: 2 },
   presets: { name: "Profiles", desc: "One click to switch lighting and fans together.", w: 2, h: 1 },
   fans: { name: "Case fans", desc: "Fan speed and the curve they follow.", w: 1, h: 1 },
+  control: { name: "Control status", desc: "Completed work, connection health and recent control changes.", w: 2, h: 1 },
 };
 
 const O = { layout: null, editing: false, els: new Map(), drag: null };
@@ -119,6 +120,8 @@ function controlMarkup(t) {
   if (t.type === "presets") {
     return `<header class="tile-head"><span class="tile-name">Profiles</span><a class="tile-src link" href="#lighting">Edit</a></header><div class="chips pcards"></div>`;
   }
+  if (t.type === "control") return `<header class="tile-head"><span class="tile-name">Control status</span></header>
+    <div class="control-tile-state"></div><p class="control-tile-detail hint"></p><button class="btn quiet" data-control-center>Open control center</button>`;
   return `<header class="tile-head"><span class="tile-name">Case fans</span><span class="tile-src fan-curve"></span></header>
     <div class="readout"><span class="num">–</span><span class="unit">%</span></div><div class="fan-sub"></div>
     <div class="seg fan-seg" role="radiogroup" aria-label="Fan curve"></div>`;
@@ -343,6 +346,14 @@ function update(el, t) {
   else if (t.type === "lighting") updateLighting(el);
   else if (t.type === "presets") updatePresets(el);
   else if (t.type === "fans") updateFans(el);
+  else if (t.type === "control") {
+    const c = S.state.control, counts = c?.counts || {};
+    const labels = { healthy: "Working normally", failed: "Output needs attention", stale: "Work is taking longer", disconnected: "A source is disconnected", pending: "Waiting for completed work" };
+    el.querySelector(".control-tile-state").textContent = labels[c?.state] || "Waiting for status";
+    el.querySelector(".control-tile-detail").textContent = c
+      ? `${counts.healthy || 0} healthy · ${counts.pending || 0} pending · ${(counts.failed || 0) + (counts.stale || 0) + (counts.disconnected || 0)} need attention`
+      : "Status will appear when the next reading arrives.";
+  }
 }
 
 // ------------------------------------------------------------ render

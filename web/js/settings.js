@@ -6,9 +6,10 @@ import { openWelcome } from "./onboarding.js";
 import { openShortcuts } from "./help.js";
 import { openSheet } from "./sheet.js";
 import { DESIGNS, applyDesign, currentDesign } from "./design.js";
+import { exportRig, openRigImport } from "./rig-migration.js";
 
 const SECTIONS = [["general", "General"], ["lighting", "Lighting"], ["fans", "Fans"], ["helpers", "Helper programs"],
-  ["sensors", "Sensors"], ["devices", "More devices"], ["about", "About"]];
+  ["sensors", "Sensors"], ["devices", "More devices"], ["migration", "Rig migration"], ["about", "About"]];
 
 const row = (label, help, ctl) => `<div class="set-row"><div><div class="label">${label}</div>${help ? `<p>${help}</p>` : ""}</div><div class="ctl">${ctl}</div></div>`;
 const sw = (id, on, label) => `<label class="switch"><input type="checkbox" id="${id}"${on ? " checked" : ""}${label ? ` aria-label="${esc(label)}"` : ""}><span></span></label>`;
@@ -175,6 +176,10 @@ export function renderSettings() {
       ${row("OpenRGB address", "Only change this if OpenRGB runs on another port or another PC.", `<input class="text" id="s-orgb-host" aria-label="OpenRGB host" value="${esc(s.openrgb_host)}" style="width:150px" spellcheck="false"><input class="text" id="s-orgb-port" aria-label="OpenRGB port" type="number" value="${s.openrgb_port}" style="width:90px">`)}
       ${row("Windows Dynamic Lighting devices <span class=\"tag\">Experimental</span>", `Keyboards, mice and accessories that Windows controls in Settings, Personalization, Dynamic Lighting. Windows only lets Airglow light them while its window is in front. ${s.dynamic_lighting_enabled ? esc(S.state?.dynamic_lighting?.status || "") : ""}`, sw("s-dyn", s.dynamic_lighting_enabled, "Windows Dynamic Lighting devices"))}
     </section>
+    <section class="set-group" id="set-migration"><h2>Rig migration</h2>
+      ${row("Export rig setup", "Download a local JSON bundle with zone names, areas and layouts, profiles, curves, automations and interface preferences. Fan ownership, helper paths and credentials are excluded.", `<button type="button" class="btn" id="s-rig-export">Export rig bundle</button>`)}
+      ${row("Import on this rig", "Validate a bundle, choose the target for every lighting zone, then review and apply. Imported automations start disabled; active cooling stays as it is.", `<button type="button" class="btn" id="s-rig-import">Import rig bundle</button>`)}
+    </section>
     <section class="set-group" id="set-about"><h2>About</h2>
       ${row(`Airglow ${esc(v.version)}`, `Free and open source under the MIT licence. Settings and logs are stored in <span class="path">${esc(v.data_dir)}</span>`, `<button class="btn" id="s-logs">Open log folder</button>`)}
       ${row("Diagnostics report", "For a bug report: what Airglow found, its settings, a sensor list and the logs, in one zip. Your user name, PC name and device serial numbers are taken out. Nothing is sent; you attach it yourself.", `<button class="btn" id="s-diag">Save a report</button>`)}
@@ -298,6 +303,12 @@ export function initSettings() {
     if (e.target.closest("#s-welcome")) openWelcome();
     if (e.target.closest("#s-keys")) openShortcuts();
     if (e.target.closest("#s-design")) designSheet();
+    if (e.target.closest("#s-rig-import")) openRigImport();
+    if (e.target.closest("#s-rig-export")) {
+      const button = e.target.closest("#s-rig-export");
+      button.disabled = true;
+      exportRig().catch(fail).finally(() => { button.disabled = false; });
+    }
     if (e.target.closest("#s-update")) {
       post("/api/updates/check").then((u) => { S.state.update = u; paintUpdate(); emit("refresh"); }).catch(fail);
     }
@@ -311,6 +322,7 @@ export function initSettings() {
     }
   });
   on("state", paintUpdate);
+  on("rig:imported", loadSettings);
   const view = $('[data-view="settings"]');
   let navRaf = 0;
   view.addEventListener("scroll", () => {

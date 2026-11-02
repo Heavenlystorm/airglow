@@ -10,17 +10,19 @@ import { litZones, paintRig } from "./stage.js";
 import { EffectRunner, ledPoints, runtimeAssets, sampleZones, testAudio, zoneFrames } from "./fxrun.js";
 import { CODE_TEMPLATES, LAYER_TEMPLATES, REMIX, surprise } from "./studio-start.js";
 import { closeSheet, openSheet } from "./sheet.js";
+import { MASTER, uid, newDoc, normalizeDoc, snapDoc as snapshotDocument, createHistory, createDraftStorage,
+  DRAFT_KEY, PALETTE_KEY, cleanPalettes, addPalette, workflowStatus } from "./studio-document.js";
+import { createLivePreview } from "./studio-preview.js";
+import { createStudioGallery } from "./studio-gallery.js";
+import { scenePackExport, scenePackImport, packHistoryHTML } from "./studio-packs.js";
 
 const AREAS = { all: "Whole case", front: "Front", top: "Top", rear: "Rear", bottom: "Bottom", side: "Side panel",
   cooler: "CPU cooler", ram: "Memory", board: "Motherboard", gpu: "Graphics card", desk: "Desk" };
 const BLENDS = { normal: "Cover", add: "Add light", screen: "Brighten", multiply: "Darken" };
-const LICENSES = ["MIT", "Apache-2.0", "BSD-3-Clause", "MPL-2.0", "GPL-3.0-or-later", "CC0 is not allowed"];
 const MASTER_LABELS = { palette: "Colours", speed: "Speed", brightness: "Brightness", react: "Reactivity" };
 const MAX_LAYERS = 12;
-const MASTER = { palette: ["#ff2fb4", "#2f5bff"], speed: 100, brightness: 100, react: 50 };
 const remember = (k, v) => { try { if (v === undefined) return localStorage.getItem(k) || ""; localStorage.setItem(k, v); } catch { return ""; } return v; };
 const slug = (s) => String(s || "effect").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "effect";
-const uid = () => "k" + Math.random().toString(36).slice(2, 6);
 
 const H = { lib: null, gallery: null, info: null, view: "home", search: "", tag: "" };   // home and community
 const E = { doc: null, runner: null, slices: [], sel: "effect", lights: false, beat: false, raf: 0, last: 0,
@@ -28,48 +30,41 @@ const E = { doc: null, runner: null, slices: [], sel: "effect", lights: false, b
             problem: null, cm: null, logs: [], layersCopy: null, watch: null, gen: 0,
             t: 0, paused: false, scale: 1, overlay: false, strobeHz: 0, userParams: null,
             auto: 0, saved: null, applying: false, solo: null, errLine: null };
-const HIST = { stack: [], i: -1, at: 0 };       // undo/redo: snapshots of the document, coalesced per gesture
+const HIST = createHistory();       // undo/redo: snapshots of the document, coalesced per gesture
 const SW = { last: 0, dir: 0, peaks: [], warned: 0 };
 let pending = null;                             // something Lighting asked the Studio to open
 let sheetEffect = null;                         // the effect a sheet's buttons act on
-let sheetGallery = null;                        // a gallery effect shown in the detail sheet
 
 const box = () => $("#studio");
+const gallery = createStudioGallery({ H, E, box, remember, save, queueStills, addStill, effectRunnable });
+const { renderCommunity, paintCommunity, shareIt, galleryDetail } = gallery;
+const draftStore = createDraftStorage({
+  getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value),
+  removeItem: key => localStorage.removeItem(key),
+});
+const LIVE = createLivePreview({ post, onChange: state => {
+  E.lights = state.wanted;
+  const cb = $("#st-lights"); if (cb) { cb.checked = state.wanted; cb.disabled = state.pending; }
+  paintWorkflow();
+}, onResult: result => {
+  if (S.state && result.scene) { S.state.scene = result.scene; S.state.trial = result.trial; S.state.effective = result.effective; }
+  emit("refresh");
+} });
 
 // ------------------------------------------------------------ unsaved work
 // Switching tabs or closing the window used to throw away an effect you hadn't saved. Edits are kept here (in the
 // window's own storage) and offered back on the Studio's home page, so nothing is lost and no dialog interrupts you.
-const DRAFT_KEY = "airglow.studio.unsaved.v1";
 let draftTimer = 0;
-
 function rememberDraft() {
   clearTimeout(draftTimer);
-  draftTimer = setTimeout(() => {
-    try {
-      if (E.doc?.dirty) localStorage.setItem(DRAFT_KEY, JSON.stringify({ doc: E.doc, at: Date.now() }));
-      else localStorage.removeItem(DRAFT_KEY);
-    } catch { /* storage off or full: the draft is a safety net, not the only copy */ }
-  }, 700);
+  draftTimer = setTimeout(saveDraftNow, 700);
 }
-
-function readDraft() {
-  try {
-    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
-    if (!d?.doc || !d.doc.name || Date.now() - (d.at || 0) > 7 * 864e5) return null;
-    return d.doc;
-  } catch { return null; }
-}
-
-function forgetDraft() {
+function readDraft() { return draftStore.read(); }
+function forgetDraft() { clearTimeout(draftTimer); draftStore.clear(); }
+function saveDraftNow() {
   clearTimeout(draftTimer);
-  try { localStorage.removeItem(DRAFT_KEY); } catch { /* nothing to forget */ }
-}
-
-function saveDraftNow() {                 // leaving the editor before the debounce fired
-  clearTimeout(draftTimer);
-  try {
-    if (E.doc?.dirty) localStorage.setItem(DRAFT_KEY, JSON.stringify({ doc: E.doc, at: Date.now() }));
-  } catch { /* storage off or full */ }
+  if (E.doc?.dirty) E.recoveryError = !draftStore.write(E.doc);
+  paintWorkflow();
 }
 
 function draftBanner() {
@@ -77,6 +72,69 @@ function draftBanner() {
   if (!d) return "";
   return `<div class="banner" id="st-draft"><span>You have unsaved changes to <b>${esc(d.name)}</b>.</span>
     <div class="btn-row"><button class="btn" data-draft="resume">Resume</button><button class="btn quiet" data-draft="discard">Discard</button></div></div>`;
+}
+
+function workflowHTML() {
+  return `<div class="st-workflow" id="st-workflow" aria-live="polite"><div class="st-workflow-line"><strong id="st-output-state">Preview only</strong>
+    <span id="st-output-note"></span><button class="btn quiet" data-st="stop-preview" id="st-stop-preview" hidden>Stop preview</button></div>
+    <p class="st-workflow-error" id="st-workflow-error" hidden></p>
+    <ol class="st-remix-steps" aria-label="Create an effect"><li>Choose a starting effect</li><li id="st-step-edit">Edit palette, macros and layers</li><li id="st-step-save">Save your effect</li><li id="st-step-apply">Apply when ready</li></ol></div>`;
+}
+
+function paintWorkflow() {
+  const label = $("#st-output-state"), note = $("#st-output-note");
+  if (!label || !note) return;
+  const status = workflowStatus(S.state, E.doc);
+  label.textContent = status.label;
+  label.dataset.state = status.kind;
+  note.textContent = LIVE.state.pending ? "Updating the live preview..." : status.detail;
+  const error = $("#st-workflow-error");
+  const message = [LIVE.state.error, E.saveError ? `Save failed: ${E.saveError}. Your draft is kept here; try Save again.` : "",
+    E.recoveryError ? "Draft recovery storage is unavailable. Keep this editor open and save or export your work." : ""].filter(Boolean).join(" ");
+  if (error) { error.textContent = message; error.hidden = !message; }
+  const stop = $("#st-stop-preview");
+  if (stop) { stop.hidden = !(LIVE.state.confirmed || LIVE.state.wanted || LIVE.state.error || S.state?.trial?.kind === "studio"); stop.disabled = LIVE.state.pending; }
+  for (const [id, current] of [["edit", !!E.doc && (!E.doc.fx_id || E.doc.dirty)], ["save", !!E.doc?.fx_id && !E.doc.dirty && status.kind !== "applied"], ["apply", status.kind === "applied"]]) {
+    const step = $(`#st-step-${id}`);
+    if (step) { if (current) step.setAttribute("aria-current", "step"); else step.removeAttribute("aria-current"); }
+  }
+}
+
+function favoritePalettes() {
+  try { const raw = remember(PALETTE_KEY) || "[]"; return raw.length <= 8192 ? cleanPalettes(JSON.parse(raw)) : []; } catch { return []; }
+}
+
+function palettesHTML() {
+  const palettes = favoritePalettes();
+  return `<details class="st-details" data-details="palettes"><summary>Favorite palettes</summary>
+    <div class="st-palette-save"><input class="text" id="st-palette-name" aria-label="Palette name" maxlength="32" placeholder="Name this palette"><button class="btn" data-st="palette-save">Save palette</button></div>
+    ${palettes.length ? `<ul class="st-palettes">${palettes.map((p, i) => `<li><button class="btn quiet st-palette" data-palette="${i}" title="Use ${esc(p.name)}"><span class="st-palette-colors" aria-hidden="true">${p.colors.map(c => `<i style="background:${c}"></i>`).join("")}</span><span>${esc(p.name)}</span></button><button class="icon-btn" data-palette-delete="${i}" aria-label="Delete palette ${esc(p.name)}"><svg><use href="#i-trash"/></svg></button></li>`).join("")}</ul>` : '<p class="hint">Save two to four colours from the effect palette to reuse in another effect.</p>'}</details>`;
+}
+
+// A rerender must keep keyboard position and the details the creator chose to open.
+function preserveEditorFocus() {
+  const root = box(), active = document.activeElement;
+  let selector = null;
+  if (active && root.contains(active)) {
+    if (active.id) selector = `#${CSS.escape(active.id)}`;
+    else {
+      const attr = [...(active.attributes || [])].find(a => a.name.startsWith("data-"));
+      if (attr) selector = `[${attr.name}="${CSS.escape(attr.value)}"]`;
+    }
+  }
+  const start = active?.selectionStart, end = active?.selectionEnd;
+  const opened = $$("details[data-details][open]", root).map(el => el.dataset.details);
+  const scroll = [$("#st-left")?.scrollTop, $("#st-right")?.scrollTop];
+  return () => {
+    for (const key of opened) root.querySelector(`details[data-details="${CSS.escape(key)}"]`)?.setAttribute("open", "");
+    const target = selector ? root.querySelector(selector) : null;
+    if (target) {
+      target.focus({ preventScroll: true });
+      if (typeof start === "number") { try { target.setSelectionRange(start, end); } catch { /* range/colour controls have no caret */ } }
+    }
+    if ($("#st-left")) $("#st-left").scrollTop = scroll[0] || 0;
+    if ($("#st-right")) $("#st-right").scrollTop = scroll[1] || 0;
+  };
 }
 
 function wireDraft() {
@@ -118,6 +176,10 @@ export function openStudio(req) {
 
 function onKey(e) {
   if (!E.doc) return;
+  const menu = $("#st-menu");
+  if (e.key === "Escape" && menu && !menu.hidden) {
+    e.preventDefault(); menu.hidden = true; const add = $('[data-st="add"]'); add?.setAttribute("aria-expanded", "false"); add?.focus(); return;
+  }
   const typing = e.target?.matches?.("input, textarea, select, [contenteditable=true]") || e.target?.closest?.(".CodeMirror");
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") {
     e.preventDefault();
@@ -165,7 +227,6 @@ export async function renderStudio(arg) {
 }
 
 export function leaveStudio() {
-  if (E.lights) setLights(false);
   stopStills();
   closeEditor(true);
 }
@@ -184,41 +245,9 @@ async function loadLibrary() {
 }
 
 // ------------------------------------------------------------ documents
-function newDoc(d) {
-  return normalizeDoc({ fx_id: null, name: "Untitled effect", description: "", tags: [], remix_of: "", mode: "layers",
-                        layers: [], master: structuredClone(MASTER), expose: {}, source: "", values: {},
-                        ...structuredClone(d), dirty: !d.fx_id });
-}
-
-function normalizeDoc(doc) {
-  doc.master = { ...structuredClone(MASTER), ...(doc.master || {}) };
-  doc.master.palette = Array.isArray(doc.master.palette) && doc.master.palette.length >= 2
-    ? doc.master.palette.slice(0, 4) : structuredClone(MASTER.palette);
-  doc.master.speed = Number(doc.master.speed ?? 100);
-  doc.master.brightness = Number(doc.master.brightness ?? 100);
-  doc.master.react = Number(doc.master.react ?? 50);
-  doc.expose = doc.expose && typeof doc.expose === "object" ? doc.expose : {};
-  doc.tags = Array.isArray(doc.tags) ? doc.tags : [];
-  doc.values = doc.values && typeof doc.values === "object" ? doc.values : {};
-  const seen = new Set();
-  doc.layers = (Array.isArray(doc.layers) ? doc.layers : []).map((layer, i) => {
-    // A v1 layer has no id; its old control ids were l<index>_<setting>, so keep that as its id. Layers made from
-    // now on get a random id, and a reorder no longer moves anyone's controls.
-    let id = layer.id;
-    if (!id || !/^[a-z0-9][a-z0-9-]{0,15}$/.test(id) || seen.has(id)) id = String(i);
-    while (seen.has(id)) id = uid();
-    seen.add(id);
-    return { ...layer, id, enabled: layer.enabled !== false, opacity: layer.opacity ?? 100,
-             blend: layer.blend || "normal", mask: layer.mask || "all", palette: !!layer.palette,
-             react: { what: layer.react?.what === "speed" ? "speed" : "strength", amount: Number(layer.react?.amount) || 0 },
-             params: layer.params || {}, expose: layer.expose || {} };
-  });
-  return doc;
-}
-
 function docFromEffect(eff, { remix = false } = {}) {
   const d = { fx_id: remix ? null : eff.fx_id, name: remix ? `${eff.name} remix` : eff.name,
-              description: eff.description || "", tags: eff.tags || [], remix_of: remix ? eff.id || eff.remix_of : eff.remix_of || "" };
+              author: remix ? "" : eff.author || "", license: eff.license || "", description: eff.description || "", tags: eff.tags || [], remix_of: remix ? eff.id || eff.remix_of : eff.remix_of || "" };
   if (eff.kind === "layers") return newDoc({ ...d, mode: "layers", layers: eff.layers || [],
                                              master: eff.master || structuredClone(MASTER), expose: eff.expose || {} });
   return newDoc({ ...d, mode: "code", source: remix ? retitle(eff.source, d.name, d.remix_of) : eff.source });
@@ -394,46 +423,20 @@ const usesAudioDoc = (doc) => usesAudio(doc);
 // the parts the server turns into an effect file (builder), or the file itself (code)
 function payload(doc) {
   if (doc.mode === "code") return { source: codeSource(doc) };
-  return { name: doc.name, description: doc.description, tags: doc.tags, remix_of: doc.remix_of,
+  return { name: doc.name, author: doc.author, license: doc.license, description: doc.description, tags: doc.tags, remix_of: doc.remix_of,
            layers: doc.layers, master: doc.master, expose: doc.expose };
 }
 
 // ------------------------------------------------------------ undo and redo
-function snapDoc(doc = E.doc) {
-  if (!doc) return "null";
-  return JSON.stringify({ name: doc.name, description: doc.description, tags: doc.tags, remix_of: doc.remix_of,
-                          mode: doc.mode, layers: doc.layers, master: doc.master, expose: doc.expose,
-                          source: doc.source, values: doc.values });
-}
-
-function histReset() {
-  HIST.stack = [snapDoc()];
-  HIST.i = 0;
-  HIST.at = 0;
-}
-
-function histPush() {
-  if (!E.doc || E.applying) return;
-  const snap = snapDoc(), now = performance.now();
-  if (HIST.stack[HIST.i] === snap) return;
-  // A slider drag makes dozens of changes: they become one step. The first snapshot is never replaced.
-  if (HIST.i > 0 && HIST.i === HIST.stack.length - 1 && now - HIST.at < 500) {
-    HIST.stack[HIST.i] = snap;
-  } else {
-    HIST.stack = HIST.stack.slice(0, HIST.i + 1);
-    HIST.stack.push(snap);
-    if (HIST.stack.length > 60) HIST.stack.shift();
-    HIST.i = HIST.stack.length - 1;
-  }
-  HIST.at = now;
-}
+function snapDoc(doc = E.doc) { return snapshotDocument(doc); }
+function histReset() { HIST.reset(snapDoc()); }
+function histPush() { if (E.doc && !E.applying) HIST.push(snapDoc(), performance.now()); }
 
 async function histGo(dir) {
   if (!E.doc) return;
-  const next = HIST.i + dir;
-  if (next < 0 || next >= HIST.stack.length) return;
-  HIST.i = next;
-  const snap = JSON.parse(HIST.stack[next]);
+  const stored = HIST.go(dir);
+  if (stored === null) return;
+  const snap = JSON.parse(stored);
   const fx = E.doc.fx_id;
   E.applying = true;
   Object.assign(E.doc, snap);
@@ -469,10 +472,11 @@ function renderHome(pickStart) {
   const rig = litZones().length;
   setHTML(box(), `<div class="st-home">
     <div class="page-head"><div><h1>Studio</h1>
-      <p class="lede">Make your own effects by stacking layers, or write one in code. It plays on your own case while you build it, and Share sends it to everyone's gallery.</p></div>
+      <p class="lede">Choose a starting effect, edit its palette and layers, then save. Apply it to your lights when you are ready.</p></div>
       <div class="btn-row"><button class="btn" data-st="learn">Learn</button><a class="btn" href="#studio/community">Community effects</a>
       <button class="btn" data-st="surprise">Surprise me</button><button class="btn primary" data-st="new">New effect</button></div></div>
     ${draftBanner()}
+    ${workflowHTML()}
     ${rig ? "" : `<div class="banner"><span>No lights are set up yet, so previews use a sample case. <a href="#devices">Set up your lights</a> to see your own.</span></div>`}
     <section class="st-sec${pickStart ? " flash" : ""}" id="st-start"><h2 class="st-h">Start from</h2>
       <div class="st-grid">${LAYER_TEMPLATES.map((t) => `<button class="st-card st-tpl" data-card="${t.id}" data-tpl="${t.id}"><canvas class="st-live" aria-hidden="true"></canvas>
@@ -484,17 +488,25 @@ function renderHome(pickStart) {
         <button class="btn${using === e.fx_id ? " on" : ""}" data-use="${esc(e.fx_id)}">${using === e.fx_id ? "On your lights" : "Use"}</button>
         <button class="btn" data-edit="${esc(e.fx_id)}">Edit</button>
         <button class="icon-btn" data-more="${esc(e.fx_id)}" aria-label="More for ${esc(e.name)}"><svg><use href="#i-more"/></svg></button>`)).join("")}</div>`
-        : `<p class="hint">Nothing yet. Pick a starting point above: it takes a few minutes, and every change shows on your lights right away.</p>`}</section>
+        : `<p class="hint">Nothing saved yet. Pick a starting effect above. Edits appear in the preview; live draft preview is optional.</p>`}</section>
     ${community.length ? `<section class="st-sec"><h2 class="st-h">From the community</h2><div class="st-grid">${community.map((e) => cardHTML(e, `
         <button class="btn${using === e.fx_id ? " on" : ""}" data-use="${esc(e.fx_id)}">${using === e.fx_id ? "On your lights" : "Use"}</button>
         <button class="btn" data-remix="${esc(e.fx_id)}">Remix</button>
         <button class="icon-btn" data-more="${esc(e.fx_id)}" aria-label="More for ${esc(e.name)}"><svg><use href="#i-more"/></svg></button>`)).join("")}</div></section>` : ""}
+    ${packHistoryHTML()}
     <section class="st-sec"><div class="btn-row"><button class="btn quiet" data-st="import">Import an effect file</button>
+      <button class="btn" data-st="pack-import">Import scene pack</button><button class="btn" data-st="pack-export">Export scene pack</button>
+      <input type="file" id="st-pack-file" accept=".json,application/json" hidden>
       <span class="hint">An effect is one HTML file. Drop one anywhere on this page to open it.</span>
       <input type="file" id="st-import" accept=".html,text/html" hidden></div></section>
   </div>`);
   if (pickStart) $("#st-start")?.scrollIntoView({ block: "start" });
   wireDraft();
+  paintWorkflow();
+  $("#st-pack-file")?.addEventListener("change", ev => {
+    const file = ev.target.files?.[0]; ev.target.value = "";
+    if (file) scenePackImport(file, async () => { await loadLibrary(); if (!E.doc && H.view === "home") renderHome(); });
+  });
   $("#st-import")?.addEventListener("change", (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importFile(f); });
   queueStills([
     ...LAYER_TEMPLATES.map((t) => ({ key: t.id, eff: { kind: "layers", layers: { v: 2, layers: t.layers, master: t.master || {}, expose: t.expose || {} }, params: {} } })),
@@ -583,66 +595,15 @@ function playOn(canvas, eff, key) {
 }
 
 // ------------------------------------------------------------ community
-async function renderCommunity() {
-  setHTML(box(), `<div class="st-home"><div class="page-head"><div><h1>Community effects</h1>
-    <p class="lede">Effects people made in the Studio and shared. Point at one to see it on your own case.</p></div>
-    <div class="btn-row"><button class="btn" data-st="learn">Learn</button><a class="btn" href="#studio">Back to the Studio</a></div></div>
-    <p class="hint">Loading the gallery from GitHub…</p></div>`);
-  try {
-    H.gallery = await get("/api/studio/gallery");
-    for (const r of H.gallery.revoked_now || []) toast(`${r.name} was taken down from the gallery and is off now${r.reason ? `: ${r.reason}` : ""}.`, true);
-  } catch (e) {
-    setHTML(box(), `<div class="st-home"><div class="page-head"><div><h1>Community effects</h1>
-      <p class="lede">The gallery didn't load: ${esc(e.message)}</p></div><div class="btn-row"><a class="btn" href="#studio">Back</a>
-      <button class="btn primary" data-st="community-retry">Try again</button></div></div></div>`);
-    return;
-  }
-  paintCommunity();
-}
-
-function paintCommunity() {
-  const g = H.gallery;
-  const q = H.search.toLowerCase();
-  const tags = [...new Set(g.effects.flatMap((e) => e.tags))].sort();
-  const items = g.effects.filter((e) => (!H.tag || (H.tag === "music" ? e.audio : e.tags.includes(H.tag)))
-    && (!q || `${e.name} ${e.author} ${e.description} ${e.tags.join(" ")}`.toLowerCase().includes(q)));
-  setHTML(box(), `<div class="st-home"><div class="page-head"><div><h1>Community effects</h1>
-    <p class="lede">${g.effects.length} effects people made in the Studio and shared. Point at one to see it on your own case.</p></div>
-    <div class="btn-row"><button class="btn" data-st="learn">Learn</button><a class="btn" href="#studio">Back to the Studio</a></div></div>
-    <div class="st-filter"><input class="text" id="st-search" placeholder="Search names, authors, tags" value="${esc(H.search)}" spellcheck="false">
-      <div class="chips"><button class="chip-btn" data-tag="" aria-pressed="${!H.tag}">All</button><button class="chip-btn" data-tag="music" aria-pressed="${H.tag === "music"}">Music</button>
-      ${tags.map((t) => `<button class="chip-btn" data-tag="${esc(t)}" aria-pressed="${H.tag === t}">${esc(t)}</button>`).join("")}</div></div>
-    ${items.length ? `<div class="st-grid">${items.map((e) => `<div class="st-card" data-card="${esc(e.id)}"><canvas class="st-live" aria-hidden="true"></canvas>
-      <div class="st-cap"><strong>${esc(e.name)}${e.featured ? ` <span class="tag new">Featured</span>` : ""}</strong><span>by ${esc(e.author)}${e.audio ? ` <i class="st-badge">Music</i>` : ""}</span>
-      ${e.description ? `<p class="st-desc">${esc(e.description)}</p>` : ""}</div>
-      <div class="st-acts">${e.installed && !e.update ? `<button class="btn" disabled>Installed</button>` : `<button class="btn primary" data-install="${esc(e.id)}">${e.update ? "Update" : "Install"}</button>`}
-        <button class="btn" data-gremix="${esc(e.id)}">Remix</button>
-        <button class="btn quiet" data-gdet="${esc(e.id)}">How it's made</button></div></div>`).join("")}</div>`
-      : `<p class="hint">${g.effects.length ? "Nothing matches." : "No shared effects yet. Make one and press Share: yours could be the first."}</p>`}
-  </div>`);
-  $("#st-search")?.addEventListener("input", (e) => { H.search = e.target.value; clearTimeout(H.t); H.t = setTimeout(() => { paintCommunity(); $("#st-search").focus(); }, 250); });
-  // stills need each effect's file: fetched as cards come into view
-  queueStills([]);
-  H.io?.disconnect();                 // every repaint (a search keystroke) used to leave an observer watching old cards
-  const io = (H.io = new IntersectionObserver(async (entries) => {
-    for (const en of entries) {
-      if (!en.isIntersecting) continue;
-      io.unobserve(en.target);
-      const id = en.target.dataset.card;
-      try {
-        const { effect } = await get(`/api/studio/gallery/effect?id=${encodeURIComponent(id)}`);
-        addStill({ key: id, eff: effectRunnable(effect) });
-      } catch { /* the card stays dark */ }
-    }
-  }));
-  $$(".st-card", box()).forEach((c) => io.observe(c));
-}
-
 // ------------------------------------------------------------ the editor
 async function openEditor(doc) {
   stopStills();
+  H.view = "edit";
+  H.io?.disconnect();
+  clearTimeout(H.t);
   E.doc = normalizeDoc(doc);
-  E.sel = E.doc.mode === "layers" && E.doc.layers.length ? E.doc.layers.length - 1 : "effect";
+  E.sel = "effect";
+  E.saveError = ""; E.saving = false; E.recoveryError = false;
   E.logs = [];
   E.problem = null;
   E.layersCopy = null;
@@ -670,6 +631,7 @@ async function openEditor(doc) {
 }
 
 function closeEditor(keepHash) {
+  if (LIVE.state.wanted || LIVE.state.confirmed || LIVE.state.pending) setLights(false);
   clearTimeout(E.auto);
   saveDraftNow();
   cancelAnimationFrame(E.raf);
@@ -683,6 +645,7 @@ function closeEditor(keepHash) {
 }
 
 function renderEditor() {
+  const restoreFocus = preserveEditorFocus();
   const d = E.doc;
   setHTML(box(), `<div class="st-edit ${d.mode === "code" ? "is-code" : ""}">
     <header class="st-top">
@@ -697,10 +660,11 @@ function renderEditor() {
       <button class="btn" data-st="use">Use on my lights</button>
       <button class="btn" data-st="share">Share</button>
     </header>
+    ${workflowHTML()}
     <aside class="st-left" id="st-left">${d.mode === "layers" ? layersHTML() : `<div class="st-code" id="st-code"></div>`}</aside>
     <section class="st-mid">
       <div class="st-stagebar">
-        <label class="st-sw"><span class="switch"><input type="checkbox" id="st-lights"${E.lights ? " checked" : ""}><span></span></span> Also on my lights</label>
+        <label class="st-sw"><span class="switch"><input type="checkbox" id="st-lights"${E.lights ? " checked" : ""}><span></span></span> Live draft preview</label>
         <label class="st-sw"><span class="switch"><input type="checkbox" id="st-beat"${E.beat ? " checked" : ""}><span></span></span> Test beat</label>
         <div class="st-dbg" role="group" aria-label="Preview controls">
           <button class="btn quiet" data-dbg="pause" aria-pressed="${E.paused}" title="Pause the preview">${E.paused ? "Play" : "Pause"}</button>
@@ -721,6 +685,7 @@ function renderEditor() {
   if (d.mode === "code") mountCode();
   paintConsole();
   setSavedLabel();
+  restoreFocus();
 }
 
 // ---- left: layers, top layer first (it's drawn last)
@@ -728,7 +693,7 @@ function layersHTML() {
   const d = E.doc, T = H.info.types;
   const items = d.layers.map((l, i) => ({ l, i })).reverse();
   return `<div class="st-layers">
-    <button class="st-layer st-eff" data-sel="effect" aria-pressed="${E.sel === "effect"}"><b>${esc(d.name)}</b><span>Palette, knobs, description</span></button>
+    <button class="st-layer st-eff" data-sel="effect" aria-pressed="${E.sel === "effect"}"><b>${esc(d.name)}</b><span>Palette and macros</span></button>
     <ol class="st-list" id="st-list">${items.map(({ l, i }) => `<li class="st-layer" data-sel="${i}" aria-pressed="${E.sel === i}" draggable="true" role="button" tabindex="0">
       <span class="st-chip" style="background:${chipColor(l)}"></span>
       <span class="st-lname"><b>${esc(T[l.type]?.name || l.type)}${E.solo === l.id ? ` <i class="st-badge">Solo</i>` : ""}</b><span>${esc(layerLine(l))}</span></span>
@@ -772,29 +737,34 @@ const GENERAL_SPECS = [
 
 function exposeRowHtml(scope, key) {
   const on = scope === "m" ? !!E.doc.expose?.[key] : !!E.doc.layers?.[E.sel]?.expose?.[key];
-  return `<label class="st-expose"><input type="checkbox" data-${scope === "m" ? "mexpose" : "expose"}="${key}"${on ? " checked" : ""}> Show as a control</label>`;
+  const label = scope === "m" ? MASTER_LABELS[key] : H.info?.types[E.doc.layers[E.sel]?.type]?.params.find(s => s.id === key)?.label || key;
+  return `<label class="st-expose"><input type="checkbox" data-${scope === "m" ? "mexpose" : "expose"}="${key}" aria-label="Show ${esc(label)} as a control"${on ? " checked" : ""}> Show as a control</label>`;
 }
 
 function masterHTML() {
   const d = E.doc;
   const exposed = Object.entries(d.expose || {});
-  const palCount = d.layers.filter((l) => l.palette).length;
-  const hint = palCount
-    ? `${palCount} layer${palCount === 1 ? "" : "s"} take${palCount === 1 ? "s" : ""} colour from this palette. Speed and brightness apply to the whole effect.`
-    : "No layer uses the palette yet. In a layer with a colour, tick “Take its colour from the effect palette”, and this changes all of them at once. Speed and brightness apply to the whole effect.";
-  return `<div class="ins-block"><div class="ins-title"><h2>Effect</h2></div>
-    <div class="field"><label class="lab" for="st-desc"><span>Description</span></label><textarea class="text" id="st-desc" rows="3" maxlength="200" placeholder="What does it look like?">${esc(d.description)}</textarea></div>
-    <div class="field"><label class="lab" for="st-tags"><span>Tags</span></label><input class="text" id="st-tags" value="${esc(d.tags.join(", "))}" placeholder="ambient, warm, music" spellcheck="false"></div>
-    ${d.remix_of ? `<p class="hint">A remix of ${esc(d.remix_of)}. Sharing credits the original.</p>` : ""}
-    <div class="sub-head">Everything at once</div>
-    <div id="st-master">${MASTER_SPECS.map((s) => fieldHTML(s, d.master[s.id], "mm", { reset: true }) + exposeRowHtml("m", s.id)).join("")}</div>
-    <p class="hint">${hint}</p>
-    <div class="sub-head">Controls people can change</div>
-    ${exposed.length || d.layers.some((l) => Object.keys(l.expose || {}).length) ? `<ul class="st-exposed">
-      ${exposed.map(([k, label]) => `<li><input class="text" data-expose-label="m:${k}" value="${esc(label)}" maxlength="32" aria-label="Control name"><span>whole effect</span></li>`).join("")}
-      ${d.layers.flatMap((l, i) => Object.entries(l.expose || {}).map(([k, label]) => `<li><input class="text" data-expose-label="l:${i}:${k}" value="${esc(label)}" maxlength="32" aria-label="Control name"><span>${esc(H.info.types[l.type]?.name || l.type)}</span></li>`)).join("")}
-    </ul>` : `<p class="hint">None yet. Tick “Show as a control” under a setting, and it appears in everyone's effect panel.</p>`}
-    <div class="btn-row"><button class="btn" data-st="userview">See it as a user</button><button class="btn quiet" data-st="export">Export .html</button></div>
+  const palCount = d.layers.filter(l => l.palette).length;
+  return `<div class="ins-block"><div class="ins-title"><h2>Palette and macros</h2></div>
+    <div id="st-master">${MASTER_SPECS.map(s => fieldHTML(s, d.master[s.id], "mm", { reset: true })).join("")}</div>
+    <p class="hint">${palCount ? `${palCount} layer${palCount === 1 ? " uses" : "s use"} this palette.` : "Enable the effect palette in a colour layer to use these colours."} Speed and brightness apply to all layers.</p>
+    ${palettesHTML()}
+    <details class="st-details" data-details="controls"><summary>Controls people can change</summary>
+      ${MASTER_SPECS.map(s => `<div class="st-expose-option"><span>${esc(s.label)}</span>${exposeRowHtml("m", s.id)}</div>`).join("")}
+      ${exposed.length || d.layers.some(l => Object.keys(l.expose || {}).length) ? `<ul class="st-exposed">
+        ${exposed.map(([k, label]) => `<li><input class="text" data-expose-label="m:${k}" value="${esc(label)}" maxlength="32" aria-label="Control name"><span>whole effect</span></li>`).join("")}
+        ${d.layers.flatMap((l, i) => Object.entries(l.expose || {}).map(([k, label]) => `<li><input class="text" data-expose-label="l:${i}:${k}" value="${esc(label)}" maxlength="32" aria-label="Control name"><span>${esc(H.info.types[l.type]?.name || l.type)}</span></li>`)).join("")}
+      </ul>` : '<p class="hint">Select settings to show in the Lighting effect panel.</p>'}
+      <button class="btn" data-st="userview">See it as a user</button>
+    </details>
+    <details class="st-details" data-details="publishing"><summary>Details and publishing</summary>
+      <div class="field"><label class="lab" for="st-desc"><span>Description</span></label><textarea class="text" id="st-desc" rows="3" maxlength="200" placeholder="What does it look like?">${esc(d.description)}</textarea></div>
+      <div class="field"><label class="lab" for="st-tags"><span>Tags</span></label><input class="text" id="st-tags" value="${esc(d.tags.join(", "))}" placeholder="ambient, warm, music" spellcheck="false"></div>
+      ${d.remix_of ? `<p class="hint">A remix of ${esc(d.remix_of)}. Sharing credits the original.</p>` : ""}
+      ${d.author || d.license ? `<p class="hint">${d.author ? `Credit: ${esc(d.author)}. ` : ""}${d.license ? `Licence: ${esc(d.license)}.` : ""}</p>` : ""}
+      <p class="hint">Choose your author name and licence when you Share.</p>
+      <div class="btn-row"><button class="btn quiet" data-st="export">Export .html</button><button class="btn quiet" data-st="pack-export">Export scene pack</button></div>
+    </details>
   </div>`;
 }
 
@@ -813,7 +783,9 @@ function inspectorHTML() {
       <button class="icon-btn" data-st="dup" aria-label="Duplicate layer" title="Duplicate"><svg><use href="#i-copy"/></svg></button>
       <button class="icon-btn" data-st="del" aria-label="Delete layer" title="Delete"><svg><use href="#i-trash"/></svg></button></div>
     <p class="ins-desc">${esc(t.description)}${t.audio ? " It follows what's playing; switch on Test beat to build it without music." : ""}</p>
-    <div class="ins-block" id="st-params">${t.params.map((s) => fieldHTML(s, vals[s.id], "lp", { reset: true }) + exposeRowHtml("l", s.id)).join("")}</div>
+    <div class="ins-block" id="st-params">${t.params.map((s) => fieldHTML(s, vals[s.id], "lp", { reset: true })).join("")}</div>
+    <details class="st-details" data-details="layer-controls"><summary>Expose layer controls</summary>
+      ${t.params.map(s => `<div class="st-expose-option"><span>${esc(s.label)}</span>${exposeRowHtml("l", s.id)}</div>`).join("")}</details>
     <div class="ins-block" id="st-react">
       <div class="sub-head">Follow the music</div>
       ${fieldHTML({ id: "react", label: "React to music", type: "range", min: 0, max: 100, step: 1, unit: "%", default: 0 }, l.react?.amount || 0, "lr", { reset: true })}
@@ -959,10 +931,12 @@ function wireDrag() {
 }
 
 function rerenderSides() {
+  const restoreFocus = preserveEditorFocus();
   if (E.doc.mode === "layers") { $("#st-left").innerHTML = layersHTML(); wireDrag(); }
   $("#st-right").innerHTML = inspectorHTML();
   $$("#st-right input[type=range]").forEach(rangeFill);
   wireInspector();
+  restoreFocus();
 }
 
 function moveLayer(dir) {
@@ -1024,7 +998,8 @@ function changed(visual, { hist = true, auto = true } = {}) {
 
 function setSavedLabel() {
   const s = $("#st-saved");
-  if (s) s.textContent = E.doc?.dirty ? "Not saved" : "Saved";
+  if (s) s.textContent = E.saving ? "Saving..." : E.saveError ? "Save failed" : E.doc?.dirty ? "Not saved" : "Saved";
+  paintWorkflow();
   const b = $('[data-st="save"]');
   b?.classList.toggle("primary", !!E.doc?.dirty);
   const rev = $('[data-st="revert"]');
@@ -1042,30 +1017,14 @@ async function quietSave() {
   return save({ quiet: true });
 }
 
-const syncLights = coalesce(async () => {
-  if (!E.lights || !E.doc) return;
-  try { await post("/api/studio/draft", { ...payload(E.doc), values: E.doc.values, lights: true }); E.problem = null; }
-  catch (e) { E.problem = e.message; paintConsole(); }
+const syncLights = coalesce(() => {
+  if (E.doc) LIVE.sync({ ...payload(E.doc), values: E.doc.values, fx_id: E.doc.fx_id });
 }, 350);
-
-// picking a profile (the tray, say) ends what the Studio plays on your lights: the switch follows
-function followLights() {
-  const playing = S.state?.trial?.kind === "studio";
-  if (E.lights && playing) E.lightsSeen = true;
-  else if (E.lights && E.lightsSeen && !playing) {
-    E.lights = E.lightsSeen = false;
-    const cb = $("#st-lights"); if (cb) cb.checked = false;
-  }
-}
-
+function followLights() { LIVE.observe(S.state); paintWorkflow(); }
 async function setLights(on) {
-  E.lights = on; E.lightsSeen = false;
-  const cb = $("#st-lights"); if (cb) cb.checked = on;
-  try {
-    if (on) { await post("/api/studio/draft", { ...payload(E.doc), values: E.doc.values, lights: true }); toast("Playing on your lights"); }
-    else await post("/api/studio/draft", { lights: false });
-    emit("refresh");
-  } catch (e) { E.lights = false; if (cb) cb.checked = false; fail(e); }
+  if (on && !E.doc) return;
+  await LIVE.set(on, on ? { ...payload(E.doc), values: E.doc.values, fx_id: E.doc.fx_id } : {});
+  paintWorkflow();
 }
 
 async function restartRunner() {
@@ -1353,6 +1312,7 @@ async function save({ quiet = false } = {}) {
   clearTimeout(E.auto);
   const key = d.fx_id || d, queue = saves.get(key) || { tail: null };
   const before = snapDoc(d), previous = queue.tail;
+  E.saving = true; E.saveError = ""; setSavedLabel();
   saves.set(key, queue);
   const writing = (async () => {
     if (previous) await previous;
@@ -1367,14 +1327,17 @@ async function save({ quiet = false } = {}) {
       if (E.doc === d) {
         if (!d.dirty) forgetDraft();
         if (!quiet) E.saved = before;          // Revert goes back to this deliberate save
-        setSavedLabel();
+        E.saving = queue.tail !== writing; E.saveError = ""; setSavedLabel();
       }
       if (!quiet) {
         S.effects = await get("/api/effects");
         emit("refresh");
       }
       return E.doc === d ? r.effect : null; // do not continue Use/Share in an editor opened during this save
-    } catch (e) { if (!quiet) fail(e); return null; }
+    } catch (e) {
+      if (E.doc === d) { E.saving = false; E.saveError = e.message; saveDraftNow(); setSavedLabel(); }
+      if (!quiet) fail(e); return null;
+    }
   })();
   queue.tail = writing;
   try { return await writing; }
@@ -1408,54 +1371,18 @@ async function revert() {
 }
 
 async function useIt() {
+  const doc = E.doc;
   const eff = E.doc.dirty || !E.doc.fx_id ? await save() : { fx_id: E.doc.fx_id };
-  if (!eff) return;
+  if (!eff || E.doc !== doc) return;
   try {
-    E.lights = false; const cb = $("#st-lights"); if (cb) cb.checked = false;
-    const r = await post("/api/studio/use", { fx_id: eff.fx_id, values: E.doc.values });
-    S.state.scene = r.scene;
-    toast(`${E.doc.name} is on your lights`); emit("refresh");
+    if (LIVE.state.wanted || LIVE.state.confirmed || LIVE.state.pending) {
+      await setLights(false);
+      if (LIVE.state.error || E.doc !== doc) return;
+    }
+    const r = await post("/api/studio/use", { fx_id: eff.fx_id, values: doc.values });
+    S.state.scene = r.scene; S.state.effective = r.effective; S.state.trial = null; paintWorkflow();
+    toast(`${doc.name} is on your lights`); emit("refresh");
   } catch (e) { fail(e); }
-}
-
-async function shareIt(fxId) {
-  let eff = null;
-  if (E.doc && !fxId) {
-    const d = E.doc;
-    if (d.dirty || !d.fx_id) { eff = await save(); if (!eff || E.doc !== d) return; }
-    fxId = eff?.fx_id || d.fx_id;
-    if (!fxId) return;
-  }
-  const e = (H.lib?.effects || []).find((x) => x.fx_id === fxId) || E.doc || {};
-  const desc = e.description || "";
-  openSheet(`<form class="body" id="sh-form"><h2>Share ${esc(e.name)}</h2>
-    <p class="lede" style="margin:0">GitHub opens in your browser with the effect filled in. Press <b>Propose changes</b> there and it goes to the community gallery. Once it's checked and approved, everyone can use it.</p>
-    <div class="field"><label class="lab" for="sh-login"><span>Your GitHub user name</span></label><input class="text" id="sh-login" required value="${esc(remember("airglow.github"))}" spellcheck="false" autocomplete="username"></div>
-    <div class="field"><label class="lab" for="sh-d"><span>Description</span></label><textarea class="text" id="sh-d" rows="2" maxlength="200" required placeholder="What does it look like?">${esc(desc)}</textarea></div>
-    <div class="field"><label class="lab" for="sh-tags"><span>Tags</span></label><input class="text" id="sh-tags" value="${esc((e.tags || []).join(", "))}" placeholder="ambient, warm, music" spellcheck="false"></div>
-    <div class="field"><label class="lab" for="sh-lic"><span>Licence</span></label><select class="select" id="sh-lic">${LICENSES.slice(0, 5).map((l) => `<option${l === "MIT" ? " selected" : ""}>${l}</option>`).join("")}</select></div>
-    <label class="check"><input type="checkbox" id="sh-ok" required> I made this (or remixed something open), and it may be shared under this licence.</label>
-    <p class="hint">Shared: the effect itself, your GitHub name and the text above. Nothing about your PC.</p>
-    <div class="actions"><button type="button" class="btn quiet" data-close>Cancel</button><span class="spacer"></span><button class="btn primary">Open GitHub</button></div></form>`);
-  $("#sh-form").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const login = $("#sh-login").value.trim().replace(/^@/, "");
-    remember("airglow.github", login);
-    try {
-      const r = await post("/api/studio/share", { fx_id: fxId, author: login, description: $("#sh-d").value, open: false,
-        tags: $("#sh-tags").value.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 5), license: $("#sh-lic").value });
-      let copied = false;
-      if (!r.filled) { try { await navigator.clipboard.writeText(r.source); copied = true; } catch { copied = false; } }
-      await post("/api/studio/open-share", { url: r.url });
-      openSheet(`<div class="body"><h2>Almost there</h2>
-        ${r.filled ? `<p class="lede" style="margin:0">GitHub is open in your browser with <span class="path">${esc(r.path)}</span> filled in. Press <b>Propose changes</b>, then <b>Create pull request</b>.</p>`
-          : `<p class="lede" style="margin:0">GitHub is open in your browser with the file name filled in. ${copied ? "The effect is on your clipboard:" : "Copy the effect below,"} click into the empty file there, press <b>Ctrl+V</b>, then <b>Propose changes</b> and <b>Create pull request</b>.</p>
-            ${copied ? "" : `<textarea class="text" rows="6" readonly>${esc(r.source)}</textarea>`}`}
-        ${r.flags.length ? `<p class="hint">The reviewer will ask about this: it ${esc(r.flags.join("; "))}.</p>` : ""}
-        <p class="hint">Didn't open? <a href="${esc(r.url)}" target="_blank" rel="noopener">Open it here</a>.</p>
-        <div class="actions"><span class="spacer"></span><button class="btn primary" data-close>Done</button></div></div>`);
-    } catch (err) { fail(err); }
-  });
 }
 
 // The repo's checks, in the app: metadata, size, reviewer scan, music permission, strobing and frame time. Share
@@ -1514,7 +1441,8 @@ async function exportIt() {
 
 async function importFile(file) {
   if (!file) return;
-  if (file.size > 40000) return toast("That file is too big for an effect (32 KB at most).", true);
+  if (/\.json$/i.test(file.name || "")) return scenePackImport(file, async () => { await loadLibrary(); if (!E.doc) renderHome(); });
+  if (file.size > 32000) return toast("That file is too big for an effect (32 KB at most).", true);
   try {
     const text = await file.text();
     const r = await post("/api/studio/check", { source: text });
@@ -1522,9 +1450,9 @@ async function importFile(file) {
     const eff = r.effect;
     if (E.doc) closeEditor(true);
     openEditor(eff.kind === "layers"
-      ? newDoc({ name: eff.name, description: eff.description, tags: eff.tags, remix_of: eff.remix_of || "",
+      ? newDoc({ name: eff.name, author: eff.author, license: eff.license, description: eff.description, tags: eff.tags, remix_of: eff.remix_of || "",
                  layers: eff.layers, master: eff.master, expose: eff.expose })
-      : newDoc({ name: eff.name, description: eff.description, tags: eff.tags, remix_of: eff.remix_of || "",
+      : newDoc({ name: eff.name, author: eff.author, license: eff.license, description: eff.description, tags: eff.tags, remix_of: eff.remix_of || "",
                  mode: "code", source: text }));
     toast(`Opened ${eff.name}`);
   } catch (e) { fail(e); }
@@ -1561,8 +1489,8 @@ async function onSheetClick(e) {
     return;
   }
   const gd = e.target.closest("[data-gd]")?.dataset.gd;
-  if (gd && sheetGallery) {
-    const eff = sheetGallery;
+  if (gd && gallery.getSheetEffect()) {
+    const eff = gallery.getSheetEffect();
     if (gd === "remix") { closeSheet(); if (E.doc) closeEditor(true); openEditor(docFromEffect(eff, { remix: true })); return; }
     if (gd === "install") {
       try { await post("/api/studio/install", { id: eff.id }); S.effects = await get("/api/effects"); toast("Installed. It's in your effects now."); closeSheet(); H.gallery = await get("/api/studio/gallery"); if (H.view === "community") paintCommunity(); }
@@ -1643,23 +1571,6 @@ airglow.effect({
     <div class="actions"><span class="spacer"></span><button class="btn primary" data-close>Done</button></div></div>`);
 }
 
-async function galleryDetail(id) {
-  try {
-    const { effect } = await get(`/api/studio/gallery/effect?id=${encodeURIComponent(id)}`);
-    sheetGallery = { ...effect, id };
-    const controls = (effect.schema || []).map((s) => `<li><b>${esc(s.label)}</b> <span>${esc(s.type)}</span></li>`).join("");
-    const layers = effect.kind === "layers" && effect.layers
-      ? `<ul class="st-api">${effect.layers.map((l) => `<li>${esc(H.info.types[l.type]?.name || l.type)}${l.palette ? " · palette" : ""}${(l.react?.amount || 0) > 0 ? " · follows the music" : ""}</li>`).join("")}</ul>`
-      : `<p class="hint">Written in code. Remix it to read and change the script.</p>`;
-    openSheet(`<div class="body"><h2>${esc(effect.name)}</h2>
-      <p class="lede" style="margin:0">${esc(effect.description || "No description.")}</p>
-      <p class="hint">by ${esc(effect.author || "unknown")}${effect.remix_of ? ` · a remix of ${esc(effect.remix_of)}` : ""}${(effect.permissions || []).includes("audio") ? " · uses the music" : ""}</p>
-      <div class="sub-head">Controls</div>${controls ? `<ul class="st-api">${controls}</ul>` : `<p class="hint">No controls: its look is fixed.</p>`}
-      <div class="sub-head">How it's made</div>${layers}
-      <div class="actions"><button class="btn" data-gd="install">Install</button><button class="btn" data-gd="remix">Remix it</button><span class="spacer"></span><button class="btn quiet" data-close>Close</button></div></div>`);
-  } catch (e) { fail(e); }
-}
-
 // ------------------------------------------------------------ clicks
 async function onClick(e) {
   const t = e.target.closest("button, a, [data-sel]");
@@ -1672,6 +1583,18 @@ async function onClick(e) {
   if (ds.st === "surprise") {
     const s = surprise();
     return openEditor(newDoc({ name: "Untitled effect", layers: s.layers, master: s.master, expose: s.expose }));
+  }
+  if (ds.st === "stop-preview") return setLights(false);
+  if (ds.st === "pack-import") { $("#st-pack-file")?.click(); return; }
+  if (ds.st === "pack-export") {
+    if (E.doc && (E.doc.dirty || !E.doc.fx_id) && !await save()) return;
+    await loadLibrary();
+    return scenePackExport({ effects: H.lib?.effects || [], selected: E.doc?.fx_id ? [E.doc.fx_id] : [], download });
+  }
+  if (ds.packOpen) {
+    const eff = (H.lib?.effects || []).find(x => x.fx_id === ds.packOpen);
+    if (!eff) return toast("This effect is no longer installed. Import the pack again.", true);
+    return openEditor(docFromEffect(eff, { remix: eff.origin !== "mine" }));
   }
   if (ds.st === "import") { $("#st-import")?.click(); return; }
   if (ds.tpl) { const tp = LAYER_TEMPLATES.find((x) => x.id === ds.tpl); return openEditor(newDoc({ name: tp.id === "blank" ? "Untitled effect" : `My ${tp.name.toLowerCase()}`, layers: structuredClone(tp.layers), master: tp.master, expose: tp.expose || {} })); }
@@ -1686,7 +1609,7 @@ async function onClick(e) {
   if (ds.edit) { const eff = lib.find((x) => x.fx_id === ds.edit); if (eff) openEditor(docFromEffect(eff)); return; }
   if (ds.remix) { const eff = lib.find((x) => x.fx_id === ds.remix); if (eff) openEditor(docFromEffect(eff, { remix: true })); return; }
   if (ds.use) {
-    try { const r = await post("/api/studio/use", { fx_id: ds.use }); S.state.scene = r.scene; toast("On your lights"); emit("refresh"); renderHome(); }
+    try { const r = await post("/api/studio/use", { fx_id: ds.use }); S.state.scene = r.scene; S.state.effective = r.effective; toast("On your lights"); emit("refresh"); renderHome(); }
     catch (err) { fail(err); }
     return;
   }
@@ -1706,6 +1629,23 @@ async function onClick(e) {
   }
   if (!E.doc) return;
   // ---- editor
+  if (ds.st === "palette-save") {
+    try {
+      const list = addPalette(favoritePalettes(), $("#st-palette-name")?.value, E.doc.master.palette);
+      localStorage.setItem(PALETTE_KEY, JSON.stringify(list)); rerenderSides(); toast("Palette saved");
+    } catch (err) { fail(err); }
+    return;
+  }
+  if (ds.palette !== undefined) {
+    const palette = favoritePalettes()[+ds.palette];
+    if (palette) { E.doc.master.palette = [...palette.colors]; rerenderSides(); changed(true); }
+    return;
+  }
+  if (ds.paletteDelete !== undefined) {
+    try { const list = favoritePalettes(); list.splice(+ds.paletteDelete, 1); localStorage.setItem(PALETTE_KEY, JSON.stringify(list)); rerenderSides(); }
+    catch (err) { fail(err); }
+    return;
+  }
   if (ds.dbg) {
     if (ds.dbg === "pause") { E.paused = !E.paused; E.painted = -1; t.textContent = E.paused ? "Play" : "Pause"; }
     else if (ds.dbg === "slow") { E.scale = E.scale === 1 ? 0.25 : 1; }
@@ -1725,7 +1665,11 @@ async function onClick(e) {
     return wireInspector();
   }
   if (ds.toggle !== undefined) { const l = E.doc.layers[+ds.toggle]; l.enabled = l.enabled === false; rerenderSides(); return changed(true); }
-  if (ds.st === "add") { const m = $("#st-menu"); m.hidden = !m.hidden; t.setAttribute("aria-expanded", String(!m.hidden)); return; }
+  if (ds.st === "add") {
+    const m = $("#st-menu"); m.hidden = !m.hidden; t.setAttribute("aria-expanded", String(!m.hidden));
+    if (!m.hidden) m.querySelector("button")?.focus();
+    return;
+  }
   if (ds.add) {
     const spec = H.info.types[ds.add];
     if (E.doc.layers.length >= MAX_LAYERS) return toast(`${MAX_LAYERS} layers is the most an effect can have.`, true);
@@ -1735,7 +1679,9 @@ async function onClick(e) {
       params: Object.fromEntries(spec.params.map((s) => [s.id, structuredClone(s.default)])), expose: {} });
     E.sel = E.doc.layers.length - 1;
     if (spec.audio && !E.beat) { E.beat = true; const cb = $("#st-beat"); if (cb) cb.checked = true; toast("Test beat is on, so you can see it without music"); }
-    rerenderSides(); return changed(true);
+    rerenderSides();
+    $(`#st-list [data-sel="${E.sel}"]`)?.focus();
+    return changed(true);
   }
   if (ds.st === "del") return delLayer();
   if (ds.st === "dup") return dupLayer();
