@@ -196,6 +196,8 @@ def plan_header(store, key, zone, body, catalog):
         total = per * fans if item["kind"] in ("fan", "ring") else per * count
     else:
         total = _int(body.get("leds"), 1, zone.max_leds, "The LED count")
+        if item["kind"] == "fan" and (total < fans or total % fans):
+            raise ValueError(f"The LED count must split evenly over {fans} fans")
         per = max(total // fans, 1) if item["kind"] == "fan" else total
     if total > zone.max_leds:
         raise ValueError(f"that's {total} LEDs, and this header drives at most {zone.max_leds}")

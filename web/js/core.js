@@ -76,6 +76,17 @@ export const fail = (err) => toast(err.message || String(err), true);
 
 // ------------------------------------------------------------ shared state + events
 export const S = { state: null, effects: [], presets: [], curves: null, zones: null, settings: null, rules: [], history: [] };
+let zonesRequest = null;
+export function refreshZones() {
+  const pending = get("/api/zones").then((zones) => {
+    // Older readers wait for the newest request instead of reinstalling a stale whole-device snapshot.
+    if (zonesRequest !== pending) return zonesRequest;
+    S.zones = zones;
+    return zones;
+  });
+  zonesRequest = pending;
+  return pending;
+}
 const listeners = {};
 export const on = (ev, fn) => (listeners[ev] ||= []).push(fn);
 export const emit = (ev, data) => (listeners[ev] || []).forEach((fn) => { try { fn(data); } catch (e) { console.error(e); } });

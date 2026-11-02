@@ -93,6 +93,47 @@ class ControllerTests(unittest.TestCase):
             ctrl = Controller(config.Store(self.tmp.name), signals=lambda: self.sig, async_writes=False)
         self.assertEqual((ctrl.manager.bridge.client.host, ctrl.manager.bridge.client.port), ("192.0.2.5", 7777))
 
+    def test_start_delegates_initial_device_io_to_the_device_worker(self):
+        with mock.patch.object(self.manager, "maintain", side_effect=AssertionError("blocking device open")), \
+             mock.patch.object(self.manager, "start") as start, \
+             mock.patch.object(self.ctrl.engine, "start"), \
+             mock.patch.object(self.ctrl, "_warm_up_inputs"), mock.patch.object(self.ctrl, "_loop"):
+            self.ctrl.start()
+            self.ctrl._thread.join(1)
+        start.assert_called_once()
+
+    def test_first_sensor_success_is_published_without_an_extra_fan_cycle(self):
+        import threading
+        gate = threading.Event()
+        self.ctrl._read_sensors = None
+        self.ctrl.TICK = 0.5
+        self.ctrl.lhm._read = lambda *a, **kw: (gate.wait(2) and {"Text": "PC", "Children": []}) or None
+        with mock.patch.object(self.ctrl.engine, "start"), mock.patch.object(self.ctrl, "_warm_up_inputs"):
+            try:
+                self.ctrl.start()
+                deadline = time.monotonic() + 1
+                while not self.ctrl._ticks and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                before = len(self.nzxt.hub.duties)
+                gate.set()
+                deadline = time.monotonic() + 0.25
+                while not self.ctrl.sensors["online"] and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                self.assertTrue(self.ctrl.sensors["online"])
+                self.assertEqual(len(self.nzxt.hub.duties), before)
+            finally:
+                gate.set()
+                self.ctrl.shutdown()
+
+    def test_catalog_revision_tracks_identity_not_changing_values(self):
+        self.ctrl.tick()
+        first = self.ctrl.snapshot()["catalog_rev"]
+        self.ctrl.tick(); self.ctrl.tick()
+        self.assertEqual(self.ctrl.snapshot()["catalog_rev"], first)
+        with mock.patch.object(self.ctrl._system, "read", return_value={"ram_total": 64}):
+            self.ctrl._update_readings([])
+        self.assertGreater(self.ctrl.snapshot()["catalog_rev"], first)
+
     def test_set_scene_validates_and_clears_preset(self):
         self.ctrl.apply_preset(self.store.get_presets()[0])
         self.ctrl.set_scene({"effect": "comet"})
@@ -227,13 +268,16 @@ class ControllerTests(unittest.TestCase):
 
     def _run_loop_ticks(self, count):
         waits = []
+        clock = [time.monotonic()]
 
         def wait(_timeout):
             waits.append(self.ctrl._ticks)
+            clock[0] += _timeout
             if len(waits) == count:
                 self.ctrl._stop.set()
 
-        with mock.patch.object(self.ctrl._stop, "wait", side_effect=wait):
+        with mock.patch.object(self.ctrl._sensor_ready, "wait", side_effect=wait), \
+             mock.patch("airglow.controller.time.monotonic", side_effect=lambda: clock[0]):
             self.ctrl._loop()
 
     def test_loop_failsafe_after_repeated_sensor_errors_before_shutdown(self):
@@ -280,6 +324,13 @@ class ControllerTests(unittest.TestCase):
         self.ctrl.tick()                                                         # sensors are read every other tick
         self.ctrl.tick()
         self.assertAlmostEqual(self.ctrl.readings["app/energy_cost"]["value"], round(0.2 * 0.3797, 3))
+
+    def test_cost_per_hour_requires_both_power_readings_including_zero(self):
+        for cpu, gpu, expected in ((65, None, None), (None, 20, None), (None, None, None), (0, 0, 0)):
+            with self.subTest(cpu=cpu, gpu=gpu):
+                self.ctrl.sensors = {"cpu_power": cpu, "gpu_power": gpu, "total_power": None}
+                cost = next(r for r in self.ctrl._app_readings() if r["id"] == "app/energy_cost")
+                self.assertEqual(cost["value"], expected)
 
     def test_editing_a_preset_in_use_by_a_rule_takes_effect(self):
         self.store.set_rules([{"id": "game", "enabled": True, "when": {"type": "app_running", "exe": "game.exe"},

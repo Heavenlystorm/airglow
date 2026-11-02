@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.11.2
+- CPU and GPU labels refresh when sensor identity becomes available, without waiting for the minute-long catalog
+  refresh. Slow metadata requests no longer delay live readings.
+- Initial lighting-device discovery runs on its background worker so an unavailable RGB helper does not hold up
+  the interface or sensor startup. New sensor availability is published promptly; initial retries back off while
+  a helper starts. Fan-control and failsafe cadence are preserved.
+- Rapid edits to a custom light retain all selected options, including edits across zones with delayed replies.
+  Rotation handles remain usable when another light overlaps them.
+- Welcome discovery and next steps update as sensors and devices arrive. Consent and keyboard focus are retained,
+  failed saves remain visible and retriable, and closing the welcome waits for persistence.
+- The light setup guide rejects LED counts that cannot split evenly over the selected fans, reports probe errors
+  with retry, and checks remaining tasks before claiming setup is complete. Placement autosave is explained.
+- Cancelling helper setup or failing to start its administrator step restores the OpenRGB settings changed by
+  that attempt while preserving unrelated concurrent edits. Partial installations retain device protection.
+- Energy cost stays unavailable when either CPU or GPU power is missing, unless an explicit total is reported.
+- Added regression coverage for startup, cancellation, persistence, unavailable devices and delayed responses.
+
 ## 1.11.1
 - Overview makes better use of larger windows and monitors, with tiles that grow to fit the available space.
 - Readings, charts, navigation and the live lighting preview scale with the dashboard, while narrow windows retain

@@ -1,6 +1,6 @@
 // First-run welcome: what was found, what needs attention, and a single way forward.
 
-import { $, S, emit, esc, fail, post, toast } from "./core.js";
+import { $, S, emit, esc, fail, on, post, setHTML, toast } from "./core.js";
 import { refreshTools } from "./helpers.js";
 import { closeSheet, openSheet } from "./sheet.js";
 
@@ -8,8 +8,7 @@ function item(ok, title, text, action = "") {
   return `<div class="onb-item"><i class="dot ${ok === null ? "" : ok ? "on" : "off"}"></i><div style="flex:1"><strong>${title}</strong><span>${text}</span></div>${action}</div>`;
 }
 
-export function openWelcome() {
-  const st = S.state;
+function welcomeList(st) {
   const devs = st.devices || [];
   const lit = devs.filter((d) => d.online);
   const orgb = devs.filter((d) => d.kind === "openrgb");
@@ -27,34 +26,91 @@ export function openWelcome() {
     list += item(false, `${esc(c.name)} is running`, `It controls ${esc(c.conflicts_with)} too, which makes lights flicker.`,
       `<button class="btn" data-close-app="${esc(c.name)}">Close it</button>`);
   }
+  return list;
+}
+
+const welcomeHint = (pending) => pending
+  ? "Next, tell Airglow what's plugged in where. Each light blinks while you set it up, and it takes about a minute."
+  : "The Overview is yours to arrange: Customize moves and resizes tiles, and any tile can show a different reading.";
+
+function renderWelcomeStatus() {
+  const status = $("#onb-status");
+  if (!status || !S.state) return;
+  const pending = S.state.setup_pending;
+  const focused = document.activeElement;
+  const controls = new Map([...status.querySelectorAll("[data-close-app]")].map((b) => [b.dataset.closeApp, b]));
+  setHTML(status, welcomeList(S.state));
+  for (const button of status.querySelectorAll("[data-close-app]")) {
+    const retained = controls.get(button.dataset.closeApp);
+    if (retained && retained !== button) button.replaceWith(retained);
+    if (retained === focused) retained.focus();
+  }
+  $("#onb-step").textContent = pending ? "Step 1 of 2" : "What I found";
+  $("#onb-hint").textContent = welcomeHint(pending);
+  $("#onb-skip").textContent = pending ? "Later" : "Check devices";
+  $("#onb-start").textContent = pending ? "Set up lights" : "Start";
+}
+on("state", renderWelcomeStatus);
+
+let clearWelcomeListeners = () => {};
+export function openWelcome() {
+  clearWelcomeListeners();
+  const st = S.state;
   openSheet(`<div class="body"><div class="sheet-head"><h2>Welcome to Airglow</h2>
-      <div class="sheet-head-side"><span class="sheet-step">${st.setup_pending ? "Step 1 of 2" : "What I found"}</span>
-      <button class="icon-btn" id="onb-close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div></div>
+      <div class="sheet-head-side"><span class="sheet-step" id="onb-step">${st.setup_pending ? "Step 1 of 2" : "What I found"}</span>
+      <button class="icon-btn" id="onb-close" aria-label="Close"><svg><use href="#i-close"/></svg></button></div></div>
     <p class="lede" style="margin:0">Here's what it found on this PC. Everything stays on this computer: no account, no cloud.</p>
-    <div class="onb-list">${list}</div>
+    <div class="onb-list" id="onb-status">${welcomeList(st)}</div>
     <div class="tools-box" data-tools></div>
     ${onlineItem()}
-    <p class="hint">${st.setup_pending ? "Next, tell Airglow what's plugged in where. Each light blinks while you set it up, and it takes about a minute." : "The Overview is yours to arrange: Customize moves and resizes tiles, and any tile can show a different reading."}</p>
+    <p class="hint" id="onb-hint">${welcomeHint(st.setup_pending)}</p>
     <div class="actions"><button class="btn quiet" id="onb-skip">${st.setup_pending ? "Later" : "Check devices"}</button><span class="spacer"></span>
       <button class="btn primary" id="onb-start">${st.setup_pending ? "Set up lights" : "Start"}</button></div></div>`);
   refreshTools();
-  let finished = false;
-  const done = () => {
-    if (finished) return Promise.resolve();
-    finished = true;
-    if ($("#onb-online")) post("/api/settings", { online_checks: $("#onb-online").checked }).catch(() => {});
-    return post("/api/onboarded").then(() => emit("refresh")).catch(() => {});
-  };
   const sheet = $("#sheet");
-  const finish = () => { done(); };
-  sheet.addEventListener("cancel", finish, { once: true });   // the sheet is shared: don't stack a listener per open
-  $("#onb-close").addEventListener("click", finish);
-  $("#onb-start").addEventListener("click", () => {
-    done();
-    if (st.setup_pending) import("./setup.js").then((m) => m.openSetup({ start: true })).catch(fail);
+  const root = $("#onb-status");
+  let finished = false, saving = false;
+  const done = async () => {
+    if (finished) return true;
+    if (saving) return false;
+    saving = true;
+    const controls = [$("#onb-close"), $("#onb-start"), $("#onb-skip"), $("#onb-online")].filter(Boolean);
+    controls.forEach((b) => { b.disabled = true; });
+    try {
+      const online = $("#onb-online");
+      if (online) S.settings = await post("/api/settings", { online_checks: online.checked });
+      await post("/api/onboarded");
+      finished = true;
+      clear();
+      emit("refresh");
+      return $("#onb-status") === root;
+    } catch (err) { fail(err); return false; }
+    finally { saving = false; controls.forEach((b) => { b.disabled = false; }); }
+  };
+  const dismiss = async () => { if (await done()) closeSheet(); };
+  const cancel = (e) => {
+    if ($("#onb-status") !== root) { clear(); return; }
+    e.preventDefault();
+    dismiss();
+  };
+  const clear = () => {
+    sheet.removeEventListener("cancel", cancel);
+    sheet.removeEventListener("close", clear);
+  };
+  clearWelcomeListeners = clear;
+  sheet.addEventListener("cancel", cancel);
+  sheet.addEventListener("close", clear, { once: true });
+  $("#onb-close").addEventListener("click", dismiss);
+  $("#onb-start").addEventListener("click", async () => {
+    if (!await done()) return;
+    if (S.state.setup_pending) import("./setup.js").then((m) => m.openSetup({ start: true })).catch(fail);
     else closeSheet();
   });
-  $("#onb-skip").addEventListener("click", () => { done(); closeSheet(); if (!st.setup_pending) location.hash = "#devices"; });
+  $("#onb-skip").addEventListener("click", async () => {
+    if (!await done()) return;
+    closeSheet();
+    if (!S.state.setup_pending) location.hash = "#devices";
+  });
 }
 
 // Going online is opt-in: asked once, on the welcome sheet, or on its own for people who already went through it.

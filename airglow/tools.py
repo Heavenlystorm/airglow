@@ -41,6 +41,10 @@ class SetupError(Exception):
     pass
 
 
+class ElevationError(SetupError):
+    """Windows did not start the elevated process; no helper install could have run."""
+
+
 def spec():
     return json.loads((paths.PACKAGE_DIR / "data" / "tools.json").read_text(encoding="utf-8"))
 
@@ -369,7 +373,7 @@ def openrgb_settings_file():
     return paths._appdata() / "OpenRGB" / "OpenRGB.json"
 
 
-def disable_openrgb_detectors(names, path=None):
+def disable_openrgb_detectors(names, path=None, *, changes=None):
     """Switch off OpenRGB's detectors for controllers Airglow lights itself, so OpenRGB never opens them. Merges into
     an existing OpenRGB.json (everything else in it stays); one that can't be read is left alone. Returns whether
     the file now has them off."""
@@ -377,7 +381,8 @@ def disable_openrgb_detectors(names, path=None):
     if not names:
         return True
     try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        before = path.read_bytes() if path.exists() else None
+        data = json.loads(before) if before is not None else {}
     except (OSError, ValueError) as e:
         log.warning("left %s alone: couldn't read it (%s)", path, e)
         return False
@@ -392,14 +397,51 @@ def disable_openrgb_detectors(names, path=None):
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".airglow-tmp")
-        tmp.write_text(json.dumps(data, indent=4), encoding="utf-8")
+        written = json.dumps(data, indent=4).encode("utf-8")
+        tmp.write_bytes(written)
         tmp.replace(path)
     except OSError as e:
         log.warning("couldn't update %s: %s", path, e)
         return False
+    if changes is not None:
+        changes.append((path, before, written))
     log.info("OpenRGB won't open what Airglow lights: switched off its %s detector%s", ", ".join(names),
              "" if len(names) == 1 else "s")
     return True
+
+
+def _restore_openrgb_settings(path, before, written):
+    """Undo this setup attempt without replacing edits another program made during the Windows prompt."""
+    if before == written:
+        return
+    try:
+        current = path.read_bytes()
+    except FileNotFoundError:
+        return                      # another program removed it; don't recreate it
+    if current == written:
+        restored = before
+    else:
+        original = json.loads(before) if before is not None else {}
+        expected, data = json.loads(written), json.loads(current)
+        old = original.get("Detectors", {}).get("detectors", {})
+        changed = expected["Detectors"]["detectors"]
+        section = data["Detectors"]
+        detectors = section["detectors"]
+        for name, value in changed.items():
+            if old.get(name) != value and detectors.get(name) == value:
+                if name in old:
+                    detectors[name] = old[name]
+                else:
+                    detectors.pop(name, None)
+        if "Detectors" not in original and section == {"detectors": {}}:
+            data.pop("Detectors")
+        restored = json.dumps(data, indent=4).encode("utf-8") if data or before is not None else None
+    if restored is None:
+        path.unlink(missing_ok=True)
+    else:
+        tmp = path.with_name(path.name + ".airglow-tmp")
+        tmp.write_bytes(restored)
+        tmp.replace(path)
 
 
 def _trusted_download(path):
@@ -548,7 +590,7 @@ def run_elevated(args):
     if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(info)):
         if ctypes.GetLastError() == 1223:                      # ERROR_CANCELLED: "No" on the admin prompt
             return None
-        raise SetupError(f"couldn't start the setup step (error {ctypes.GetLastError()})")
+        raise ElevationError(f"couldn't start the setup step (error {ctypes.GetLastError()})")
     k32 = ctypes.windll.kernel32
     k32.WaitForSingleObject(info.hProcess, 0xFFFFFFFF)
     code = wintypes.DWORD()
@@ -667,11 +709,6 @@ def start_setup(ctrl, store, ids=None):
             password = auth["password"]
             job_file["lhm_password_sha256"] = hashlib.sha256(password.encode()).hexdigest()
         job.update(progress=1.0)
-        if "openrgb" in wanted:
-            # before OpenRGB first starts, and here rather than in the elevated step: an administrator's
-            # elevation can run as another account, with another %APPDATA%
-            from .hw import openrgb_detectors_to_disable
-            disable_openrgb_detectors(openrgb_detectors_to_disable(ctrl.manager.natives.values()))
         path = dl / "setup-job.json"
         path.write_text(json.dumps(job_file), encoding="utf-8")
         # Keep the credential before LHM can use it, even if a later setup step or this process fails.
@@ -682,13 +719,34 @@ def start_setup(ctrl, store, ids=None):
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, auth_file())
+        detector_edits = []
+        def undo_preparation():
+            if new_auth:
+                auth_file().unlink(missing_ok=True)
+            for edit in detector_edits:
+                try:
+                    _restore_openrgb_settings(*edit)
+                except (OSError, ValueError, KeyError, TypeError) as e:
+                    raise SetupError("Setup didn't start, but OpenRGB's controller settings couldn't be restored. "
+                                     "Check its device detectors before using it.") from e
         try:
-            r = _elevate(job, ["--setup-tools", str(path)], result_file(path, "--setup-tools"))
+            if "openrgb" in wanted:
+                # This user's settings, before OpenRGB starts; elevation can run as another Windows account.
+                from .hw import openrgb_detectors_to_disable
+                names = openrgb_detectors_to_disable(ctrl.manager.natives.values())
+                if names:
+                    settings = openrgb_settings_file()
+                    if not disable_openrgb_detectors(names, path=settings, changes=detector_edits):
+                        raise SetupError("OpenRGB's controller settings couldn't be prepared; no helpers were installed")
+            try:
+                r = _elevate(job, ["--setup-tools", str(path)], result_file(path, "--setup-tools"))
+            except ElevationError:
+                undo_preparation()
+                raise
         finally:
             path.unlink(missing_ok=True)
         if r is None:
-            if new_auth:
-                auth_file().unlink(missing_ok=True)
+            undo_preparation()
             return "cancelled"
         job.update(state="working", step="Starting the programs")
         if password:

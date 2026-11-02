@@ -94,6 +94,13 @@ class PlanTests(unittest.TestCase):
         cfg = self.plan(component="generic-argb-strip", leds=57, spot="top")
         self.assertEqual((cfg["layout"]["shape"], cfg["layout"]["leds"], cfg["name"]), ("strip", 57, "Top strip"))
 
+    def test_counted_fans_require_a_positive_equal_count_per_fan(self):
+        before = self.store.zones()
+        for count in (1, 2, 10):
+            with self.subTest(leds=count), self.assertRaisesRegex(ValueError, "evenly"):
+                self.plan(component="generic-argb-fans", count=3, leds=count, spot="front")
+        self.assertEqual(self.store.zones(), before)
+
     def test_known_product_needs_no_count(self):
         self.zone.connector = "nzxt"
         cfg = self.plan(component="nzxt-f360-rgb-core-case-version", spot="front")

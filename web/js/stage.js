@@ -1,7 +1,7 @@
 // The stage: your zones drawn where you placed them, lit with the exact colours the hardware shows.
 // LEDs go on a <canvas> (additive glow), interaction (select, arrange, rotate) on an SVG layer above it.
 
-import { $, S, clamp, emit, esc, fail, get, on, post } from "./core.js";
+import { $, S, clamp, emit, esc, fail, on, post, refreshZones } from "./core.js";
 
 const U = 1000;                       // canvas units -> viewBox units
 const VB_W = 1600, VB_H = 1000;
@@ -89,7 +89,7 @@ export function renderOverlay() {
   const zones = S.zones?.zones || [];
   const visible = zones.filter((z) => z.device.online && (z.config.enabled || st.arranging));
   $("#stage-empty").hidden = zones.some((z) => z.device.online && z.config.enabled) || st.arranging;
-  let html = "";
+  let html = "", handles = "";
   for (const z of visible) {
     const L = z.config.layout, on = z.config.enabled && z.positions.length;
     const sel = st.selected === z.key;
@@ -124,9 +124,10 @@ export function renderOverlay() {
     const placingThis = !!st.placing?.includes(z.key);
     const aria = `${z.config.name}${on ? "" : " (off)"}${z.device?.name ? `, ${z.device.name}` : ""}`;
     html += `<g class="zone${on ? "" : " off"}${sel || placingThis ? " selected" : ""}${placingThis ? " placing" : ""}" data-key="${esc(z.key)}" tabindex="0" role="button" aria-label="${esc(aria)}" aria-pressed="${sel}">${deco}${hit}
-      <text class="label" x="${lx}" y="${ly}" data-y="${ly}" data-below="${below}">${esc(z.config.name)}${on ? "" : " (off)"}</text></g>${handle}`;
+      <text class="label" x="${lx}" y="${ly}" data-y="${ly}" data-below="${below}">${esc(z.config.name)}${on ? "" : " (off)"}</text></g>`;
+    handles += handle;
   }
-  s.innerHTML = html;
+  s.innerHTML = html + handles;             // handles must stay above every zone's transparent hit area
   declutter();
   $("#stage").classList.toggle("arranging", st.arranging);
   $("#stage-hint").textContent = st.arranging
@@ -313,7 +314,7 @@ async function saveLayouts(items) {
       const r = await post(`/api/zones/${encodeURIComponent(z.key)}`, { ...z.config, layout });
       z.config = r.config;
     }
-    S.zones = await get("/api/zones");
+    await refreshZones();
     renderOverlay();
     draw();
   } catch (e) { fail(e); renderOverlay(); draw(); }

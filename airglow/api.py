@@ -380,7 +380,8 @@ def route(server, method, path, body, query=None):
                     "setup_pending": lightsetup.pending_count(store, devs),
                     "readings": ctrl.readings_for(store.tracked_sensors())}
         if path == "/api/sensors":
-            return {"sensors": list(ctrl.readings.values()), "lhm_online": bool(ctrl.sensors.get("online"))}
+            return {"sensors": list(ctrl.readings.values()), "lhm_online": bool(ctrl.sensors.get("online")),
+                    "revision": ctrl.catalog_rev}
         if path == "/api/sensors/history":
             ids = [i for v in (query or {}).get("ids", []) for i in v.split(",") if i][:40]
             return ctrl.readings_history.get(ids)
