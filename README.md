@@ -145,7 +145,8 @@ too.
 Your setup can be quiet when you're working and ready for more when you need it. Draw a fan curve using the
 processor, graphics card, whichever is hotter, or a liquid cooler's coolant temperature. Alongside fans on an NZXT
 hub, Airglow can use LibreHardwareMonitor to control supported motherboard fan headers and cooler pumps and fans.
-They stay on their BIOS or cooler curve until you choose an Airglow curve or a steady speed.
+After setup, detected spinning fans automatically follow Airglow's curve. Pumps and headers without an RPM reading
+need an explicit choice. Choose BIOS / device to keep a channel with its own controller; that choice is remembered.
 
 For the fans Airglow controls, curves never go below 20%, and at 90 °C they run at full speed regardless of the
 curve. If temperature readings stop, a failsafe speed takes over until they return. When Airglow quits, the headers

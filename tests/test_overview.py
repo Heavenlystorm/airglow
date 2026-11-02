@@ -61,7 +61,7 @@ class CatalogTests(unittest.TestCase):
         m = {"unit": "°C"}
         self.assertEqual(sensors.fmt(m, 45.4), "45°C")
         self.assertEqual(sensors.fmt(m, 45.4, fahrenheit=True), "114°F")
-        self.assertEqual(sensors.fmt({"unit": "B/s"}, 3 * 1024 * 1024), "3.0 MB/s")
+        self.assertEqual(sensors.fmt({"unit": "B/s"}, 3 * 1024 * 1024), "3.0 MiB/s")
         self.assertEqual(sensors.fmt({"unit": "MHz"}, 4625), "4.62 GHz")
         self.assertEqual(sensors.fmt({"unit": "%"}, None), "n/a")
 

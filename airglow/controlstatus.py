@@ -27,22 +27,25 @@ class ControlStatus:
             self._event(key, kind, str(message)[:400])
 
     def observe(self, key, label, *, kind="device", owner="Airglow", online=True,
-                stale_after=15.0, expected=True):
+                stale_after=15.0, expected=True, detail=None, action=None):
         with self._lock:
             row = self._rows.get(key)
+            presence = ("control channel detected" if online else "control channel unavailable") if kind == "lhm-fan" else (
+                "connected" if online else "disconnected")
             if row is None:
                 row = self._rows[key] = {"id": key, "label": str(label)[:200], "kind": kind,
                     "owner": owner, "online": online, "last_success_at": None, "success_mono": None,
                     "pending": False, "error": None, "duration_ms": None, "stale_after": stale_after,
                     "expected": expected, "stale_reported": False, "observed_mono": self._mono()}
-                self._event(key, "connection", f"{label}: {'connected' if online else 'disconnected'}")
+                self._event(key, "connection", f"{label}: {presence}")
             else:
                 if row["owner"] != owner:
                     self._event(key, "ownership", f"{label}: {row['owner']} → {owner}")
                 if row["online"] != online:
-                    self._event(key, "connection", f"{label}: {'connected' if online else 'disconnected'}")
+                    self._event(key, "connection", f"{label}: {presence}")
                 row.update(label=str(label)[:200], kind=kind, owner=owner, online=online,
                            expected=expected, stale_after=stale_after)
+            row.update(detail=detail, action=action)
             self._rows.move_to_end(key)
             device_keys = [k for k in self._rows if k not in self.COMPONENTS]
             while len(device_keys) > self.MAX_DEVICES:
@@ -89,6 +92,14 @@ class ControlStatus:
                 self._event(key, "failure", f"{row['label']}: {error}")
             row.update(error=error, pending=False)
 
+    def clear_failure(self, key):
+        """A cancelled request no longer needs recovery; this is not a hardware acknowledgement."""
+        with self._lock:
+            row = self._rows.get(key)
+            if row is not None and row["error"]:
+                self._event(key, "recovery", f"{row['label']}: no Airglow control requested; previous error cleared")
+                row.update(error=None, pending=False, stale_reported=False)
+
     def snapshot(self, compact=False):
         with self._lock:
             now = self._mono()
@@ -100,7 +111,7 @@ class ControlStatus:
                 elif row["error"]:
                     state = "failed"
                 elif not row["expected"]:
-                    state = "healthy" if age is not None else "unmanaged"
+                    state = "unmanaged"
                 elif row["stale_after"] is not None and (age if age is not None else now - row["observed_mono"]) > row["stale_after"]:
                     state = "stale"
                 elif row["pending"] or age is None:

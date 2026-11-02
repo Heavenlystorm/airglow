@@ -96,7 +96,7 @@ function renderEditor() {
     const t = clamp(F.temp, ED.tMin, ED.tMax), d = F.duty;
     const right = ex(t) < ED.R - 150;
     g += `<line class="now-line" x1="${ex(t)}" x2="${ex(t)}" y1="${ED.T}" y2="${ED.B}"/><circle class="now-dot" cx="${ex(t)}" cy="${ey(d)}" r="5"/>
-      <text class="now-label" x="${ex(t) + (right ? 10 : -10)}" y="${ey(d) - 12}" text-anchor="${right ? "start" : "end"}">Now ${fmtTemp(F.temp)}, ${Math.round(d)}%</text>`;
+      <text class="now-label" x="${ex(t) + (right ? 10 : -10)}" y="${ey(d) - 12}" text-anchor="${right ? "start" : "end"}">Now ${fmtTemp(F.temp)}, ${Math.round(d)}% requested</text>`;
   }
   pts.forEach(([t, d], i) => {
     g += `<circle class="pt${E.sel === i ? " sel" : ""}" data-i="${i}" cx="${ex(t)}" cy="${ey(d)}" r="8" tabindex="0" role="slider" aria-label="Point ${i + 1}: ${Math.round(toUnit(t))} degrees, ${d} percent" aria-valuenow="${d}" aria-valuemin="${minDuty}" aria-valuemax="100"/>`;
@@ -112,7 +112,7 @@ function renderEditor() {
     ? `The fans follow ${F.curve === "trial" ? "the curve of the profile you're trying" : `${curveLabel(F.curve)}'s own curve`}. Pick a curve here to switch back to one of yours.`
     : F.curve !== F.base_curve
     ? `An automation has switched the fans to ${curveLabel(F.curve)} for now. ${curveLabel(F.base_curve)} comes back when it stops.`
-    : `Fans that Airglow drives follow this curve, tracking ${tracking}.`;
+    : `Fans in Airglow curve mode follow this curve, tracking ${tracking}.`;
   $("#editor-hint").textContent = dirty() ? "Draft changes. The dashed line is the saved curve; fans keep following it until you save." : "Drag points or use Add curve point. Arrow keys fine-tune a focused point; Delete removes it.";
 }
 
@@ -224,7 +224,7 @@ function renderPorts() {
 }
 
 // ------------------------------------------------------------ motherboard headers and coolers (through LHM)
-const MODES = [["", "Leave alone"], ["curve", "Follow the curve"], ["steady", "Steady speed"]];
+const MODES = [["", "Not configured"], ["bios", "BIOS / device"], ["curve", "Airglow curve"], ["steady", "Steady speed"]];
 let chanKey = "";
 
 function channelRow(c) {
@@ -233,8 +233,8 @@ function channelRow(c) {
   return `<li class="chan" data-chan="${esc(c.id)}">
     <div class="chan-name"><strong>${esc(c.name)}${c.pump ? ` <span class="tag">Pump</span>` : ""}</strong><span>${esc(c.device)}</span>
       <button type="button" class="text-link" data-chan-all>Copy settings to…</button></div>
-    <span class="bar" title="What it runs at now"><i></i></span><span class="rpm"></span>
-    <select class="select" data-mode aria-label="How ${esc(c.name)} runs">${MODES.map(([v, l]) => `<option value="${v}"${v === mode ? " selected" : ""}>${l}</option>`).join("")}</select>
+    <span class="bar" title="Reported duty"><i></i></span><span class="rpm"></span>
+    <select class="select" data-mode aria-label="How ${esc(c.name)} runs">${MODES.map(([v, l]) => `<option value="${v}"${v === mode ? " selected" : ""}${v ? "" : " disabled"}>${l}</option>`).join("")}</select>
     <span class="chan-steady"${mode === "steady" ? "" : " hidden"}><input type="range" min="${S.curves?.min_duty ?? 20}" max="100" step="5" value="${steady}" data-steady aria-label="Steady speed"><output>${steady}%</output></span>
     <p class="chan-note hint"></p></li>`;
 }
@@ -256,18 +256,25 @@ function renderChannels(channels, lhmOnline) {
   if (key !== chanKey && !box.contains(document.activeElement)) {
     chanKey = key;
     setHTML(box, `<h2>Motherboard and cooler fans</h2>
-      <p class="hint">Through LibreHardwareMonitor. Fans left alone keep your BIOS or cooler curve. Pumps usually run best at a steady speed. When Airglow quits, they all go back to their own curves.</p>
+      <p class="hint">Detected spinning fans follow Airglow's curve after setup. BIOS / device keeps that channel with its own controller. Pumps and headers without RPM evidence need your choice. On quit, Airglow returns its channels to their own curves.</p>
       <ul class="chan-list">${channels.map(channelRow).join("")}</ul>`);
     $$("#channels input[type=range]").forEach(rangeFill);
   }
   for (const c of channels) {
     const row = box.querySelector(`[data-chan="${CSS.escape(c.id)}"]`);
     if (!row) continue;
-    const now = c.target ?? c.duty;
+    const now = c.duty;
     row.querySelector(".bar i").style.width = `${clamp(now ?? 0, 0, 100)}%`;
+    row.querySelector(".bar").title = now == null ? "No reported duty" : `Reported ${Math.round(now)}%`;
     row.querySelector(".rpm").textContent = c.rpm != null ? `${c.rpm.toLocaleString()} rpm` : now != null ? `${Math.round(now)}%` : "";
-    row.querySelector(".chan-note").textContent = c.error ? `LibreHardwareMonitor won't change it: ${c.error}`
-      : c.pump && c.mode === "curve" ? "A pump following the curve slows down when things are cool. Most run best at a steady 60% or more." : "";
+    const notes = [];
+    if (now != null) notes.push(`Reported ${Math.round(now)}%.`);
+    if (c.target != null) notes.push(`Requested ${Math.round(c.target)}%.`);
+    if (c.rpm === 0) notes.push("No rotation reported; this channel may be empty, stopped, or have no tach signal.");
+    else if (c.rpm == null) notes.push("No RPM reading; connection is unverified.");
+    if (c.error) notes.push(`Control could not be applied: ${c.error}`);
+    else if (c.pump && c.mode === "curve") notes.push("A pump following the curve slows down when things are cool. Most run best at a steady 60% or more.");
+    row.querySelector(".chan-note").textContent = notes.join(" ");
     row.querySelector(".chan-note").classList.toggle("warn", !!c.error || (c.pump && c.mode === "curve"));
   }
 }
@@ -280,7 +287,7 @@ async function saveChannel(row, patch) {
     S.state.fans.channels = r.channels;
     chanKey = "";
     renderPorts();
-    toast(!body.mode ? `${c?.name || "That fan"} keeps its own curve again` : body.mode === "curve" ? `${c?.name || "That fan"} follows the fan curve` : `${c?.name || "That fan"} holds ${body.duty}%`);
+    toast(!body.mode || body.mode === "bios" ? `${c?.name || "That fan"} will use BIOS / device control` : body.mode === "curve" ? `Airglow curve saved for ${c?.name || "that fan"}` : `Steady ${body.duty}% saved for ${c?.name || "that fan"}`);
   } catch (err) { fail(err); chanKey = ""; renderPorts(); }
 }
 
@@ -298,7 +305,7 @@ export async function copyChannelSettings(targets, patch) {
 
 function copyChannelSheet(source, patch) {
   const targets = (S.state.fans.channels || []).filter((c) => c.id !== source.id);
-  const action = !patch.mode ? "leave control with its own software" : patch.mode === "curve" ? "follow the current fan curve" : `hold ${patch.duty}%`;
+  const action = !patch.mode || patch.mode === "bios" ? "leave control with its own software" : patch.mode === "curve" ? "follow the current fan curve" : `hold ${patch.duty}%`;
   openSheet(`<form id="copy-channels"><h2>Copy ${esc(source.name)} settings</h2>
     <p>Selected targets will ${esc(action)}. Pumps are left unselected until you choose them.</p>
     <fieldset class="copy-targets"><legend>Apply to</legend>${targets.map((c) => `<label class="check"><input type="checkbox" data-copy-target value="${esc(c.id)}"${c.pump ? "" : " checked"}><span>${esc(c.name)} <span class="hint">${c.pump ? "Pump" : "Fan"}${c.group ? ` · ${esc(c.group)}` : ""}</span></span></label>`).join("") || `<p class="hint">No other controllable fans or pumps are available.</p>`}</fieldset>
@@ -330,6 +337,14 @@ export function renderFans() {
   renderReadouts();
   renderPorts();
   if (!E.drag) renderEditor();          // dragging redraws it itself; a focused point keeps its focus
+}
+
+export function showFan(id) {
+  const row = $("#channels")?.querySelector(`[data-chan="${CSS.escape(id)}"]`);
+  if (!row) { toast("That fan channel is not currently available", true); return false; }
+  row.scrollIntoView({ block: "center" });
+  row.querySelector("[data-mode]")?.focus({ preventScroll: true });
+  return true;
 }
 
 export function initFans() {

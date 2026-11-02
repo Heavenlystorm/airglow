@@ -352,6 +352,106 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(self.ctrl.fan_channels), 9)
         self.assertTrue(all(c["mode"] is None for c in self.ctrl.fan_channels))
 
+    def test_completing_setup_controls_only_detected_spinning_fans(self):
+        self.ctrl.tick()
+        self.store.save_state(onboarded=True)
+        self.ctrl.tick()
+        self.ctrl.tick()
+        cooler_fan = "/hid/nzxt-kraken/0/control/1"
+        self.assertEqual(set(self.sent()), {BOARD, cooler_fan})
+        self.assertEqual(self.sent().get(BOARD), self.ctrl.fan_duty)
+        self.assertEqual(config.Store(self.tmp.name).fan_channels(), {
+            BOARD: {"mode": "curve"}, cooler_fan: {"mode": "curve"}})
+        rows = {r["id"]: r for r in self.ctrl.control.snapshot()["devices"]}
+        self.assertEqual(rows["lhm:" + BOARD]["state"], "healthy")
+        self.assertIsNotNone(rows["lhm:" + BOARD]["last_success_at"])
+
+    def test_completed_setup_adopts_fans_when_lhm_arrives_later(self):
+        self.store.save_state(onboarded=True)
+        found, self.flat = self.flat, []
+        self.ctrl.tick()
+        self.assertEqual(self.rec.calls, [])
+        self.flat = found
+        self.ctrl.tick()
+        self.ctrl.tick()
+        self.assertEqual(self.sent().get(BOARD), self.ctrl.fan_duty)
+
+    def test_setup_preserves_bios_opt_out_and_explicit_steady_speed(self):
+        self.store.save_state(onboarded=True)
+        self.store.set_fan_channel(BOARD, None)
+        pump = "/hid/nzxt-kraken/0/control/0"
+        cooler_fan = "/hid/nzxt-kraken/0/control/1"
+        self.store.set_fan_channel(pump, {"mode": "steady", "duty": 70})
+        self.store.set_fan_channel(cooler_fan, {"mode": "steady", "duty": 55})
+        self.ctrl.store = config.Store(self.tmp.name)
+        self.ctrl.tick()
+        self.assertNotIn(BOARD, self.sent())
+        self.assertEqual(self.sent(), {pump: 70, cooler_fan: 55})
+        self.assertEqual(self.ctrl.store.fan_channels().get(BOARD), {"mode": "bios"})
+
+    def test_adopted_fan_keeps_control_if_its_rpm_drops_to_zero(self):
+        self.store.save_state(onboarded=True)
+        self.ctrl.tick()
+        for sensor in self.flat:
+            if sensor["id"] == BOARD.replace("/control/", "/fan/"):
+                sensor["value"] = 0
+        self.temps["cpu_temp"] = 95
+        self.ctrl.tick()
+        self.ctrl.tick()
+        self.assertEqual(self.sent().get(BOARD), 100)
+        channel = next(c for c in self.ctrl.fan_channels if c["id"] == BOARD)
+        self.assertEqual((channel["mode"], channel["rpm"], channel["target"]), ("curve", 0, 100))
+
+    def test_unmanaged_header_status_distinguishes_rotation_from_unknown_connection(self):
+        self.ctrl.tick()
+        rows = {r["id"]: r for r in self.ctrl.control.snapshot()["devices"]}
+        self.assertIn("554 RPM", rows["lhm:" + BOARD].get("detail", ""))
+        self.assertEqual(rows["lhm:" + BOARD]["action"], "#fans/%2Flpc%2Fnct6701d%2F0%2Fcontrol%2F1")
+        self.assertIn("stopped", rows["lhm:/lpc/nct6701d/0/control/0"]["detail"])
+        self.assertIn("empty", rows["lhm:/lpc/nct6701d/0/control/0"]["detail"])
+        self.assertNotIn("connected", rows["lhm:/lpc/nct6701d/0/control/0"]["detail"])
+        events = [e["message"] for e in self.ctrl.control.events() if e["resource"] == "lhm:/lpc/nct6701d/0/control/0"]
+        self.assertFalse(any("connected" in e for e in events), events)
+
+    def test_bios_owned_channels_do_not_count_as_airglow_control(self):
+        self.ctrl.fan_channels = [{"mode": "bios"}]
+        self.assertFalse(self.ctrl.drives_fans)
+
+    def test_adoption_save_failure_keeps_existing_control_and_reports_unadopted_fans(self):
+        pump = "/hid/nzxt-kraken/0/control/0"
+        self.store.set_fan_channel(pump, {"mode": "steady", "duty": 70})
+        self.store.save_state(onboarded=True)
+        self.store.ensure_zones([d.info() for d in self.ctrl.manager.all().values()])
+        with mock.patch.object(self.store, "_write", side_effect=OSError("disk full")):
+            try:
+                self.ctrl.tick()
+            except OSError as error:
+                self.fail(f"Adoption save failure interrupted existing fan control: {error}")
+        self.assertEqual(self.sent(), {pump: 70})
+        self.assertNotIn(BOARD, self.store.fan_channels())
+        row = next(r for r in self.ctrl.control.snapshot()["devices"] if r["id"] == "lhm:" + BOARD)
+        self.assertEqual(row["state"], "failed")
+        self.assertIn("disk full", row["error"])
+        self.ctrl.tick()
+        self.ctrl.tick()
+        self.assertEqual(self.sent()[BOARD], self.ctrl.fan_duty)
+        row = next(r for r in self.ctrl.control.snapshot()["devices"] if r["id"] == "lhm:" + BOARD)
+        self.assertEqual(row["state"], "healthy")
+
+    def test_bios_choice_resolves_failed_adoption_without_inventing_a_hardware_write(self):
+        self.store.save_state(onboarded=True)
+        self.store.ensure_zones([d.info() for d in self.ctrl.manager.all().values()])
+        with mock.patch.object(self.store, "_write", side_effect=OSError("disk full")):
+            self.ctrl.tick()
+        self.store.set_fan_channel(BOARD, {"mode": "bios"})
+        for _ in range(4):
+            self.ctrl.tick()
+        row = next(r for r in self.ctrl.control.snapshot()["devices"] if r["id"] == "lhm:" + BOARD)
+        self.assertEqual(row["state"], "unmanaged")
+        self.assertIsNone(row["error"])
+        self.assertIsNone(row["last_success_at"])
+        self.assertNotIn(BOARD, self.sent())
+
     def test_curve_and_steady_channels(self):
         self.store.set_fan_channel(BOARD, {"mode": "curve"})
         self.store.set_fan_channel("/hid/nzxt-kraken/0/control/0", {"mode": "steady", "duty": 70})

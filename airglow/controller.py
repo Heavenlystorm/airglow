@@ -9,6 +9,7 @@ import collections
 import logging
 import threading
 import time
+from urllib.parse import quote
 
 from . import automation, devices, fancontrol, fans, lhmfans, sensors, system, tools
 from .config import SAFETY_TEMP, validate_scene
@@ -345,7 +346,7 @@ class Controller:
     @property
     def drives_fans(self):
         """Some fan follows Airglow: a native fan controller, or a channel driven through LibreHardwareMonitor."""
-        return bool(self.hubs) or any(c["mode"] for c in self.fan_channels)
+        return bool(self.hubs) or any(c["mode"] in ("curve", "steady") for c in self.fan_channels)
 
     @staticmethod
     def _hub_ports(hub):
@@ -420,12 +421,18 @@ class Controller:
         loop), and everything is sent again once it's back."""
         if self._stop.is_set():              # quitting: release_fans() already handed these back
             return
-        chosen = self.store.fan_channels()
         found = lhmfans.channels(self._flat)
+        adoption_errors = {}
+        try:
+            chosen = self.store.adopt_fan_channels(found)
+        except (OSError, ValueError) as error:
+            chosen = self.store.fan_channels()
+            adoption_errors = {ch["id"]: f"Fan setup could not be saved: {error}" for ch in found
+                               if ch["id"] not in chosen and not ch["pump"] and ch["rpm"] and ch["rpm"] > 0}
         targets = {}
         for ch in found:
             c = chosen.get(ch["id"])
-            if not c:
+            if not c or c["mode"] == "bios":
                 continue
             if c["mode"] == "curve":
                 targets[ch["id"]] = duty
@@ -441,7 +448,7 @@ class Controller:
         else:
             self.lhm_fans.resend_all()
             before = after = {}
-        errors = self.lhm_fans.errors
+        errors = {**self.lhm_fans.errors, **adoption_errors}
         self.fan_channels = [{**ch, "mode": (chosen.get(ch["id"]) or {}).get("mode"),
                               "steady": (chosen.get(ch["id"]) or {}).get("duty"), "target": targets.get(ch["id"]),
                               "error": errors.get(ch["id"])} for ch in found]
@@ -450,10 +457,19 @@ class Controller:
             sid, key = ch["id"], "lhm:" + ch["id"]
             present.add(key)
             held = sid in after
-            owner = ("Airglow" if held and after[sid][0] is not None else "Airglow requested") if ch["mode"] else (
+            managed = ch["mode"] in ("curve", "steady")
+            owner = ("Airglow" if held and after[sid][0] is not None else "Airglow requested") if managed else (
                 "Release pending" if held else "BIOS / device")
+            detail = ("No RPM reading; connection is unverified" if ch["rpm"] is None else
+                      "0 RPM; may be empty, stopped, or have no tach signal" if ch["rpm"] == 0 else
+                      f"{ch['rpm']:,} RPM detected")
+            if ch["target"] is not None:
+                detail += f"; requested {ch['target']:g}%"
+            if ch["duty"] is not None:
+                detail += f"; reported {ch['duty']:g}%"
             self.control.observe(key, ch["name"], kind="lhm-fan", owner=owner,
-                                 online=True, expected=bool(ch["mode"] or held), stale_after=45.0)
+                                 online=True, expected=bool(managed or held), stale_after=45.0,
+                                 detail=detail, action="#fans/" + quote(sid, safe=""))
             if errors.get(sid):
                 self.control.failed(key, errors[sid])
             elif sid in after and after[sid][0] is not None and before.get(sid) != after[sid]:
@@ -462,6 +478,8 @@ class Controller:
                 self.control.queued(key)
             elif sid in before and sid not in after:
                 self.control.succeeded(key, duration=time.monotonic() - started)
+            elif not managed and not held:
+                self.control.clear_failure(key)
         self.control.reconcile("lhm-fan", present)
         self.control.reconcile("fans", {"fan:" + d.id for d, _ in self._fan_devices()})
 
@@ -534,9 +552,18 @@ class Controller:
         return flat
 
     def _app_readings(self):
-        hubs = self.hubs
-        rpms = [h.fans[i]["rpm"] for h in hubs for i in h.connected_fans()]
-        rpms += [c["rpm"] for c in self.fan_channels if c["mode"] == "curve" and c["rpm"]]
+        native = [{"id": f"{dev.id}/{i}", **h.fans[i]} for dev, h in self._fan_devices() for i in h.connected_fans()]
+        channels = native + [c for c in self.fan_channels
+                             if c["mode"] in ("curve", "steady") and not c.get("pump")]
+        fan_readings = []
+        for key, name, kind, unit, short in (("duty", "Managed fan speed", "control", "%", "Fans"),
+                                             ("rpm", "Managed fan RPM", "fan", "RPM", "Fan RPM")):
+            measured = [c for c in channels if c.get(key) is not None]
+            value = round(sum(c[key] for c in measured) / len(measured)) if measured else None
+            reading = sensors._meta("app/fan_" + key, name, "Fans", kind, unit, value, short=short)
+            reading["source"] = "Airglow-controlled fans"
+            reading["source_ids"] = [(c.get("fan_id") or c["id"]) if key == "rpm" else c["id"] for c in measured]
+            fan_readings.append(reading)
         # What an hour at the current power draw costs. total_power is CPU + graphics; the rest of the PC, the PSU's
         # losses and any energy accumulated over time are deliberately not estimated here.
         watts = self.sensors.get("total_power")
@@ -548,17 +575,12 @@ class Controller:
         cost_meta = sensors._meta("app/energy_cost", "Cost per hour", "Quick picks", "cost", "€/h", cost, short="Cost")
         cost_meta["source"] = "CPU + GPU"
         cost_meta["needs_lhm"] = True
-        return [
-            sensors._meta("app/fan_duty", "Case fan speed", "Fans", "control", "%",
-                          self.fan_duty if self.drives_fans else None, short="Fans"),
-            sensors._meta("app/fan_rpm", "Case fan RPM", "Fans", "fan", "RPM",
-                          round(sum(rpms) / len(rpms)) if rpms else None, short="Fan RPM"),
-            cost_meta,
-        ]
+        return [*fan_readings, cost_meta]
 
     def _update_readings(self, flat):
         self.readings = sensors.build(flat, self._system.read(), self._app_readings())
-        key = tuple((k, m["name"], m["unit"], m.get("source"), m.get("max")) for k, m in self.readings.items())
+        key = tuple((k, m["name"], m["unit"], m.get("source"), m.get("source_id"), tuple(m.get("source_ids") or []),
+                     m.get("sensor_name"), m.get("max")) for k, m in self.readings.items())
         if key != self._catalog_key:
             self._catalog_key = key
             self.catalog_rev += 1

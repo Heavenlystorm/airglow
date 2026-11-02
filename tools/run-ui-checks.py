@@ -15,6 +15,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 BASE = "http://127.0.0.1:8790"
 SUITES = {
+    "telemetry": ["node", "--test", "tools/test-telemetry-ui.mjs"],
     "visual": ["node", "tools/test-visual.mjs"],
     "responsive": ["node", "--test", "tools/test-responsive-overview.mjs"],
     "roadmap": ["node", "--test", "tools/test-roadmap.mjs"],
@@ -42,7 +43,7 @@ def main():
     # Browser imports need the caller's Playwright install, not the fixture's empty APPDATA.
     check_env = os.environ.copy()
     check_env.update(AIRGLOW_VISUAL_OUTPUT=str(output / "screenshots"), AIRGLOW_ROADMAP_OUTPUT=str(output / "roadmap"),
-                     AIRGLOW_RESPONSIVE_OUTPUT=str(output / "responsive"))
+                     AIRGLOW_RESPONSIVE_OUTPUT=str(output / "responsive"), AIRGLOW_TELEMETRY_OUTPUT=str(output / "telemetry"))
     result = {"fixture": str(fixture), "checks": {}}
     with (output / "fixture.log").open("w", encoding="utf-8") as log:
         server = subprocess.Popen([sys.executable, "-u", "tools/dev_server.py", "--demo"], cwd=ROOT, env=env,
