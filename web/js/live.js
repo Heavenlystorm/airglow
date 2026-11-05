@@ -5,6 +5,7 @@
 import { emit } from "./core.js";
 
 let source = null, withFrames = null, handlers = null, wantsFrames = () => false;
+let retry = null;
 
 function desired() {
   if (document.visibilityState === "hidden") return null;      // nothing to show: no stream at all
@@ -20,18 +21,24 @@ export function sync() {
   close();
   withFrames = want;
   source = new EventSource(`/api/stream?frames=${want ? 1 : 0}`);
+  const current = source;
   source.addEventListener("state", (e) => handlers.state(JSON.parse(e.data)));
   source.addEventListener("frames", (e) => emit("frames:live", JSON.parse(e.data)));
   source.onerror = () => {
+    if (source !== current) return;
     handlers.lost();                                             // EventSource retries on its own...
     if (source && source.readyState === EventSource.CLOSED) {    // ...unless it gave up: let sync() start a new one
       source = null;
       withFrames = null;
+      clearTimeout(retry);
+      retry = setTimeout(sync, 1000);
     }
   };
 }
 
 function close() {
+  clearTimeout(retry);
+  retry = null;
   if (source) { source.close(); source = null; }
   withFrames = null;
 }

@@ -7,7 +7,8 @@
 import { $, $$, S, coalesce, emit, esc, fail, get, on, post, rangeFill, setHTML, toast } from "./core.js";
 import { fieldHTML, wireFields } from "./lighting.js";
 import { litZones, paintRig } from "./stage.js";
-import { EffectRunner, ledPoints, runtimeAssets, sampleZones, testAudio, zoneFrames } from "./fxrun.js";
+import { ledPoints, runtimeAssets, sampleZones, testAudio, zoneFrames } from "./fxrun.js";
+import { PreviewRunner } from "./fxpreview.js";
 import { CODE_TEMPLATES, LAYER_TEMPLATES, REMIX, surprise } from "./studio-start.js";
 import { closeSheet, openSheet } from "./sheet.js";
 import { MASTER, uid, newDoc, normalizeDoc, snapDoc as snapshotDocument, createHistory, createDraftStorage,
@@ -330,11 +331,17 @@ function declaredParams(code) {
     const raw = parseLiteral(code, i);
     const out = [];
     for (const [id, s] of Object.entries(raw)) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(id)) continue;
       const label = String(s?.label || id).slice(0, 32);
       const type = s?.type === "color" ? "color" : s?.type === "colors" ? "colors" : s?.type === "boolean" ? "boolean" : s?.type === "select" ? "select" : "number";
       if (type === "number") out.push({ id, label, type, min: +s.min, max: +s.max, step: +(s.step || 1), default: +s.default });
-      else if (type === "color") out.push({ id, label, type, default: String(s.default || "#ffffff").toLowerCase() });
-      else if (type === "colors") out.push({ id, label, type, default: (Array.isArray(s.default) ? s.default : String(s.default || "").split(",")).map((c) => String(c).trim()).filter(Boolean) });
+      else if (type === "color") out.push({ id, label, type, default: /^#[0-9a-f]{6}$/i.test(s.default) ? s.default.toLowerCase() : "#ffffff" });
+      else if (type === "colors") {
+        const colors = (Array.isArray(s.default) ? s.default : String(s.default || "").split(","))
+          .map((c) => String(c).trim().toLowerCase()).filter(c => /^#[0-9a-f]{6}$/.test(c)).slice(0, 4);
+        while (colors.length < 2) colors.push("#ffffff");
+        out.push({ id, label, type, default: colors });
+      }
       else if (type === "boolean") out.push({ id, label, type, default: s.default === true });
       else out.push({ id, label, type, options: (Array.isArray(s.options) ? s.options : []).map(String), default: String(s.default || (s.options || [])[0] || "") });
     }
@@ -573,13 +580,13 @@ function still(canvas, eff, gen) {
     const { points, slices } = ledPoints(zones);
     let done = false;
     const finish = () => { if (done) return; done = true; runner.destroy(); resolve(); };
-    const runner = new EffectRunner({
+    const runner = new PreviewRunner({
       onReady: () => runner.tick(2.0, 1 / 30, testAudio(2.0)),
       onFrame: (colors) => { if (gen === STILL.gen) paintRig(canvas, zoneFrames(colors, slices), { pad: 10, zones }); finish(); },
       onStopped: finish, onError: finish,
     });
     runner.load(eff, points);
-    setTimeout(finish, 2500);
+    setTimeout(finish, 15000);
   });
 }
 
@@ -587,7 +594,7 @@ function playOn(canvas, eff, key) {
   const zones = rigZones();
   const { points, slices } = ledPoints(zones);
   let raf = 0, t0 = performance.now(), last = t0;
-  const runner = new EffectRunner({ onFrame: (colors) => paintRig(canvas, zoneFrames(colors, slices), { pad: 10, zones }) });
+  const runner = new PreviewRunner({ onFrame: (colors) => paintRig(canvas, zoneFrames(colors, slices), { pad: 10, zones }) });
   runner.load(eff, points);
   const loop = (now) => { const t = (now - t0) / 1000 + 2; runner.tick(t, (now - last) / 1000, testAudio(t)); last = now; raf = requestAnimationFrame(loop); };
   raf = requestAnimationFrame(loop);
@@ -1037,7 +1044,7 @@ async function restartRunner() {
   const { points, slices } = ledPoints(zones);
   E.slices = slices;
   const gen = ++E.gen;
-  E.runner = new EffectRunner({
+  E.runner = new PreviewRunner({
     onFrame: (colors, ms) => {
       if (gen !== E.gen) return;
       E.frames = zoneFrames(colors, E.slices); E.ms = E.ms * 0.9 + ms * 0.1; E.frameCount++; E.framesSeen++;
@@ -1050,11 +1057,6 @@ async function restartRunner() {
       if (err.line) { E.errLine = err.line; markError(err.line); }
       E.logs.push({ err: `${err.message}${err.line ? ` (line ${err.line})` : ""}`, line: err.line || null });
       E.logs = E.logs.slice(-40);
-      paintConsole();
-    },
-    onStopped: (why) => {
-      if (gen !== E.gen || why === "stopped" || why === "error") return;
-      E.logs.push({ err: why === "hung" ? "It stopped answering for 3 seconds (an endless loop?), so it was stopped." : "Each frame took longer than 20 ms, so it was stopped. Draw less, or at a lower resolution." });
       paintConsole();
     },
   });

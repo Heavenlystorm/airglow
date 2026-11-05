@@ -359,6 +359,29 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(self.request("POST", "/api/automations/pause", {"minutes": minutes})[0], 400, minutes)
         self.assertEqual(self.store.get_rules(), before)
 
+    def test_deleting_a_used_preset_does_not_block_an_unchanged_rule_save(self):
+        presets, rules = self.store.get_presets(), self.store.get_rules()
+        try:
+            rule = {"id": "audit-nightly", "when": {"type": "locked"},
+                    "then": {"type": "preset", "preset": presets[0]["id"]}}
+            status, saved = self.request("POST", "/api/automations", {"rules": [rule]})
+            self.assertEqual(status, 200)
+            status, _ = self.request("POST", "/api/presets", {"presets": presets[1:]})
+            self.assertEqual(status, 200)
+            self.assertEqual(self.request("POST", "/api/automations", {"rules": saved})[0], 200)
+            invalid = [{**saved[0], "id": "audit-new"}]
+            status, error = self.request("POST", "/api/automations", {"rules": invalid})
+            self.assertEqual(status, 400)
+            self.assertIn("audit-new", error["error"])
+        finally:
+            self.store.set_presets(presets)
+            self.store.set_rules(rules, api.validate_rule)
+
+    def test_unhashable_automation_ids_are_bad_requests(self):
+        status, _ = self.request("POST", "/api/automations", {"rules": [{"id": [], "when": {"type": "locked"},
+                                                                        "then": {"type": "lights_off"}}]})
+        self.assertEqual(status, 400)
+
     def test_settings_update(self):
         status, s = self.request("POST", "/api/settings", {"temp_unit": "F", "lights_off_on_lock": True})
         self.assertEqual((status, s["settings"]["temp_unit"], s["settings"]["lights_off_on_lock"]), (200, "F", True))

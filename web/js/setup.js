@@ -392,10 +392,13 @@ const DEVICE_SPOT = { "Graphics card": "gpu", Keyboard: "desk", Mouse: "desk", "
 
 async function snap(spot) {
   const t = G.task;
+  if (!t) return;
   G.a.spot = spot;
   if (t.type === "fixed") await post("/api/setup/place", { device: t.dev.id, spot });
   else await post("/api/setup/apply", { zone: t.keys[0], component: G.a.component, count: G.a.count, leds: G.a.leds, spot });
+  if (G.task !== t) return;
   await refreshZones();
+  if (G.task !== t) return;
   emit("zones");
   probe(t.keys, "blink");                  // saving ends the probe; keep the real light blinking while you place it
 }
@@ -436,7 +439,7 @@ function renderDock() {
   d.querySelector("[data-close]").addEventListener("click", () => { undock(); stopProbe(); G.task = null; });
   d.querySelectorAll("[data-spot]").forEach((b) => b.addEventListener("click", async () => {
     d.querySelectorAll("[data-spot]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
-    try { await snap(b.dataset.spot); placing(t.keys); } catch (e) { fail(e); }
+    try { await snap(b.dataset.spot); if (G.task === t) placing(t.keys); } catch (e) { fail(e); }
   }));
   d.querySelector("#su-back")?.addEventListener("click", () => { undock(); goBack(); });
   d.querySelector("#su-skip")?.addEventListener("click", () => { undock(); skipTask(); });

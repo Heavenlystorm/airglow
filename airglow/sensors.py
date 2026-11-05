@@ -15,6 +15,8 @@ import time
 import urllib.error
 import urllib.request
 
+from . import lhmhttp
+
 _NUM = re.compile(r"-?\d+(?:[.,]\d+)?")
 _IGPU = re.compile(r"Radeon\(TM\) Graphics|Intel.*(UHD|Iris|Arc\(TM\) Graphics)|Intel\(R\) Graphics", re.I)
 
@@ -368,10 +370,8 @@ def fmt(meta, value, fahrenheit=False):
 
 def read_tree(base_url, timeout=1.5, headers=None):
     """LHM's sensor tree, or None when it isn't reachable."""
-    req = urllib.request.Request(base_url.rstrip("/") + "/data.json", headers=headers or {})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        return lhmhttp.read_json(base_url.rstrip("/") + "/data.json", timeout=timeout, headers=headers)
     except (urllib.error.URLError, OSError, ValueError):
         return None
 
@@ -385,6 +385,7 @@ class LhmPoller:
     OFFLINE_RETRY = 12.0
     STARTUP_RETRY = 0.25
     STARTUP_WINDOW = 45.0
+    STALE_AFTER = 6.0
 
     def __init__(self, url, headers=lambda: None, read=None, on_change=lambda: None):
         self._url, self._headers, self._read = url, headers, read or read_tree
@@ -395,6 +396,12 @@ class LhmPoller:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread = None
+
+    @property
+    def fresh_tree(self):
+        if self.last_success is None or time.monotonic() - self.last_success > self.STALE_AFTER:
+            return None
+        return self.tree
 
     def poll(self):
         was_online = self.tree is not None

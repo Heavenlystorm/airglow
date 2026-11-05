@@ -352,10 +352,10 @@ class AuthTests(unittest.TestCase):
     def test_sensor_reads_send_the_header(self):
         seen = {}
 
-        def fake(req, timeout):
-            seen.update(req.headers)
+        def fake(_url, timeout, headers):
+            seen.update(headers)
             raise OSError("offline")
-        with mock.patch.object(sensors.urllib.request, "urlopen", side_effect=fake):
+        with mock.patch.object(sensors.lhmhttp, "read_json", side_effect=fake):
             self.assertIsNone(sensors.read_tree("http://127.0.0.1:8085", headers={"Authorization": "Basic x"}))
         self.assertEqual(seen.get("Authorization"), "Basic x")
 

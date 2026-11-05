@@ -20,30 +20,33 @@ const stepNum = (v, spec) => {
   return +Math.min(hi, Math.max(lo, n)).toFixed(4);
 };
 export function fieldHTML(spec, value, prefix, opts = {}) {
-  const id = `${prefix}-${spec.id}`;
+  const id = esc(`${prefix}-${spec.id}`);
+  const param = esc(spec.id);
   if (spec.type === "color") {
-    return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
-      <div class="color-row"><label class="swatch" style="background:${value}"><input type="color" id="${id}" value="${value}" aria-label="${esc(spec.label)}"></label>
+    value = /^#[0-9a-f]{6}$/i.test(value) ? value : "#ffffff";
+    return `<div class="field" data-param="${param}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
+      <div class="color-row"><label class="swatch" style="background:${esc(value)}"><input type="color" id="${id}" value="${esc(value)}" aria-label="${esc(spec.label)}"></label>
       <div class="quick">${QUICK.map((c) => `<button type="button" data-quick="${c}" style="background:${c}" aria-label="${c}" aria-pressed="${c === value}"></button>`).join("")}</div></div></div>`;
   }
   if (spec.type === "colors") {
-    const sw = value.map((c, i) => `<label class="swatch" style="background:${c}"><input type="color" data-stop="${i}" value="${c}" aria-label="Colour ${i + 1}"></label>`).join("");
-    return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
+    value = (Array.isArray(value) ? value : []).map(c => /^#[0-9a-f]{6}$/i.test(c) ? c : "#ffffff");
+    const sw = value.map((c, i) => `<label class="swatch" style="background:${esc(c)}"><input type="color" data-stop="${i}" value="${esc(c)}" aria-label="Colour ${i + 1}"></label>`).join("");
+    return `<div class="field" data-param="${param}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
       <div class="stops">${sw}
       ${value.length < spec.max ? `<button type="button" class="icon-btn" data-add-stop title="Add a colour"><svg><use href="#i-plus"/></svg></button>` : ""}
       ${value.length > spec.min ? `<button type="button" class="icon-btn" data-remove-stop title="Remove the last colour"><svg><use href="#i-trash"/></svg></button>` : ""}</div></div>`;
   }
   if (spec.type === "range") {
-    return `<div class="field" data-param="${spec.id}"><div class="lab"><label for="${id}"><span>${esc(spec.label)}</span></label>
+    return `<div class="field" data-param="${param}"><div class="lab"><label for="${id}"><span>${esc(spec.label)}</span></label>
       <span class="val"><input type="number" class="num" id="${id}-num" min="${spec.min}" max="${spec.max}" step="${spec.step}" value="${value}" aria-label="${esc(spec.label)}" inputmode="decimal">${spec.unit ? `<span class="unit">${esc(spec.unit)}</span>` : ""}${opts.reset ? resetBtn(spec) : ""}</span></div>
       <input type="range" id="${id}" min="${spec.min}" max="${spec.max}" step="${spec.step}" value="${value}"></div>`;
   }
   if (spec.type === "choice") {
-    return `<div class="field" data-param="${spec.id}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
+    return `<div class="field" data-param="${param}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
       <select class="select" id="${id}" aria-label="${esc(spec.label)}">${spec.options.map((o) => `<option value="${esc(o.value)}"${o.value === value ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select></div>`;
   }
   if (spec.type === "toggle") {
-    return `<div class="field" data-param="${spec.id}"><label class="lab" style="align-items:center"><span>${esc(spec.label)}</span>
+    return `<div class="field" data-param="${param}"><label class="lab" style="align-items:center"><span>${esc(spec.label)}</span>
       <span class="switch"><input type="checkbox" id="${id}"${value ? " checked" : ""}><span></span></span></label></div>`;
   }
   return "";

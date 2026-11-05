@@ -39,6 +39,7 @@ class ControllerTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1.0)
         self.assertFalse(ctrl.sensors["online"])
         ctrl.lhm.tree = {"Text": "PC", "Children": []}          # what the poller thread read
+        ctrl.lhm.last_success = time.monotonic()
         ctrl.tick()
         ctrl.tick()
         self.assertTrue(ctrl.sensors["online"])

@@ -525,7 +525,11 @@ class Store:
         for wait in (0.0, 0.15, 0.35):        # an antivirus or the search indexer can hold it for a moment
             time.sleep(wait)
             try:
-                return json.loads(path.read_text(encoding="utf-8"))
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(raw, type(default)):
+                    self._quarantine(path, ValueError(f"expected a {type(default).__name__}, got {type(raw).__name__}"))
+                    return copy.deepcopy(default)
+                return raw
             except FileNotFoundError:
                 return copy.deepcopy(default)
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -542,6 +546,8 @@ class Store:
         """Keep a damaged file for inspection instead of overwriting it, and don't rewrite anything this run."""
         self._load_failed = True
         broken = path.with_name(path.name + ".corrupt")
+        if broken.exists():
+            broken = path.with_name(path.name + f".{time.time_ns()}.corrupt")
         log.error("%s is damaged (%s); keeping it as %s and starting from defaults", path.name, error, broken.name)
         try:
             path.replace(broken)
@@ -602,13 +608,14 @@ class Store:
     def _upgrade(self):
         """Files are converted while loading (see _migrate_preset and _load_state); once that happened, save them
         in the current format so the conversions only ever run once."""
+        if self.schema > SCHEMA_VERSION:
+            self._protected_files.update(("config.json", "presets.json", "state.json", "automations.json", "overview.json"))
+            log.warning("settings were saved by a newer Airglow (format %d); they won't be rewritten", self.schema)
+            return
         if self._load_failed:
             # One of the files could not be read: writing now would replace it (and its neighbours) with the
             # defaults we fell back to. Keep what is on disk for the next start.
             self.schema = self.config["schema"] = SCHEMA_VERSION
-            return
-        if self.schema > SCHEMA_VERSION:
-            log.warning("settings were saved by a newer Airglow (format %d); they won't be rewritten", self.schema)
             return
         if self.schema == SCHEMA_VERSION:
             return
@@ -958,8 +965,8 @@ class Store:
         with self._lock:
             presets = validate_presets(self.presets + [preset], self.config["fan_curves"])
             ids = {p["id"] for p in presets}
-            combined = validate_rules(self.rules + list(rules),
-                                      lambda r: validate_rule(r, ids, set(self.config["fan_curves"]))) if rules else self.rules
+            incoming = validate_rules(list(rules), lambda r: validate_rule(r, ids, set(self.config["fan_curves"])))
+            combined = validate_rules(self.rules + incoming, lambda r: copy.deepcopy(r)) if rules else self.rules
             config = copy.deepcopy(self.config)
             for key in clear_zones:
                 if key in config["zones"]:
@@ -1000,8 +1007,17 @@ class Store:
             return copy.deepcopy(self.rules)
 
     def set_rules(self, rules, validator):
-        clean = validate_rules(rules, validator)
         with self._lock:
+            existing = {r["id"]: r for r in self.rules}
+            def validate(r):
+                if isinstance(r, dict) and isinstance(r.get("id"), str) and r == existing.get(r["id"]):
+                    return copy.deepcopy(r)
+                try:
+                    return validator(r)
+                except ValueError as e:
+                    rid = r.get("id", "unknown") if isinstance(r, dict) else "unknown"
+                    raise ValueError(f"Automation {rid}: {e}") from None
+            clean = validate_rules(rules, validate)
             self._write("automations.json", clean)
             self.rules = clean
         return clean

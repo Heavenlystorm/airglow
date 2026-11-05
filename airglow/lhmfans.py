@@ -20,6 +20,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import lhmhttp
+
 log = logging.getLogger(__name__)
 
 MODES = ("curve", "steady", "bios")
@@ -71,16 +73,15 @@ def validate_id(sid):
 def http_set(base_url, sensor_id, value, headers=None, timeout=0.6):
     """Ask LHM to set one control: value in percent, or None to give it back to its own control."""
     query = urllib.parse.urlencode({"action": "Set", "id": sensor_id, "value": "null" if value is None else f"{value:.0f}"})
-    req = urllib.request.Request(f"{base_url.rstrip('/')}/Sensor?{query}", data=b"", method="POST",
-                                 headers=headers or {})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            reply = json.loads(resp.read().decode("utf-8") or "{}")
+        reply = lhmhttp.read_json(f"{base_url.rstrip('/')}/Sensor?{query}", timeout=timeout,
+                                  headers=headers, method="POST", body=b"")
     except (urllib.error.URLError, OSError, ValueError) as e:
         raise OSError(f"LibreHardwareMonitor didn't answer ({e})") from None
-    if reply.get("result") != "ok":
+    if not isinstance(reply, dict) or reply.get("result") != "ok":
         # LHM sends the whole .NET exception; its first line says what went wrong
-        raise OSError(str(reply.get("message") or "LibreHardwareMonitor refused").splitlines()[0][:200])
+        message = reply.get("message") if isinstance(reply, dict) else None
+        raise OSError(str(message or "LibreHardwareMonitor refused").splitlines()[0][:200])
 
 
 class LhmFans:
@@ -90,6 +91,7 @@ class LhmFans:
     RESEND = 30.0
     RETRY_AFTER = 15.0          # a channel LHM refuses (or can't answer about) is tried again after this
     SENDS_PER_TICK = 6          # bound one tick's work: a stalling LHM must not freeze the loop for a minute
+    FAILSAFE_SECONDS = 2.4
 
     def __init__(self, base_url, headers=lambda: {}, send=http_set):
         self._base_url, self._headers, self._send = base_url, headers, send
@@ -108,7 +110,7 @@ class LhmFans:
         with self._lock:
             self._apply(targets)
 
-    def _apply(self, targets, force=False):
+    def _apply(self, targets, force=False, deadline=None):
         now = time.monotonic()
         budget = self.SENDS_PER_TICK
         # Releases share the ordinary write budget. Oldest sends go first so neither changing curves nor a
@@ -119,6 +121,8 @@ class LhmFans:
             not (item[1] is not None and (force or item[1] >= 100)),
             self.sent.get(item[0], (None, float("-inf")))[1]))
         for sid, duty in pending:
+            if deadline is not None and time.monotonic() + 0.6 > deadline:
+                break                       # leave time for one complete send before starting it
             if duty is None:
                 if budget > 0 and now >= self._release_retry_at.get(sid, 0.0):
                     budget -= 1
@@ -184,8 +188,14 @@ class LhmFans:
     def failsafe(self, duty):
         """Everything Airglow drives to at least duty, now (a channel held faster keeps its speed). Returns how
         many channels that was."""
-        with self._lock:
+        deadline = time.monotonic() + self.FAILSAFE_SECONDS
+        if not self._lock.acquire(timeout=self.FAILSAFE_SECONDS):
+            log.warning("fan failsafe deferred: LibreHardwareMonitor writer is still busy")
+            return 0
+        try:
             targets = {sid: duty if d is None else max(d, duty) for sid, (d, _) in self.sent.items()}
             self.resend_all()
-            self._apply(targets, force=True)      # the failsafe speed must go out now, backoff or not
-            return len(targets)
+            self._apply(targets, force=True, deadline=deadline)
+            return sum(self.sent[sid][0] == target for sid, target in targets.items())
+        finally:
+            self._lock.release()
