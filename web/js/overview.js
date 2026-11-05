@@ -27,32 +27,53 @@ window.addEventListener("resize", () => { measureRev++; });
 document.fonts?.ready.then(() => { measureRev++; if (visible()) renderOverview(); });
 
 // ------------------------------------------------------------ persistence
-let saveTimer, saveRevision = 0, saving = false;
+let saveTimer, saveRevision = 0, saving = null, resetting = false;
 function save() {
+  if (resetting) return;
   saveRevision++;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushOverview, 350);
 }
 
-async function flushOverview() {
+function flushOverview() {
   saveTimer = null;
-  if (saving) return;                 // the in-flight save will pick up edits when it finishes
-  saving = true;
+  if (saving || resetting) return saving;      // the in-flight save will pick up edits when it finishes
   const revision = saveRevision;
+  saving = (async () => {
+    try {
+      const next = await post("/api/overview", O.layout);
+      if (revision !== saveRevision) return;      // this response predates edits still waiting to be saved
+      // Keep tile references held by an open sheet, a drag or an undo toast intact.
+      const known = new Map(O.layout.tiles.map((t) => [t.id, t]));
+      O.layout.tiles = next.tiles.map((t) => Object.assign(known.get(t.id) || {}, t));
+      O.layout.pins = next.pins;
+      S.overview = O.layout;
+      emit("pins");
+    } catch (e) { fail(e); }
+    finally {
+      saving = null;
+      if (!resetting && revision !== saveRevision && !saveTimer) saveTimer = setTimeout(flushOverview, 0);
+    }
+  })();
+  return saving;
+}
+
+async function resetOverview() {
+  if (resetting) return null;
+  resetting = true;
+  saveRevision++;
+  clearTimeout(saveTimer);
+  saveTimer = null;
   try {
-    const next = await post("/api/overview", O.layout);
-    if (revision !== saveRevision) return;      // this response predates edits still waiting to be saved
-    // Keep tile references held by an open sheet, a drag or an undo toast intact.
-    const known = new Map(O.layout.tiles.map((t) => [t.id, t]));
-    O.layout.tiles = next.tiles.map((t) => Object.assign(known.get(t.id) || {}, t));
-    O.layout.pins = next.pins;
-    S.overview = O.layout;
-    emit("pins");
-  } catch (e) { fail(e); }
-  finally {
-    saving = false;
-    if (revision !== saveRevision && !saveTimer) saveTimer = setTimeout(flushOverview, 0);
-  }
+    await saving;                        // finish the older write before issuing the reset at the server
+    const layout = await post("/api/overview/reset");
+    O.layout = layout; S.overview = layout;
+    return layout;
+  } catch (error) {
+    resetting = false;
+    save();                             // a failed reset must not lose an unsaved edit
+    throw error;
+  } finally { resetting = false; }
 }
 
 const tileById = (id) => O.layout.tiles.find((t) => t.id === id);
@@ -717,8 +738,8 @@ export async function initOverview(layout) {
   $("#ov-reset").addEventListener("click", async () => {
     if (!confirm("Put the Overview back to how it was at first? Your tiles and pins will be replaced.")) return;
     try {
-      const l = await post("/api/overview/reset");
-      O.layout = l; S.overview = l;
+      const l = await resetOverview();
+      if (!l) return;
       await ensureHistory([...new Set(l.tiles.flatMap((t) => t.sensors || []))]).catch(() => {});
       flip(grid(), () => renderOverview());
       emit("pins");

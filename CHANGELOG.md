@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.13.1
+- Fan thermal protection includes the GPU hotspot. Sensor reads have a total deadline, and fan control rejects
+  stale temperatures. Shutdown fan commands have a bounded time budget while retaining channels for release.
+- Settings with an unexpected JSON shape are preserved in a recovery copy. Files from a newer settings format
+  remain protected against writes, and damaged-file recovery keeps earlier copies.
+- Deleting a profile no longer blocks saving unchanged automations or installing another profile's rules.
+  Invalid new or changed rules identify the automation that needs attention.
+- Studio and gallery previews run in a separate process with memory monitoring. Runtime downloads can recover
+  after transient failures, unsafe colour defaults are rejected, and failed LED frames are retried in order.
+- Live updates reconnect after a permanently closed stream. Overview reset waits for older saves, closing setup
+  prevents delayed probe restarts, and concurrent setup requests no longer duplicate the product catalog.
+- Update metadata is saved atomically. Old interrupted-write temporary files and normal test fixtures are cleaned up.
+
 ## 1.13.0
 - Studio's heading, workflow and effect collections share one left edge at every window size.
 - Completed setup activates Airglow control for detected spinning motherboard and cooler fans. Explicit BIOS

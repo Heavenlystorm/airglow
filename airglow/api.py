@@ -59,6 +59,13 @@ class Server(ThreadingHTTPServer):
         self.frame_csp = EFFECT_FRAME_CSP.replace("http://127.0.0.1:* http://localhost:*",
                                                   f"http://127.0.0.1:{bound} http://localhost:{bound}")
         self.frame_path = (paths.WEB_DIR / "runtime" / "frame.html").resolve()
+        from .previewhost import PreviewHost
+        self.previews = PreviewHost(f"http://127.0.0.1:{bound}")
+
+    def server_close(self):
+        if hasattr(self, "previews"):
+            self.previews.close()
+        super().server_close()
 
     def handle_error(self, request, client_address):
         """A client that drops a keep-alive connection is normal; don't print a traceback for it."""
@@ -126,11 +133,13 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(403, "missing request header")
             if method == "GET" and path == "/api/stream":
                 return self._stream(urllib.parse.parse_qs(parsed.query))
-            if method == "GET" and path == "/api/fx/host/stream":
-                return self._host_stream(urllib.parse.parse_qs(parsed.query))
-            if (method == "POST" and path == "/api/fx/host/frames"
+            if method == "GET" and path in ("/api/fx/host/stream", "/api/fx/preview/stream"):
+                host = self.server.previews if path == "/api/fx/preview/stream" else studio.HOST
+                return self._host_stream(urllib.parse.parse_qs(parsed.query), host)
+            if (method == "POST" and path in ("/api/fx/host/frames", "/api/fx/preview/frames")
                     and self.headers.get("Content-Type") == "application/octet-stream"):
-                frames = self._host_frames()
+                host = self.server.previews if path == "/api/fx/preview/frames" else studio.HOST
+                frames = self._host_frames(host)
                 body_read = True
                 return self._send(200, frames)
             if path.startswith("/api/"):
@@ -204,9 +213,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:                         # headers are out, so no error response is possible: just end
             log.exception("event stream failed")
 
-    def _host_stream(self, query):
+    def _host_stream(self, query, host=studio.HOST):
         """What the effect host page runs, and its frame clock (lighting/studio.py)."""
-        if not studio.HOST.check_token((query.get("token") or [""])[0]):
+        if not host.check_token((query.get("token") or [""])[0]):
             raise ApiError(403, "forbidden")
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -222,21 +231,21 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             self.wfile.write(b"retry: 1000\n\n")
-            studio.HOST.stream(send, self.server.stopping)
+            host.stream(send, self.server.stopping)
         except (OSError, ValueError):
             pass                                  # the host page went away
         except Exception:
             log.exception("effect host stream failed")
 
-    def _host_frames(self):
+    def _host_frames(self, host=studio.HOST):
         """The effect host's colours for one frame, packed (web/js/fxhost.js): 30 of these a second, so no JSON."""
         n = int(self.headers.get("Content-Length") or 0)
         if n > MAX_BODY or n < 0:
             raise ApiError(413, "request too large")
         body = self.rfile.read(n)
-        if not studio.HOST.check_token(self.headers.get("X-Airglow-Token")):
+        if not host.check_token(self.headers.get("X-Airglow-Token")):
             raise ApiError(403, "forbidden")
-        return studio.HOST.packed_frames(body)
+        return host.packed_frames(body)
 
     def _static(self, path):
         rel = "index.html" if path in ("", "/") else urllib.parse.unquote(path).lstrip("/")
@@ -307,13 +316,15 @@ def _find_zone(ctrl, key):
 
 
 _CATALOG = []
+_CATALOG_LOCK = threading.Lock()
 
 
 def _catalog():
     """The product catalog, read once (it ships with the app)."""
-    if not _CATALOG:
-        _CATALOG.extend(lightsetup.load_catalog())
-    return _CATALOG
+    with _CATALOG_LOCK:
+        if not _CATALOG:
+            _CATALOG.extend(lightsetup.load_catalog())
+        return _CATALOG
 
 
 _COOLERS = {"at": -1e9, "found": []}
@@ -342,6 +353,8 @@ def _setup_pending(ctrl, store):
 
 def route(server, method, path, body, query=None):
     ctrl, store, hooks = server.ctrl, server.store, server.hooks
+    if method == "POST" and path.startswith("/api/studio/preview/"):
+        return server.previews.route(path.rsplit("/", 1)[-1], body)
     if path.startswith(("/api/control/", "/api/cooling/")):
         from . import operationsapi
         return operationsapi.route(server, method, path, body, query)
@@ -562,10 +575,11 @@ def route(server, method, path, body, query=None):
         except RuntimeError as e:
             raise ApiError(409, str(e)) from None
         return {"ok": True}
-    if path == "/api/fx/host/frames":
-        if not studio.HOST.check_token(body.get("token")):
+    if path in ("/api/fx/host/frames", "/api/fx/preview/frames"):
+        host = server.previews if path == "/api/fx/preview/frames" else studio.HOST
+        if not host.check_token(body.get("token")):
             raise ApiError(403, "forbidden")
-        return studio.HOST.frames(body)
+        return host.frames(body)
     if path == "/api/onboarded":
         store.save_state(onboarded=True)
         return {"ok": True}

@@ -361,9 +361,10 @@ class Controller:
             # A profile update may detach an owned curve. Resolve its identity and points in one snapshot,
             # with the same controller -> Store lock order as profile transactions, before any hardware I/O.
             cfg = self.store.settings()
-            temp = fans.source_temp(self.sensors, cfg["temp_source"])
+            sample = self.sensors if self._read_sensors or self.lhm.fresh_tree is not None else sensors.OFFLINE
+            temp = fans.source_temp(sample, cfg["temp_source"])
             curve = self.curve_points(self.effective_curve)
-            hottest = fans.source_temp(self.sensors, "max")
+            hottest = fans.source_temp(sample, "max")
         waited = time.monotonic() - self._started
         if temp is not None and not self._temp_seen:
             self._temp_seen = True
@@ -447,6 +448,8 @@ class Controller:
             after = dict(getattr(self.lhm_fans, "sent", {}))
         else:
             self.lhm_fans.resend_all()
+            if not self._read_sensors and self.lhm.tree is not None:
+                self.lhm_fans.failsafe(max(duty, failsafe))
             before = after = {}
         errors = {**self.lhm_fans.errors, **adoption_errors}
         self.fan_channels = [{**ch, "mode": (chosen.get(ch["id"]) or {}).get("mode"),
@@ -536,7 +539,7 @@ class Controller:
         if self._read_sensors:
             summary, flat = self._read_sensors(), (self._read_flat() if self._read_flat else [])
         else:
-            tree = self.lhm.tree                       # read on the poller's thread, never here
+            tree = self.lhm.fresh_tree                 # an old snapshot cannot prove a live temperature
             flat = sensors.flatten(tree) if tree else []
             summary = sensors.summary(flat) if tree else dict(sensors.OFFLINE)
         self.sensors = summary

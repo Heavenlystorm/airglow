@@ -13,6 +13,14 @@ def atomic_write_text(path, text):
     destination directory keeps concurrent writers independent and the final replacement on the same volume.
     """
     path = Path(path)
+    # A hard kill skips finally; old leftovers are safe to remove without touching concurrent writers.
+    cutoff = time.time() - 24 * 3600
+    for orphan in path.parent.glob(f".{path.name}.*.tmp"):
+        try:
+            if orphan.is_file() and orphan.stat().st_mtime < cutoff:
+                orphan.unlink()
+        except OSError:
+            pass
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=path.parent,

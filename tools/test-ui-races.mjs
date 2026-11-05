@@ -198,7 +198,7 @@ async function harness(file, exports) {
   const document = { visibilityState: "visible", events: new Map(),
     addEventListener(type, fn) { this.events.set(type, fn); } };
   const context = vm.createContext({
-    document, window: {}, structuredClone, AbortController, performance: { now: () => 0 },
+    document, window: { addEventListener() {} }, structuredClone, AbortController, performance: { now: () => 0 },
     fetch(path, options) { return new Promise((resolve, reject) => requests.push({ path, method: options.method,
       reject, resolve: body => resolve({ ok: true, json: async () => body }) })); },
     location: { hash: "#studio/edit" }, history: { replaceState() {} },
@@ -214,7 +214,8 @@ async function harness(file, exports) {
     requests.push(r);
   });
   const core = {
-    S: { state: null, effects: [], presets: [], rules: [] }, $: element, $$: () => [], esc: String,
+    S: { state: null, effects: [], presets: [], rules: [] }, $: element, $$: () => [], QUICK: [],
+    esc: (s) => String(s).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"),
     emit() {}, on() {}, toast() {}, setHTML(el, html) { el.innerHTML = html; }, coalesce: (fn) => fn, fail: (error) => errors.push(error),
     post: (path, body) => request("POST", path, body),
     get: (path) => path === "/api/effects" ? Promise.resolve([]) : request("GET", path),
@@ -238,6 +239,7 @@ async function harness(file, exports) {
           const value = specifier === "./core.js" && name in core ? core[name]
             : name === "closeSheet" ? () => { element("#sheet").open = false; }
             : name === "openSheet" ? (html) => { element("#sheet").innerHTML = html; element("#sheet").open = true; }
+            : name === "ensureHistory" ? () => Promise.resolve()
             : name === "paintMini" ? (canvas, zones) => paints.push({ canvas, zones }) : () => {};
           this.setExport(name, value);
         }
@@ -267,6 +269,75 @@ async function harness(file, exports) {
 }
 
 const studio = () => harness("studio", ["E", "newDoc", "quietSave", "save", "closeEditor", "DRAFT_KEY"]);
+
+test("overview reset cancels the debounce and waits for an older save before resetting", async () => {
+  const h = await harness("overview", ["O", "save", "flushOverview", "resetOverview"]);
+  h.O.layout = { tiles: [{ id: "old" }], pins: ["old"] };
+  h.save();
+  const saving = h.fire(350);
+  const resetting = h.resetOverview();
+  await tick();
+  assert.equal(h.requests.length, 1, "reset cannot race an older write at the server");
+  h.requests[0].resolve({ tiles: [{ id: "old" }], pins: ["old"] });
+  await saving;
+  await tick();
+  assert.equal(h.requests[1].path, "/api/overview/reset");
+  h.requests[1].resolve({ tiles: [{ id: "default" }], pins: [] });
+  await resetting;
+  assert.deepEqual(plain(h.O.layout), { tiles: [{ id: "default" }], pins: [] });
+  assert.equal(h.timers.size, 0);
+});
+
+test("overview reset drops a pending debounce without sending the old layout", async () => {
+  const h = await harness("overview", ["O", "save", "resetOverview"]);
+  h.O.layout = { tiles: [], pins: [] };
+  h.save();
+  const resetting = h.resetOverview();
+  await tick();
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].path, "/api/overview/reset");
+  h.requests[0].resolve({ tiles: [], pins: [] });
+  await resetting;
+});
+
+test("closing or replacing setup during either snap request cannot restart the probe", async () => {
+  for (const afterSave of [false, true]) {
+    const h = await harness("setup", ["G", "snap", "stopProbe"]);
+    h.G.task = { type: "fixed", keys: ["d/z"], dev: { id: "d" } };
+    const snapping = h.snap("front");
+    if (afterSave) { h.requests[0].resolve({}); await tick(); }
+    h.G.task = null;
+    h.stopProbe();
+    if (!afterSave) { h.requests[0].resolve({}); await tick(); }
+    const zones = h.requests.find(r => r.path === "/api/zones");
+    zones?.resolve({ zones: [] });
+    await snapping;
+    assert.equal(h.G.probe, null);
+    assert.equal(h.timers.size, 0);
+    assert.equal(h.requests.filter(r => r.path === "/api/setup/probe").length, 0);
+  }
+});
+
+test("declared community controls reject colour markup and unsafe parameter ids", async () => {
+  const h = await harness("studio", ["declaredParams"]);
+  const params = h.declaredParams(`airglow.params({tone:{type:'color',default:'#000\" autofocus onfocus=\"bad'},
+    palette:{type:'colors',default:['#112233','bad']}, 'bad\"id':{type:'color',default:'#aabbcc'}});`);
+  assert.ok(params.every(p => /^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(p.id)));
+  assert.ok(/^#[0-9a-f]{6}$/i.test(params.find(p => p.id === "tone").default));
+  assert.ok(params.find(p => p.id === "palette").default.every(c => /^#[0-9a-f]{6}$/i.test(c)));
+});
+
+test("shared colour fields cannot interpolate attribute or CSS markup", async () => {
+  const h = await harness("lighting", []);
+  const bad = '#000\" autofocus onfocus=\"bad';
+  for (const [spec, value] of [[{ id: "tone", label: "Tone", type: "color" }, bad],
+    [{ id: "palette", label: "Palette", type: "colors", min: 2, max: 4 }, [bad, "#112233"]]]) {
+    const html = h.fieldHTML(spec, value, "test");
+    assert.ok(!html.includes('onfocus="bad'));
+    assert.ok(!html.includes('background:#000"'));
+  }
+});
 function effect(h, name, fx_id = `fx:me.${name}`) {
   const d = h.newDoc({ name, fx_id, layers: [] });
   d.dirty = true;

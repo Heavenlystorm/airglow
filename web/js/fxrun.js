@@ -7,15 +7,16 @@ let assets = null;
 
 // worker.js, layers.js and the layer defaults, fetched once and handed to each frame (it can't fetch anything)
 export function runtimeAssets() {
+  const checked = (r) => { if (!r.ok) throw new Error(`Effect runtime couldn't load (${r.status})`); return r; };
   assets ||= Promise.all([
-    fetch("/runtime/worker.js").then((r) => r.text()),
-    fetch("/runtime/layers.js").then((r) => r.text()),
-    fetch("/runtime/layers.json").then((r) => r.json()),
+    fetch("/runtime/worker.js").then(checked).then((r) => r.text()),
+    fetch("/runtime/layers.js").then(checked).then((r) => r.text()),
+    fetch("/runtime/layers.json").then(checked).then((r) => r.json()),
   ]).then(([runtime, layersLib, layerInfo]) => {
     const defaults = {};
     for (const [id, t] of Object.entries(layerInfo.types)) defaults[id] = Object.fromEntries(t.params.map((p) => [p.id, p.default]));
     return { runtime, layersLib, layerInfo, defaults };
-  });
+  }).catch((error) => { assets = null; throw error; });
   return assets;
 }
 
@@ -119,30 +120,30 @@ export class EffectRunner {
     // Changes that arrive while the frame is still starting can't be sent yet (it would drop them): they're kept
     // here and go out with the load itself.
     this._early = { points, params: effect.params || {}, layers: effect.layers || [] };
-    const a = await runtimeAssets();
-    if (this._destroyed) return;
-    this.frame.src = "/runtime/frame.html";
-    document.body.appendChild(this.frame);
     try {
+      const a = await runtimeAssets();
+      if (this._destroyed) return;
+      this.frame.src = "/runtime/frame.html";
+      document.body.appendChild(this.frame);
       // A frame that never says hello (a broken page, a WebView out of memory) would otherwise leave the preview
       // silently empty for ever, with the runner waiting on a promise that never settles.
       await Promise.race([this._hello, new Promise((_, reject) => {
         this._helloTimer = setTimeout(() => reject(new Error("The effect's page didn't start")), 8000);
       })]);
+      if (this._destroyed) return;
+      const early = this._early;
+      this._early = null;
+      this._post({ type: "load", runtime: a.runtime, layersLib: a.layersLib, defaults: a.defaults, kind: effect.kind,
+                   code: effect.code || "", layers: early.layers, params: early.params, points: early.points });
     } catch (e) {
+      if (this._destroyed) return;
       this.destroy();
       this.h.onError?.({ message: String(e.message || e), line: null });
       this.h.onStopped?.("error");
-      return;
     } finally {
       clearTimeout(this._helloTimer);
       this._helloTimer = null;
     }
-    if (this._destroyed) return;
-    const early = this._early;
-    this._early = null;
-    this._post({ type: "load", runtime: a.runtime, layersLib: a.layersLib, defaults: a.defaults, kind: effect.kind,
-                 code: effect.code || "", layers: early.layers, params: early.params, points: early.points });
   }
 
   tick(time, dt, audio = null, backdrop = false) {

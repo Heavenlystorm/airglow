@@ -21,7 +21,7 @@ def main(argv):
     logging.getLogger().addHandler(handler)
     logging.getLogger().setLevel(logging.INFO)
     url = argv[1] if len(argv) > 1 else ""
-    if not re.fullmatch(r"http://127\.0\.0\.1:\d{2,5}/runtime/host\.html#token=[\w\-]+", url):
+    if not re.fullmatch(r"http://127\.0\.0\.1:\d{2,5}/runtime/host\.html#token=[\w\-]+(?:&preview=1)?", url):
         log.error("refusing to start: unexpected address")
         return 2
     parent = int(argv[3]) if len(argv) > 3 and argv[2] == "--parent" and argv[3].isdigit() else None
@@ -41,5 +41,5 @@ def main(argv):
 
     log.info("effect host starting")
     webview.start(lambda: threading.Thread(target=watch_parent, daemon=True).start(), gui="edgechromium",
-                  private_mode=True, storage_path=str(paths.data_dir() / "effect-host"))
+                  private_mode=True, storage_path=str(paths.data_dir() / ("preview-host" if url.endswith("&preview=1") else "effect-host")))
     return 0

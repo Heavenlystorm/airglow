@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import __version__, paths
+from . import __version__, fileio, paths
 
 log = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ def fetch_meta(url=META_URL, timeout=6, opener=urllib.request.urlopen):
         return cached_meta()
     try:
         _meta_cache().parent.mkdir(exist_ok=True)
-        _meta_cache().write_text(json.dumps(meta), encoding="utf-8")
+        fileio.atomic_write_text(_meta_cache(), json.dumps(meta))
     except OSError as e:
         log.warning("couldn't cache app-meta.json: %s", e)
     return meta

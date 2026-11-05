@@ -24,7 +24,7 @@ def source_temp(sensors, source):
         return sensors["liquid_temp"]
     # "max", and "liquid" while no coolant reading comes through (cooler unplugged, LHM without it): the hotter
     # part runs warmer than any coolant, so the fans err on the fast side
-    temps = [t for t in (cpu, gpu) if t is not None]
+    temps = [t for t in (cpu, gpu, sensors.get("gpu_hotspot")) if t is not None]
     return max(temps) if temps else None
 
 
