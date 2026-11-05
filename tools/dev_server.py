@@ -208,6 +208,8 @@ if __name__ == "__main__":
     ctrl.start()
     updater = updates.Updater(store, kind="velopack", managers=lambda channel: [DemoFeed()], fetch_meta=lambda: None)
     server = api.Server(8790, ctrl, store, updater=updater)
+    if os.environ.get("AIRGLOW_FIXTURE") == "1":
+        server.previews.host.url = None       # screen previews must obey the fixture's no-native-WebView rule too
     from airglow import fxlibrary
     from airglow.lighting import studio
     fxlibrary.LIBRARY = fxlibrary.Library(data / "effects")     # the dev server keeps its effects with its data
