@@ -1,0 +1,32 @@
+/* The LEDs own the canvas color; theme accents belong to its controls. */
+.overview-rig-host { min-width: 0; min-height: 0; flex: 1; position: relative; }
+.overview-rig { position: absolute; inset: 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.overview-rig-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: 0 0 auto; padding: 0 2px 9px; }
+.overview-rig-zones { min-width: 0; max-width: min(260px, 65%); padding: 5px 24px 5px 8px; font: 11px var(--text); border: 1px solid var(--line); border-radius: 5px; background: var(--well); color: var(--ink); text-overflow: ellipsis; }
+.overview-rig-switch { display: flex; flex: 0 0 auto; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--well); }
+.overview-rig-view { min-width: 33px; min-height: 25px; padding: 3px 8px; border: 0; border-radius: 3px; background: transparent; color: var(--ink-3); font: 10px var(--mono); cursor: pointer; }
+.overview-rig-view[aria-pressed="true"] { color: var(--ink); background: var(--plate); box-shadow: inset 0 0 0 1px var(--line); }
+.overview-rig-view[aria-busy="true"] { opacity: .65; }
+.overview-rig-view:focus-visible, .overview-rig-zones:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+.overview-rig-surface { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; border-radius: 8px; border: 1px solid var(--line); background: var(--well); }
+.overview-rig-surface::after { content: ""; position: absolute; inset: 8px; pointer-events: none; border: 1px solid color-mix(in srgb, var(--line) 45%, transparent); border-radius: 3px; }
+.overview-rig-canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
+.overview-rig [hidden] { display: none !important; }
+.overview-rig-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 14px; color: var(--ink-3); font-size: 12px; text-align: center; pointer-events: none; }
+.overview-rig-status { position: absolute; bottom: 8px; inset-inline: 12px; padding: 5px 8px; border-radius: 4px; font-size: 11px; color: var(--ink); background: var(--plate); }
+.overview-rig .rig-3d { inset: 0; background: transparent; }
+.overview-rig .rig-3d canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.overview-rig .rig-3d canvas.dragging { cursor: grabbing; }
+.overview-rig .rig-3d canvas:focus-visible { outline: 2px solid var(--brass); outline-offset: -3px; }
+.overview-rig .rig-3d-top { inset: 8px 9px auto; justify-content: flex-end; }
+.overview-rig .rig-3d-top > span, .overview-rig .rig-3d-zone, .overview-rig .rig-3d-depth-note { display: none; }
+.overview-rig .rig-3d-top button { padding: 4px 7px; font-size: 10px; color: var(--ink); background: var(--plate); }
+.overview-rig .rig-3d-bottom { inset: auto 8px 7px; }
+.overview-rig .rig-3d-help { font-size: 10px; color: var(--ink-3); background: var(--plate); }
+@container (max-height: 230px) {
+  .overview-rig-toolbar { padding-bottom: 4px; }
+  .overview-rig .rig-3d-bottom { display: none; }
+}
+@media (forced-colors: active) {
+  .overview-rig-view[aria-pressed="true"] { outline: 1px solid Highlight; }
+}

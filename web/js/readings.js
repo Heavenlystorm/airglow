@@ -102,10 +102,12 @@ const LEVELS = {
 };
 export function level(id, meta, v) {
   if (!Number.isFinite(v) || !meta) return "";
-  const lv = LEVELS[id] || (meta.unit === "°C" ? [80, 95] : null);
+  const lv = thresholds(id, meta);
   if (!lv) return "";
   return v >= lv[1] ? "hot" : v >= lv[0] ? "warm" : "";
 }
+// These are Airglow's display warning levels, not a manufacturer's thermal limit.
+export const thresholds = (id, meta) => LEVELS[id] || (meta?.unit === "°C" ? [80, 95] : null);
 
 const niceCeil = (v) => {
   if (v <= 0) return 1;

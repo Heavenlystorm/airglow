@@ -113,27 +113,30 @@ export function createRenderQueue({ isVisible, paint, request = requestAnimation
   };
 }
 
-export function createRig3D(host, { onSelect, onUnavailable, isVisible }) {
+export function createRig3D(host, { onSelect, onUnavailable, isVisible, compact = false, idPrefix = "rig-3d" }) {
+  // Overview can render several previews alongside the full Lighting stage.
+  // Prefix IDs and their ARIA relationships; selectors stay local to this pane.
+  const id = String(idPrefix).replace(/[^a-zA-Z0-9_-]/g, "") || "rig-3d";
   const pane = document.createElement("div");
-  pane.id = "rig-3d"; pane.className = "rig-3d"; pane.hidden = true;
-  pane.innerHTML = `<canvas id="rig-3d-canvas" tabindex="0" role="img" aria-label="Interactive 3D lighting layout" aria-describedby="rig-3d-help"></canvas>
-    <div class="rig-3d-top"><span>Spatial layout <small>Presentation depth only</small></span><button class="chip-btn" id="rig-3d-reset" type="button">Reset view</button></div>
-    <div class="rig-3d-bottom"><div class="rig-3d-zone"><label for="rig-3d-zone">Zone</label><select id="rig-3d-zone" class="select" aria-label="Select a zone in 3D"></select>
-      <label for="rig-3d-depth">Depth</label><input id="rig-3d-depth" type="range" min="-60" max="60" step="1" value="0" aria-label="Zone presentation depth" aria-describedby="rig-3d-depth-note"><output id="rig-3d-depth-value" for="rig-3d-depth">0</output></div>
-      <span id="rig-3d-depth-note">Saved on this device. Lighting positions stay unchanged.</span>
-      <details class="rig-3d-help"><summary>View controls</summary><p id="rig-3d-help">Drag to orbit · Shift-drag or right-drag to pan · Scroll to zoom. Keyboard: arrows orbit, Shift + arrows pan, + / − zoom, Home resets. Select a zone from the list or click its lights.</p></details></div>`;
+  pane.id = id; pane.className = `rig-3d${compact ? " rig-3d-compact" : ""}`; pane.hidden = true;
+  pane.innerHTML = `<canvas id="${id}-canvas" tabindex="0" role="img" aria-label="Interactive 3D lighting layout" aria-describedby="${id}-help"></canvas>
+    <div class="rig-3d-top"><span>Spatial layout <small>Presentation depth only</small></span><button class="chip-btn" id="${id}-reset" type="button">Reset view</button></div>
+    <div class="rig-3d-bottom"><div class="rig-3d-zone"><label for="${id}-zone">Zone</label><select id="${id}-zone" class="select" aria-label="Select a zone in 3D"></select>
+      <label for="${id}-depth">Depth</label><input id="${id}-depth" type="range" min="-60" max="60" step="1" value="0" aria-label="Zone presentation depth" aria-describedby="${id}-depth-note"><output id="${id}-depth-value" for="${id}-depth">0</output></div>
+      <span id="${id}-depth-note" class="rig-3d-depth-note">Saved on this device. Lighting positions stay unchanged.</span>
+      <details class="rig-3d-help"><summary>View controls</summary><p id="${id}-help">Drag to orbit · Shift-drag or right-drag to pan · Scroll to zoom. Keyboard: arrows orbit, Shift + arrows pan, + / − zoom, Home resets. Select a zone from the list or click its lights.</p></details></div>`;
   host.append(pane);
   const canvas = pane.querySelector("canvas");
-  const ctx = canvas.getContext("2d", { alpha: false });
+  const ctx = canvas.getContext("2d", { alpha: compact });
   if (!ctx) { pane.remove(); throw new Error("3D drawing is unavailable on this device."); }
-  const select = pane.querySelector("#rig-3d-zone"), depth = pane.querySelector("#rig-3d-depth"), depthValue = pane.querySelector("output");
+  const select = pane.querySelector(`#${id}-zone`), depth = pane.querySelector(`#${id}-depth`), depthValue = pane.querySelector("output");
   let zones = [], frames = {}, selected = null, scene = buildScene([]), camera = homeCamera(), visible = false, disposed = false, drag = null, hitPoints = [];
   let depths;
   try { depths = parseDepths(localStorage.getItem(DEPTH_KEY)); } catch { depths = parseDepths(null); }
   const gradients = new Map();
   const listeners = new AbortController();
   const listen = (el, event, fn, options = {}) => el.addEventListener(event, fn, { ...options, signal: listeners.signal });
-  const shown = () => !disposed && visible && !document.hidden && isVisible();
+  const shown = () => !disposed && host.isConnected && visible && !document.hidden && isVisible();
   const queue = createRenderQueue({ isVisible: shown, paint });
   const project = (p, w, h) => projectPoint(p, scene, camera, w, h);
   function path(points) {
@@ -154,7 +157,8 @@ export function createRig3D(host, { onSelect, onUnavailable, isVisible }) {
     const pixelW = Math.round(w * dpr), pixelH = Math.round(h * dpr);
     if (canvas.width !== pixelW || canvas.height !== pixelH) { canvas.width = pixelW; canvas.height = pixelH; gradients.clear(); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#080c11"; ctx.fillRect(0, 0, w, h);
+    if (compact) ctx.clearRect(0, 0, w, h);
+    else { ctx.fillStyle = "#080c11"; ctx.fillRect(0, 0, w, h); }
     hitPoints = [];
     if (!scene.bounds) return;
     // A reference lattice behind the layout, not a guessed enclosure or component.
@@ -212,7 +216,7 @@ export function createRig3D(host, { onSelect, onUnavailable, isVisible }) {
   }
   const zoom = amount => { camera.distance = clamp(camera.distance * amount, 1.65, 8); queue.request(); };
   const reset = () => { camera = homeCamera(); queue.request(); };
-  listen(pane.querySelector("#rig-3d-reset"), "click", reset);
+  listen(pane.querySelector(`#${id}-reset`), "click", reset);
   listen(select, "change", () => { selectKey(select.value || null); onSelect(selected); });
   listen(depth, "input", () => {
     if (!selected) return;

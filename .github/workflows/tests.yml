@@ -36,7 +36,7 @@ jobs:
         # checks every named import against the module it comes from.
         run: node --experimental-vm-modules tools/check-js.mjs
       - name: UI state and effect runtime regressions
-        run: node --experimental-vm-modules --test tools/test-overview.mjs tools/test-readings.mjs tools/test-ui-races.mjs tools/test-ui-state.mjs tools/test-effect-runtime.mjs tools/test-studio-workflow.mjs tools/test-workbenches.mjs tools/test-personalization-motion.mjs tests/test_profile_ui.mjs tests/test_migration_ui.mjs tests/test_appearance.mjs tests/test_appearance_dom.mjs tests/test_overview_workspaces.mjs tests/test_overview_workspace_races.mjs tests/test_living_rig.mjs tests/test_studio_variations.mjs tests/test_studio_gallery_lifecycle.mjs tests/test_rig_3d.mjs tests/test_studio_paint.mjs tests/test_studio_paint_safety.mjs tests/test_studio_blend.mjs
+        run: node --experimental-vm-modules --test tools/test-overview.mjs tools/test-readings.mjs tools/test-ui-races.mjs tools/test-ui-state.mjs tools/test-effect-runtime.mjs tools/test-studio-workflow.mjs tools/test-workbenches.mjs tools/test-personalization-motion.mjs tests/test_profile_ui.mjs tests/test_migration_ui.mjs tests/test_appearance.mjs tests/test_appearance_dom.mjs tests/test_overview_workspaces.mjs tests/test_overview_workspace_races.mjs tests/test_living_rig.mjs tests/test_studio_variations.mjs tests/test_studio_gallery_lifecycle.mjs tests/test_rig_3d.mjs tests/test_studio_paint.mjs tests/test_studio_paint_safety.mjs tests/test_studio_blend.mjs tests/test_overview_sensors.mjs tests/test_overview_rig.mjs tests/test_overview_instruments.mjs
       - name: Community effects are valid
         run: python tools/effects.py --check
       - name: Gallery profiles are valid

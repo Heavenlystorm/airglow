@@ -103,6 +103,20 @@ export function createLayoutHistory(initial, limit = 50) {
   };
 }
 
+function validateTileAppearance(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !["emphasis", "accent"].includes(key))) {
+    throw new Error("Tile appearance must contain supported display preferences.");
+  }
+  const emphasis = Object.hasOwn(value, "emphasis") ? value.emphasis : "standard";
+  let accent = Object.hasOwn(value, "accent") ? value.accent : null;
+  if (!["standard", "focus", "quiet"].includes(emphasis)) throw new Error("Tile emphasis must be standard, focus or quiet.");
+  if (accent !== null) {
+    if (typeof accent !== "string" || !/^#[0-9a-fA-F]{6}$/.test(accent)) throw new Error("Tile accent must be a colour like #12abef or null.");
+    accent = accent.toLowerCase();
+  }
+  return { emphasis, accent };
+}
+
 function validateLayout(raw) {
   if (!raw || !Array.isArray(raw.tiles) || raw.tiles.length > 32) throw new Error("A workspace holds up to 32 tiles.");
   const seen = new Set();
@@ -117,10 +131,16 @@ function validateLayout(raw) {
     const w = t.w ?? 1, h = t.h ?? 1;
     if (!Number.isInteger(w) || w < 1 || w > 4 || !Number.isInteger(h) || h < 1 || h > 3) throw new Error("Invalid tile size.");
     const tile = { id: t.id, type: t.type, w, h };
+    // Omitted fields retain the old document shape; explicit preferences are validated in full.
+    if (Object.hasOwn(t, "appearance")) tile.appearance = validateTileAppearance(t.appearance);
+    if (Object.hasOwn(t, "view")) {
+      if (t.type !== "lighting" || !["2d", "3d"].includes(t.view)) throw new Error("Lighting view must be 2d or 3d.");
+      tile.view = t.view;
+    }
     if (t.type === "sensor") {
       if (!Array.isArray(t.sensors) || !t.sensors.length || t.sensors.length > 2) throw new Error("A tile shows one or two readings.");
-      const style = t.style ?? "spark";
-      if (!["spark", "ring", "graph", "bar"].includes(style)) throw new Error("Unknown tile style.");
+      const style = Object.hasOwn(t, "style") ? t.style : "spark";
+      if (!["auto", "spark", "ring", "graph", "bar"].includes(style)) throw new Error("Unknown tile style.");
       Object.assign(tile, { sensors: t.sensors.map(sensor), style });
       if (t.label != null && (typeof t.label !== "string" || t.label.length > 40)) throw new Error("Tile names can be up to 40 characters.");
       if (t.label?.trim()) tile.label = t.label.trim();
@@ -146,22 +166,41 @@ export function importWorkspace(text) {
 
 export function starterWorkspace(doc, kind) {
   if (kind === "current") return snapshot(doc);
-  const sensorTiles = doc.tiles.filter((t) => t.type === "sensor");
+  if (kind === "lighting") kind = "showcase"; // Older clients call the lighting starter by this name.
+  if (!["showcase", "monitoring", "balanced"].includes(kind)) throw new Error("Unknown workspace starter.");
+  const source = validateLayout(doc);
+  const sensorTiles = source.tiles.filter((t) => t.type === "sensor");
   // Existing sensor IDs remain honest even on machines where a reading is temporarily missing.
   // These arrangements contain no assumptions about detected fan counts or chassis models.
-  const tiles = kind === "monitoring"
-    ? [...sensorTiles, ...doc.tiles.filter((t) => ["fans", "control"].includes(t.type))]
-    : [doc.tiles.find((t) => t.type === "lighting") || { id: "lighting", type: "lighting", w: 3, h: 3 },
-      ...sensorTiles.slice(0, 3), doc.tiles.find((t) => t.type === "presets") || { id: "presets", type: "presets", w: 3, h: 1 }];
-  const result = { tiles: clone(tiles), pins: [...doc.pins] };
-  if (kind === "lighting") {
-    result.tiles[0].w = 3; result.tiles[0].h = 3;
-    const used = new Set();
-    for (const tile of result.tiles) {
-      const base = tile.id; let n = 1;
-      while (used.has(tile.id)) tile.id = `${base.slice(0, 27)}-${++n}`;
-      used.add(tile.id);
-    }
+  const shown = new Set(sensorTiles.flatMap(t => t.sensors));
+  for (const [index, id] of source.pins.entries()) {
+    if (!shown.has(id)) sensorTiles.push({ id: `pinned-${index + 1}`, type: "sensor", sensors: [id], w: 1, h: 1 });
   }
-  return result;
+  const present = (tile, w, h, emphasis = "standard") => ({ ...tile, w, h,
+    appearance: { emphasis, accent: tile.appearance?.accent ?? null } });
+  const instrument = (tile) => ({ ...present(tile, kind === "monitoring" ? 2 : 1, kind === "monitoring" ? 2 : 1), style: "auto" });
+  const tileOf = (type, w, h, emphasis) => present(source.tiles.find(t => t.type === type) || { id: type, type }, w, h, emphasis);
+  const lighting = tileOf("lighting", kind === "showcase" ? 3 : 2, kind === "showcase" ? 3 : 2, "focus");
+  lighting.view ??= "2d";
+  let tiles;
+  if (kind === "monitoring") {
+    tiles = [...sensorTiles.slice(0, 30).map(instrument), tileOf("fans", 2, 2), tileOf("control", 2, 1, "quiet")];
+  } else if (kind === "showcase") {
+    tiles = [lighting, ...sensorTiles.slice(0, 3).map(instrument), tileOf("presets", 3, 1), tileOf("control", 1, 1, "quiet")];
+  } else {
+    tiles = [lighting, ...sensorTiles.slice(0, 4).map(instrument), tileOf("presets", 2, 1), tileOf("fans", 2, 2), tileOf("control", 2, 1, "quiet")];
+    const instruments = tiles.filter(t => t.type === "sensor");
+    // A small collection still closes the two-column instrument area beside the rig.
+    if (instruments.length === 3) instruments[2].w = 2;
+    if (instruments.length === 2) instruments.forEach(t => { t.w = 2; });
+    if (instruments.length === 1) { instruments[0].w = 2; instruments[0].h = 2; }
+    if (!instruments.length) lighting.w = 4;
+  }
+  const used = new Set();
+  for (const tile of tiles) {
+    const base = tile.id; let n = 1;
+    while (used.has(tile.id)) tile.id = `${base.slice(0, 27)}-${++n}`;
+    used.add(tile.id);
+  }
+  return { tiles, pins: [...source.pins] };
 }
