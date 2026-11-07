@@ -129,7 +129,38 @@ Screen ambience have no layer equivalent (they need the sensors or the screen).
 A layer can be soloed to see it alone, moved with the buttons or by dragging, and shows its palette (a gradient chip)
 and music reaction in its row.
 
+**Paint LEDs** limits the selected layer to painted positions inside its existing **Where** area. Enable
+**Paint on preview**, then brush or erase on the rig; each drag is one undo step, and Escape cancels a stroke.
+Brush radius has both a slider and a numeric input. **Choose LEDs by number** offers Add/Remove buttons; while
+painting, arrow keys on the preview choose an LED and Space uses the current tool. Clear selects no LEDs,
+Invert reverses the selection in the current area, and Remove mask restores the ordinary area mask.
+
+Paint is an optional layer field: `"paint":{"v":1,"points":[[5000,5000]]}`. Coordinates are the raw stage
+positions normalized by its 1.6 by 1 dimensions, multiplied by 10,000 and rounded to integers. Each mask has at
+most 2,048 unique pairs bounded to -100000 through 100000; the existing 32 KB limit applies to the whole effect
+file. LED positions are carried separately from a code effect's clamped coordinates so preview and hardware use
+the same mask. Paint follows positions, so rearranged LEDs need repainting and colocated LEDs share selection.
+Masks survive Save, export/import, code conversion, undo/redo and local draft recovery. Painting stops live draft
+preview and prevents automatic saving/live updates until an explicit action. Save updates a saved effect (including
+one already applied); Use on my lights or enabling Live draft preview explicitly starts hardware output.
+
 ## Controls people can change
+
+### Blend saved effects
+
+Studio's **Blend saved effects** opens an independent preview of two saved effects. Choose A and B, move the
+blend slider or type a percentage, and use **Swap A / B** to reverse the endpoints while retaining the mix.
+The panel keeps a recovery copy on this PC. **Save blend** creates a new effect; **Open saved effect** opens it
+for editing and explicit application. Neither action automatically enables hardware output.
+
+Each endpoint is a snapshot of its source and saved parameter values. Deleting or changing an original does not
+change an existing blend. The result is a standard portable code effect with one exposed Blend control. It
+preserves endpoint attribution, license information and required permissions. Layer, point, canvas and WebGL
+effects use the same sandbox as other Studio effects. The existing file-size and execution limits still apply;
+large combinations are rejected before saving, and blends cannot contain another generated blend.
+
+### Exposing controls
+
 - Each layer setting can be exposed, including a layer's colours. The label is renamed in the effect panel.
 - The effect-wide palette, speed, brightness and reactivity can each be exposed once, so a shared effect can be
   retuned in one place instead of per layer.

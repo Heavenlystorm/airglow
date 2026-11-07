@@ -16,6 +16,13 @@ self.AirglowLayers = (() => {
   const clamp = (v, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
   const hz = (speed, lo, hi) => lo * Math.pow(hi / lo, speed / 100);          // same curve as the built-in effects
   const HEX = /^#[0-9a-f]{6}$/i;
+  // Painted masks are exact quantized LED positions, independent of enumeration order.
+  // Invalid optional data fails closed for previews and hand-written code effects too.
+  function painted(value) {
+    if (!value || value.v !== 1 || !Array.isArray(value.points) || value.points.length > 2048
+      || value.points.some(p => !Array.isArray(p) || p.length !== 2 || p.some(n => !Number.isInteger(n) || Math.abs(n) > 100000))) return new Set();
+    return new Set(value.points.map(p => p.join(",")));
+  }
   const rgb = (hex) => (HEX.test(String(hex)) ? [1, 3, 5].map((i) => parseInt(String(hex).slice(i, i + 2), 16) / 255) : [1, 1, 1]);
   function hsv(h, s, v) {
     h = ((h % 1) + 1) % 1;
@@ -254,6 +261,7 @@ self.AirglowLayers = (() => {
           r: TYPES[layer.type](p), a: (layer.opacity ?? 100) / 100,
           blend: BLEND[layer.blend] || BLEND.normal,
           mask: layer.mask && layer.mask !== "all" ? layer.mask : null,
+          paint: Object.hasOwn(layer, "paint") ? painted(layer.paint) : null,
           react: { what: react.what === "speed" ? "speed" : "strength", amount },
           frame: null, aNow: 0,
         };
@@ -289,6 +297,7 @@ self.AirglowLayers = (() => {
         let r = 0, g = 0, b = 0;
         for (const l of built) {
           if (l.mask && pt.area !== l.mask) continue;
+          if (l.paint && !l.paint.has(pt.paintPosition ? pt.paintPosition.join(",") : `${Math.round(pt.x * 10000)},${Math.round(pt.y * 10000)}`)) continue;
           const c = l.r.at(pt.x, pt.y, pt.index, l.frame || frame, pt), a = c[3] * (l.aNow || l.a);
           if (a <= 0) continue;
           r = l.blend(r, c[0], a); g = l.blend(g, c[1], a); b = l.blend(b, c[2], a);

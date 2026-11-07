@@ -1,0 +1,82 @@
+/* Personal settings extend the active design's typography and surfaces. */
+body { zoom: var(--ui-scale, 1); height: calc(100% / var(--ui-scale, 1)); }
+.sheet { max-height: calc((100dvh - 48px) / var(--ui-scale, 1)); }
+:root[data-density="compact"] .set-row { padding-block: 11px; }
+:root[data-density="compact"] .set-group { margin-bottom: 20px; }
+:root[data-density="compact"] .ov-grid { gap: clamp(8px, .4cqw, 16px); }
+:root[data-density="compact"] .ov-bar { padding-block: 8px; min-height: 48px; }
+:root[data-density="compact"] .tile:not(.tile-lighting):not(.tile-control) .tile-inner { padding-top: 10px; }
+:root[data-density="compact"] .appearance-editor { gap: 22px; }
+
+/* The custom accent is chrome only; chart, LED, warning and status tokens stay intact. */
+:root[data-custom-accent] .btn.primary:not(:disabled) {
+  background: var(--brass); color: var(--primary-ink); border-color: var(--primary-edge);
+}
+:root[data-custom-accent] .btn.primary:hover:not(:disabled) { background: var(--brass-hi); }
+.sheet:has(.appearance-sheet) { width: min(890px, calc(100vw / var(--ui-scale, 1) - 32px)); }
+.sheet form.appearance-sheet { padding: 28px; gap: 24px; }
+.appearance-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.appearance-heading h2 { font-size: 25px; }
+.appearance-heading .lede { margin-top: 6px; font-size: 14px; }
+.appearance-state { color: var(--brass); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 4px 9px; font-size: 12px; white-space: nowrap; }
+.appearance-editor { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 30px; }
+.appearance-controls { display: grid; align-content: start; gap: 23px; min-width: 0; }
+.appearance-field { display: grid; gap: 8px; min-width: 0; font-size: 13px; }
+.appearance-field > span, .appearance-accent legend { color: var(--ink-2); font-size: 13px; }
+.appearance-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.appearance-accent { margin: 0; padding: 0; border: 0; min-width: 0; }
+.appearance-accent legend { padding: 0; margin-bottom: 9px; }
+.appearance-color-row { display: flex; align-items: center; gap: 9px; }
+.appearance-color-row input[type="color"] { flex: none; width: 40px; height: 38px; padding: 3px; background: var(--well); border: 1px solid var(--line); border-radius: var(--r-ctl); cursor: pointer; }
+.appearance-color-row .text { min-width: 0; width: 125px; font-family: var(--mono); font-size: 12px; }
+.appearance-color-row .btn { padding-inline: 8px; font-size: 12px; }
+.appearance-accent .hint { margin-top: 9px; line-height: 1.5; font-size: 12px; }
+.appearance-portable { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; border-top: 1px solid var(--line-soft); }
+.appearance-portable .btn { padding-left: 0; font-size: 12px; }
+.appearance-library { border-left: 1px solid var(--line-soft); padding-left: 28px; display: flex; flex-direction: column; align-items: stretch; gap: 14px; min-width: 0; }
+.appearance-library-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.appearance-library h3 { font-size: 15px; font-weight: 500; }
+.appearance-library > .hint { font-size: 12px; line-height: 1.5; }
+.appearance-library > .btn { align-self: flex-start; }
+#ap-looks { max-height: 268px; overflow-y: auto; scrollbar-gutter: stable; }
+.appearance-empty { padding: 26px 0 30px; color: var(--ink-3); font-size: 13px; line-height: 1.8; }
+.appearance-look { display: grid; gap: 4px; padding: 11px 0 8px; border-bottom: 1px solid var(--line-soft); }
+.appearance-look:first-child { padding-top: 0; }
+.appearance-look-apply { display: flex; align-items: center; gap: 11px; text-align: left; background: none; padding: 3px; border: 0; border-radius: var(--r-ctl); color: var(--ink); cursor: pointer; min-width: 0; }
+.appearance-look-apply:hover { background: var(--highlight); }
+.appearance-look-apply > span:last-child { min-width: 0; }
+.appearance-look-apply strong { display: block; font-weight: 500; font-size: 13px; overflow-wrap: anywhere; }
+.appearance-look-apply small { display: block; color: var(--ink-3); font-size: 11px; margin-top: 3px; }
+.appearance-look-swatch.dsg-preview { width: 36px; height: 43px; flex: none; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--panel); display: grid; place-items: center; padding: 0; }
+.appearance-look-swatch i { width: 4px; height: 23px; border-radius: 2px; }
+.appearance-look-actions { display: flex; justify-content: flex-end; gap: 3px; }
+.appearance-look-actions .btn { padding: 3px 6px; font-size: 11px; }
+.appearance-error { color: var(--hot); font-size: 13px; line-height: 1.5; }
+.sheet .actions.appearance-actions { margin: 0; padding-top: 20px; }
+.appearance-actions .btn { min-height: 38px; }
+
+/* Match the system motion contract for explicit Reduce as well. */
+:root[data-motion="reduced"] *, :root[data-motion="reduced"] *::before, :root[data-motion="reduced"] *::after {
+  animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important;
+}
+@media (max-width: 760px) {
+  .appearance-editor { grid-template-columns: 1fr; gap: 22px; }
+  .appearance-library { border-left: 0; border-top: 1px solid var(--line-soft); padding: 20px 0 0; }
+  #ap-looks { max-height: 200px; }
+  .sheet form.appearance-sheet { padding: 20px 18px; }
+}
+@media (max-width: 480px) {
+  /* Keep readings and power reachable when interface zoom leaves less room than the viewport. */
+  .appbar { grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
+  .bar-right { display: contents; }
+  .bar-right .power { grid-column: 2; grid-row: 1; justify-self: end; }
+  .bar-right .ambient { grid-column: 1 / -1; grid-row: 2; justify-self: end; max-width: 100%; flex-wrap: wrap; white-space: normal; }
+  .compact-nav { grid-row: 3; }
+  .appearance-heading { flex-wrap: wrap; gap: 10px; }
+  .appearance-heading h2 { font-size: 22px; }
+  .appearance-color-row { flex-wrap: wrap; }
+  .appearance-pair { grid-template-columns: 1fr; }
+  .appearance-actions .spacer { display: none; }
+  .appearance-actions { justify-content: flex-end; }
+  .appearance-actions #ap-reset { margin-right: auto; }
+}

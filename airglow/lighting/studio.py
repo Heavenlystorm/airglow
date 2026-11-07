@@ -13,6 +13,7 @@ much memory it's ended and started again, and an effect that misbehaves is turne
 
 import base64
 import logging
+import math
 import secrets
 import subprocess
 import threading
@@ -105,11 +106,18 @@ def _points(z):
     fan = getattr(z, "fan", None)
     name = getattr(z, "key", None)
     n = len(z.pos)
+    canvas = getattr(z, "canvas", None)
     out = []
     for i, (x, y) in enumerate(z.pos):
         t = round(float(local[i]), 4) if local is not None and i < len(local) else round(i / max(n - 1, 1), 4)
         f = int(fan[i]) if fan is not None and i < len(fan) else 0
         out.append([round(float(x) * UNIT * 1.6, 2), round(float(y) * UNIT, 2), spot, t, f, name])
+        if canvas is not None and i < len(canvas):
+            # Match /api/zones' four-decimal positions and JS Math.round exactly. Effect x/y remain
+            # clamped for compatibility; painting also addresses LEDs arranged beyond the stage.
+            cx, cy = canvas[i]
+            out[-1].append([math.floor(round(float(cx), 4) / 1.6 * 10000 + .5),
+                            math.floor(round(float(cy), 4) * 10000 + .5)])
     return out
 
 

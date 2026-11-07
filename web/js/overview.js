@@ -7,6 +7,7 @@ import { R, defaultStyle, ensureHistory, fmt, fmtText, level, loadCatalog, range
 import { EASE, SPRING, countTo, flip, reduced } from "./motion.js";
 import { paintMini } from "./stage.js";
 import { closeSheet, openSheet } from "./sheet.js";
+import { createLayoutHistory, createWorkspace, deleteWorkspace, exportWorkspace, importWorkspace, initializeWorkspaces, renameWorkspace, restoreOverview, starterWorkspace, switchWorkspace, syncWorkspace } from "./overview-workspaces.js";
 
 const COLS = 4;
 const STYLES = [
@@ -19,7 +20,7 @@ const CONTROL = {
   control: { name: "Control status", desc: "Completed work, connection health and recent control changes.", w: 2, h: 1 },
 };
 
-const O = { layout: null, editing: false, els: new Map(), drag: null };
+const O = { layout: null, editing: false, els: new Map(), drag: null, history: null, saveState: "saved" };
 const grid = () => $("#ov-grid");
 const visible = () => !$('[data-view="overview"]').hidden;
 let measureRev = 0;                    // tile text is measured for overflow only when this changes (resize, font)
@@ -27,9 +28,13 @@ window.addEventListener("resize", () => { measureRev++; });
 document.fonts?.ready.then(() => { measureRev++; if (visible()) renderOverview(); });
 
 // ------------------------------------------------------------ persistence
-let saveTimer, saveRevision = 0, saving = null, resetting = false;
-function save() {
+let saveTimer, saveRevision = 0, saving = null, resetting = false, savedLayout = null;
+function save(group = null, record = true) {
   if (resetting) return;
+  syncWorkspace(O.layout);
+  if (record) O.history?.record(O.layout, group);
+  O.saveState = "saving";
+  renderWorkspaceToolbar();
   saveRevision++;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushOverview, 350);
@@ -41,15 +46,19 @@ function flushOverview() {
   const revision = saveRevision;
   saving = (async () => {
     try {
-      const next = await post("/api/overview", O.layout);
+      const next = await post("/api/overview", structuredClone(O.layout));
+      savedLayout = JSON.stringify(next);
       if (revision !== saveRevision) return;      // this response predates edits still waiting to be saved
       // Keep tile references held by an open sheet, a drag or an undo toast intact.
-      const known = new Map(O.layout.tiles.map((t) => [t.id, t]));
-      O.layout.tiles = next.tiles.map((t) => Object.assign(known.get(t.id) || {}, t));
-      O.layout.pins = next.pins;
+      restoreOverview(O.layout, next);
       S.overview = O.layout;
+      O.saveState = "saved";
+      renderWorkspaceToolbar();
       emit("pins");
-    } catch (e) { fail(e); }
+    } catch (e) {
+      if (revision === saveRevision) { O.saveState = "unsaved"; renderWorkspaceToolbar(); }
+      fail(e);
+    }
     finally {
       saving = null;
       if (!resetting && revision !== saveRevision && !saveTimer) saveTimer = setTimeout(flushOverview, 0);
@@ -61,19 +70,160 @@ function flushOverview() {
 async function resetOverview() {
   if (resetting) return null;
   resetting = true;
+  renderWorkspaceToolbar();
   saveRevision++;
   clearTimeout(saveTimer);
   saveTimer = null;
   try {
     await saving;                        // finish the older write before issuing the reset at the server
+    // A new/renamed workspace can still be inside the debounce window. Persist that collection
+    // before resetting its current layout, or the server would reset an older active workspace.
+    if (O.layout.workspaces?.length && JSON.stringify(O.layout) !== savedLayout) {
+      syncWorkspace(O.layout);
+      const retained = await post("/api/overview", structuredClone(O.layout));
+      savedLayout = JSON.stringify(retained);
+    }
     const layout = await post("/api/overview/reset");
+    savedLayout = JSON.stringify(layout);
     O.layout = layout; S.overview = layout;
+    O.history?.record(layout);
+    O.saveState = "saved";
     return layout;
   } catch (error) {
     resetting = false;
     save();                             // a failed reset must not lose an unsaved edit
     throw error;
-  } finally { resetting = false; }
+  } finally { resetting = false; renderWorkspaceToolbar(); }
+}
+
+// ------------------------------------------------------------ personal workspaces
+function renderWorkspaceToolbar() {
+  if (!O.history) return;
+  const toolbar = $("#ov-workspaces");
+  if (!toolbar) return;
+  const select = $("#ov-workspace");
+  const options = `${O.layout.active_workspace ? "" : '<option value="">Current layout</option>'}${O.layout.workspaces.map((w) => `<option value="${esc(w.id)}">${esc(w.name)}</option>`).join("")}`;
+  setHTML(select, options);
+  select.value = O.layout.active_workspace || "";
+  select.disabled = resetting;
+  $("#ov-workspace-manage").disabled = resetting;
+  $("#ov-undo").disabled = resetting || !O.history.canUndo;
+  $("#ov-redo").disabled = resetting || !O.history.canRedo;
+  const status = $("#ov-workspace-status");
+  status.textContent = { saving: "Saving…", saved: "Saved", unsaved: "Not saved" }[O.saveState];
+  status.dataset.state = O.saveState;
+}
+
+function changedWorkspace() {
+  S.overview = O.layout;
+  save();
+  renderOverview();
+  paintLightingTiles();
+  emit("pins");
+  ensureHistory([...new Set(O.layout.tiles.flatMap((t) => t.sensors || []))]).catch(() => {});
+}
+
+function workspaceChange(change) {
+  if (resetting || O.drag) return;
+  try { change(); closeSheet(); changedWorkspace(); }
+  catch (error) { fail(error); }
+}
+
+function historyStep(direction) {
+  if (resetting || O.drag) return;
+  const next = O.history?.[direction]();
+  if (!next) return;
+  closeSheet();
+  restoreOverview(O.layout, next);
+  S.overview = O.layout;
+  save(null, false);
+  renderOverview();
+  paintLightingTiles();
+  emit("pins");
+  ensureHistory([...new Set(O.layout.tiles.flatMap((t) => t.sensors || []))]).catch(() => {});
+}
+
+function workspaceNameSheet(rename = false) {
+  const active = O.layout.workspaces.find((w) => w.id === O.layout.active_workspace);
+  openSheet(`<form class="body" id="ov-workspace-form"><h2>${rename ? "Rename workspace" : "New workspace"}</h2>
+    <label class="field"><span class="lab">Name</span><input class="text" id="ov-workspace-name" maxlength="40" required autocomplete="off" value="${esc(rename ? active?.name || "" : "")}" placeholder="Evening, focus, play…"></label>
+    ${rename ? "" : `<label class="field"><span class="lab">Start with</span><select class="select" id="ov-workspace-starter"><option value="current">A copy of this layout</option><option value="lighting">Living Rig · lighting first</option><option value="monitoring">Readings · monitoring first</option></select></label>`}
+    <p class="hint">Workspaces save your tiles and pinned readings.</p><p class="hint" id="ov-workspace-error" role="alert" hidden></p>
+    <div class="actions"><button class="btn quiet" type="button" data-close>Cancel</button><span class="spacer"></span><button class="btn primary">${rename ? "Rename" : "Create workspace"}</button></div></form>`);
+  $("#ov-workspace-name").focus();
+  $("#ov-workspace-name").select();
+  $("#ov-workspace-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (resetting) return;
+    try {
+      const name = $("#ov-workspace-name").value;
+      if (rename) renameWorkspace(O.layout, active?.id, name);
+      else createWorkspace(O.layout, name, starterWorkspace(O.layout, $("#ov-workspace-starter").value));
+      closeSheet(); changedWorkspace();
+    } catch (error) {
+      $("#ov-workspace-error").textContent = error.message;
+      $("#ov-workspace-error").hidden = false;
+    }
+  });
+}
+
+function workspaceSheet() {
+  const active = O.layout.workspaces.find((w) => w.id === O.layout.active_workspace);
+  openSheet(`<div class="body" id="ov-workspace-sheet"><h2>Your workspaces</h2>
+    <p class="hint">A different arrangement for each way you use Airglow. Each keeps its own tiles and pinned readings.</p>
+    <div class="workspace-list">${O.layout.workspaces.map((w) => `<button class="workspace-card" data-workspace="${esc(w.id)}" aria-pressed="${w.id === active?.id}"><span class="workspace-glyph" aria-hidden="true">${w.tiles.slice(0, 8).map((t) => `<i class="${t.type === "lighting" ? "is-rig" : ""}"></i>`).join("")}</span><span><b>${esc(w.name)}</b><small>${w.tiles.length} tiles · ${w.pins.length} pinned</small></span><span aria-hidden="true">${w.id === active?.id ? "✓" : "→"}</span></button>`).join("")}</div>
+    <div class="btn-row workspace-actions"><button class="btn primary" id="ov-workspace-new"${O.layout.workspaces.length >= 8 ? " disabled" : ""}>New workspace</button><button class="btn" id="ov-workspace-rename"${active ? "" : " disabled"}>Rename</button><button class="btn danger" id="ov-workspace-delete"${active && O.layout.workspaces.length > 1 ? "" : " disabled"}>Delete</button></div>
+    <div class="actions"><button class="btn quiet" id="ov-workspace-export">Export layout</button><button class="btn quiet" id="ov-workspace-import"${O.layout.workspaces.length >= 8 ? " disabled" : ""}>Import layout</button><span class="spacer"></span><button class="btn" data-close>Done</button></div>
+    <input type="file" id="ov-workspace-file" accept=".json,application/json" hidden></div>`);
+  $("#ov-workspace-sheet").addEventListener("click", (e) => {
+    const id = e.target.closest("[data-workspace]")?.dataset.workspace;
+    if (id) workspaceChange(() => switchWorkspace(O.layout, id));
+  });
+  $("#ov-workspace-new").addEventListener("click", () => workspaceNameSheet());
+  $("#ov-workspace-rename").addEventListener("click", () => workspaceNameSheet(true));
+  $("#ov-workspace-delete").addEventListener("click", () => {
+    workspaceChange(() => deleteWorkspace(O.layout, active?.id));
+    toast("Workspace deleted. Layout Undo brings it back.");
+  });
+  $("#ov-workspace-export").addEventListener("click", () => {
+    const data = exportWorkspace(O.layout);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a"); link.href = url;
+    link.download = `airglow-${O.layout.active_workspace || "workspace"}.json`;
+    link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  $("#ov-workspace-import").addEventListener("click", () => $("#ov-workspace-file").click());
+  $("#ov-workspace-file").addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      if (file.size > 100000) throw new Error("That workspace file is too large.");
+      const imported = importWorkspace(await file.text());
+      workspaceChange(() => createWorkspace(O.layout, imported.name, imported));
+    } catch (error) { fail(error); }
+  });
+}
+
+function initWorkspaceToolbar() {
+  const toolbar = document.createElement("div");
+  toolbar.id = "ov-workspaces"; toolbar.className = "ov-workspaces";
+  toolbar.innerHTML = `<label class="workspace-picker"><span>Workspace</span><select class="select" id="ov-workspace" aria-label="Overview workspace"></select></label>
+    <button class="chip-btn" id="ov-workspace-manage" title="Create, rename or share a workspace" aria-label="Manage workspaces">Workspaces</button>
+    <div class="workspace-history" role="group" aria-label="Layout history"><button class="icon-btn" id="ov-undo" aria-label="Undo layout edit" title="Undo layout edit (Ctrl+Z)">↶</button><button class="icon-btn" id="ov-redo" aria-label="Redo layout edit" title="Redo layout edit (Ctrl+Shift+Z)">↷</button></div><span id="ov-workspace-status" class="workspace-status" role="status"></span>`;
+  $(".ov-bar").prepend(toolbar);
+  $("#ov-workspace").addEventListener("change", (event) => {
+    if (event.target.value) workspaceChange(() => switchWorkspace(O.layout, event.target.value));
+  });
+  $("#ov-workspace-manage").addEventListener("click", workspaceSheet);
+  $("#ov-undo").addEventListener("click", () => historyStep("undo"));
+  $("#ov-redo").addEventListener("click", () => historyStep("redo"));
+  document.addEventListener("keydown", (event) => {
+    if (!visible() || $("#sheet").open || !(event.ctrlKey || event.metaKey) || event.altKey || event.target.closest?.("input, textarea, select, [contenteditable]")) return;
+    const key = event.key.toLowerCase();
+    if (key !== "z" && key !== "y") return;
+    event.preventDefault(); historyStep(key === "y" || event.shiftKey ? "redo" : "undo");
+  });
+  renderWorkspaceToolbar();
 }
 
 const tileById = (id) => O.layout.tiles.find((t) => t.id === id);
@@ -133,7 +283,7 @@ function sensorMarkup(t) {
 
 function controlMarkup(t) {
   if (t.type === "lighting") {
-    return `<a class="mini" href="#lighting" title="Open Lighting"><canvas aria-label="Live preview of your lighting"></canvas><span class="mini-empty" hidden>No lighting connected</span></a>
+    return `<a class="mini rig-portrait" href="#lighting" title="Open Lighting"><div class="rig-caption"><span class="rig-eyebrow">Living Rig</span><span class="rig-zone-count"></span></div><canvas aria-label="Live preview of your lighting"></canvas><span class="mini-empty" hidden>No lighting connected</span><span class="rig-open">Open lighting <span aria-hidden="true">↗</span></span></a>
       <footer class="lt-foot"><div class="lt-what"><b class="lt-effect"></b><span class="lt-sub"></span></div>
         <input type="range" class="lt-bri" min="0" max="100" aria-label="Brightness">
         <label class="switch" title="Lights on or off"><input type="checkbox" class="lt-on"><span></span></label></footer>`;
@@ -150,8 +300,9 @@ function controlMarkup(t) {
 
 function mount(t) {
   let el = O.els.get(t.id);
+  if (el && el._type !== t.type) { el.remove(); O.els.delete(t.id); el = null; }
   const sig = t.type === "sensor" ? `${t.style}|${t.sensors.length}` : t.type;
-  if (!el) { el = shell(t); O.els.set(t.id, el); }
+  if (!el) { el = shell(t); el._type = t.type; O.els.set(t.id, el); }
   if (el._sig !== sig) {
     el._sig = sig;
     el.className = `tile tile-${t.type}${t.type === "sensor" ? ` s-${t.style}` : ""}`;
@@ -325,8 +476,9 @@ function updateLighting(el) {
   if (document.activeElement !== bri && Date.now() - (bri._t || 0) > 1500) { bri.value = sc.brightness; rangeFill(bri); }
   on.checked = sc.on;
   el.style.setProperty("--scene", sceneColor(eff));
-  const any = (S.zones?.zones || []).some((z) => z.device.online && z.config.enabled);
-  el.querySelector(".mini-empty").hidden = any;
+  const zones = (S.zones?.zones || []).filter((z) => z.device.online && z.config.enabled && z.positions.length);
+  el.querySelector(".mini-empty").hidden = zones.length > 0;
+  setHTML(el.querySelector(".rig-zone-count"), zones.length ? `${zones.length} zone${zones.length === 1 ? "" : "s"} · ${zones.reduce((n, z) => n + z.positions.length, 0)} LEDs` : "No active zones");
 }
 
 function wireLighting(el) {
@@ -410,7 +562,7 @@ export function renderOverview() {
 
 // Live preview frames arrive ~15 times a second while the Overview is open.
 function paintLightingTiles() {
-  if (!visible()) return;
+  if (!visible() || document.hidden) return;
   for (const t of O.layout?.tiles || []) {
     if (t.type !== "lighting") continue;
     const c = O.els.get(t.id)?.querySelector("canvas");
@@ -420,6 +572,7 @@ function paintLightingTiles() {
 
 // ------------------------------------------------------------ editing: move, resize, keyboard
 function setEditing(on) {
+  if (resetting) return;
   O.editing = on;
   $("#ov-edit").setAttribute("aria-pressed", String(on));
   $("#ov-edit").innerHTML = on ? "Done" : `<svg aria-hidden="true"><use href="#i-move"/></svg>Customize`;
@@ -435,8 +588,16 @@ function cell() {
   return { cw: (w - columnGap * (cols - 1)) / cols, rh: parseFloat(style.gridAutoRows), cols, columnGap, rowGap };
 }
 
+// Pointer coordinates and rectangles include CSS zoom; grid measurements and transforms do not.
+// Measuring the rendered/layout ratio also handles a zoom inherited from any ancestor.
+function viewportScale() {
+  const g = grid();
+  const scale = g.offsetWidth > 0 ? g.getBoundingClientRect().width / g.offsetWidth : 1;
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
 function onPointerDown(e) {
-  if (!O.editing || e.button !== 0) return;
+  if (resetting || !O.editing || e.button !== 0) return;
   const el = e.target.closest(".tile:not(.tile-add)");
   if (!el || e.target.closest("button:not(.pcard), input, a.link")) return;
   const t = tileById(el.dataset.id);
@@ -461,12 +622,13 @@ function naturalRect(el) {
 function onPointerMove(e) {
   const d = O.drag;
   if (!d) return;
+  const scale = viewportScale();
   if (d.mode === "resize") {
     const { cw, rh, cols, columnGap, rowGap } = cell();
-    const visibleW = clamp(Math.round(d.w0 + (e.clientX - d.x0) / (cw + columnGap)), 1, cols);
+    const visibleW = clamp(Math.round(d.w0 + (e.clientX - d.x0) / ((cw + columnGap) * scale)), 1, cols);
     // A narrower viewport only clamps presentation; vertical resizing must keep the desktop span.
     const w = visibleW === d.w0 ? d.savedW0 : visibleW;
-    const h = clamp(Math.round(d.h0 + (e.clientY - d.y0) / (rh + rowGap)), 1, 3);
+    const h = clamp(Math.round(d.h0 + (e.clientY - d.y0) / ((rh + rowGap) * scale)), 1, 3);
     if (w !== d.t.w || h !== d.t.h) {
       flip(grid(), () => { d.t.w = w; d.t.h = h; sizeTile(d.el, d.t); });
       update(d.el, d.t);
@@ -479,7 +641,7 @@ function onPointerMove(e) {
     d.started = true;
     d.el.classList.add("dragging");
   }
-  d.el.style.transform = `translate(${e.clientX - d.ox - d.natural.left}px, ${e.clientY - d.oy - d.natural.top}px)`;
+  d.el.style.transform = `translate(${(e.clientX - d.ox - d.natural.left) / scale}px, ${(e.clientY - d.oy - d.natural.top) / scale}px)`;
   // which tile is under the pointer?
   const over = $$(".tile:not(.tile-add)", grid()).find((x) => {
     if (x === d.el) return false;
@@ -496,7 +658,7 @@ function onPointerMove(e) {
     grid().insertBefore(d.el, from < to ? over.nextSibling : over);
   }, { skip: d.el, duration: 300 });
   d.natural = naturalRect(d.el);
-  d.el.style.transform = `translate(${e.clientX - d.ox - d.natural.left}px, ${e.clientY - d.oy - d.natural.top}px)`;
+  d.el.style.transform = `translate(${(e.clientX - d.ox - d.natural.left) / scale}px, ${(e.clientY - d.oy - d.natural.top) / scale}px)`;
   d.changed = true;
 }
 
@@ -515,7 +677,7 @@ function onPointerUp() {
 }
 
 function onKey(e) {
-  if (!O.editing) return;
+  if (resetting || !O.editing) return;
   const el = e.target.closest?.(".tile:not(.tile-add)");
   if (!el || e.target !== el) return;
   const t = tileById(el.dataset.id), tiles = O.layout.tiles, i = tiles.indexOf(t);
@@ -537,29 +699,31 @@ function onKey(e) {
 }
 
 function removeTile(id) {
+  if (resetting) return;
   const t = tileById(id);
   if (!t) return;
-  const index = O.layout.tiles.indexOf(t);
   const label = t.label || (t.type === "sensor" ? sensorName(t.sensors[0]) : CONTROL[t.type].name);
   flip(grid(), () => { O.layout.tiles = O.layout.tiles.filter((x) => x.id !== id); renderOverview(); });
   save();
+  const removalRevision = saveRevision;
   toast(`${label} removed`, {
     action: {
       label: "Undo",
       onClick: () => {
-        O.layout.tiles.splice(Math.min(index, O.layout.tiles.length), 0, t);
-        if (t.sensors) ensureHistory(t.sensors).catch(() => {});
-        flip(grid(), () => renderOverview());
-        save();
+        if (saveRevision === removalRevision) historyStep("undo");
+        else toast("Use layout Undo to step back through your recent edits.");
       },
     },
   });
 }
 
 async function addTile(tile) {
+  if (resetting) return;
+  const workspace = O.layout.active_workspace, layout = O.layout;
   if (tile.type === "sensor") {
     await ensureHistory(tile.sensors).catch(() => {});
   }
+  if (resetting || O.layout !== layout || O.layout.active_workspace !== workspace) return;
   flip(grid(), () => { O.layout.tiles.push(tile); renderOverview(); });
   save();
   const el = O.els.get(tile.id);
@@ -641,6 +805,7 @@ const STYLE_ICONS = {
 };
 
 function tileSheet(id, mode = "main", slot = 0) {
+  if (resetting) return;
   const t = tileById(id);
   if (!t) return;
   if (mode === "pick") {
@@ -648,9 +813,11 @@ function tileSheet(id, mode = "main", slot = 0) {
       <div class="actions"><button type="button" class="btn quiet" id="pk-back">Back</button><span class="spacer"></span></div></div>`);
     $("#pk-back").addEventListener("click", () => tileSheet(id));
     wirePicker(async (sid) => {
+      const workspace = O.layout.active_workspace;
       t.sensors[slot] = sid;
+      renderOverview(); save();
       await ensureHistory([sid]).catch(() => {});
-      renderOverview(); save(); tileSheet(id);
+      if (O.layout.active_workspace === workspace && tileById(id) === t && $("#sheet").open) tileSheet(id);
     }, t.sensors[slot]);
     return;
   }
@@ -680,8 +847,9 @@ function tileSheet(id, mode = "main", slot = 0) {
   $("#ts-label").addEventListener("input", (e) => {
     const v = e.target.value.trim(), tile = tileById(id) || t;
     if (v) tile.label = v; else delete tile.label;
-    live();
+    renderOverview(); save(`label-${id}`);
   });
+  $("#ts-label").addEventListener("blur", () => O.history?.endGroup());
   $("#ts-pin").addEventListener("change", (e) => {
     const list = O.layout.pins, sid = t.sensors[0];
     O.layout.pins = e.target.checked ? [...list, sid].slice(0, 4) : list.filter((p) => p !== sid);
@@ -693,8 +861,12 @@ function tileSheet(id, mode = "main", slot = 0) {
 
 // ------------------------------------------------------------ init
 export async function initOverview(layout) {
+  savedLayout = JSON.stringify(layout);
+  initializeWorkspaces(layout);
   O.layout = layout;
+  O.history = createLayoutHistory(layout);
   S.overview = layout;
+  initWorkspaceToolbar();
   const g = grid();
   g.addEventListener("pointerdown", onPointerDown);
   g.addEventListener("pointermove", onPointerMove);
@@ -736,7 +908,7 @@ export async function initOverview(layout) {
   $("#ov-edit").addEventListener("click", () => setEditing(!O.editing));
   $("#ov-addtile").addEventListener("click", addTileSheet);
   $("#ov-reset").addEventListener("click", async () => {
-    if (!confirm("Put the Overview back to how it was at first? Your tiles and pins will be replaced.")) return;
+    if (!confirm("Reset this workspace's tiles and pins to the default? Other workspaces stay saved, and layout Undo can restore this one.")) return;
     try {
       const l = await resetOverview();
       if (!l) return;
@@ -747,6 +919,12 @@ export async function initOverview(layout) {
   });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && O.editing && !$("#sheet").open) setEditing(false); });
   on("state", () => { if (visible()) renderOverview(); });
+  on("zones", () => { if (visible()) { renderOverview(); paintLightingTiles(); } });
+  document.addEventListener("appearancechange", () => {
+    measureRev++;
+    if (visible() && !document.hidden) { renderOverview(); paintLightingTiles(); }
+  });
+  new MutationObserver(() => paintLightingTiles()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-rig"] });
   await ensureHistory([...new Set(layout.tiles.flatMap((t) => t.sensors || []))]).catch(() => {});
   renderOverview();
 }

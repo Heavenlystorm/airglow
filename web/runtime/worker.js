@@ -57,13 +57,15 @@ function rigOf(points) {
 }
 
 function setPoints(list) {
-  // list: [[px, py, area, local, fan, zone], ...] in canvas pixels
+  // list: [[px, py, area, local, fan, zone, paintPosition?], ...] in canvas pixels
   R.n = list.length;
-  R.points = list.map(([px, py, area, local, fan, zone], index) => ({
+  R.points = list.map(([px, py, area, local, fan, zone, paintPosition], index) => ({
     x: px / W, y: py / H, px, py, area: area || null, index,
     local: typeof local === "number" ? local : px / W,
     fan: typeof fan === "number" ? fan : 0,
     zone: zone || area || null,
+    paintPosition: Array.isArray(paintPosition) && paintPosition.length === 2
+      && paintPosition.every(n => Number.isInteger(n) && Math.abs(n) <= 100000) ? paintPosition : null,
   }));
   R.rig = rigOf(R.points);
   if (R.ctx) R.ctx.rig = R.rig;

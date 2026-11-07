@@ -11,6 +11,7 @@ import { countTo, enter, moveMarker } from "./motion.js";
 import { initShortcuts } from "./help.js";
 import { startLive, sync as syncLive } from "./live.js";
 import { applyDesign } from "./design.js";
+import { applyAppearance } from "./appearance.js";
 
 const TABS = ["overview", "lighting", "studio", "fans", "automations", "devices", "settings"];
 const views = {};                 // loaded on first use: Overview should not wait for Studio, Fans, Settings or Devices
@@ -103,7 +104,11 @@ $("#mutation-status")?.addEventListener("click", async (e) => {
     const result = await request;
     if (result === false) return;
     if (mutationStates().find((s) => s.key === key)?.id !== retryId) return;
-    if (state.path === "/api/settings") S.settings = result;
+    if (state.path === "/api/settings") {
+      S.settings = result;
+      applyDesign(result.settings?.design);
+      applyAppearance(result.settings?.appearance);
+    }
     else if (state.path.startsWith("/api/curves/")) S.curves.curves[state.path.split("/")[3]] = result.points;
     else if (state.path.startsWith("/api/presets")) S.presets = Array.isArray(result) ? result : result.presets;
     else if (state.path === "/api/automations") S.rules = result;
@@ -117,6 +122,7 @@ $("#mutation-status")?.addEventListener("click", async (e) => {
 });
 
 window.addEventListener("resize", () => moveMarker($(".tab-ink"), $(".tabs a[aria-current]"), true));
+document.addEventListener("appearancechange", () => moveMarker($(".tab-ink"), $(".tabs a[aria-current]"), true));
 
 // Ctrl+1..7 switch tabs
 document.addEventListener("keydown", (e) => {
@@ -342,6 +348,7 @@ async function boot() {
     ]);
     Object.assign(S, { state, effects, presets, curves, settings, rules, zones, overview });
     applyDesign(S.settings?.settings?.design);
+    applyAppearance(S.settings?.settings?.appearance);
     S.history = history.filter((p) => p.t > Date.now() / 1000 - HISTORY_SECONDS);
     deviceKey = JSON.stringify([state.zones_rev, state.devices.map((d) => [d.id, d.online, d.zones.length])]);
     lastStateAt = Date.now();        // boot's own state counts: the watchdog must not fire before the stream speaks

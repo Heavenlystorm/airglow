@@ -19,6 +19,10 @@ SUITES = {
     "visual": ["node", "tools/test-visual.mjs"],
     "responsive": ["node", "--test", "tools/test-responsive-overview.mjs"],
     "roadmap": ["node", "--test", "tools/test-roadmap.mjs"],
+    "personalization": ["node", "--test", "tools/test-personalization-browser.mjs"],
+    "rig3d": ["node", "--test", "tools/test-rig-3d-browser.mjs"],
+    "creative": ["node", "--test", "tools/test-creative-browser.mjs"],
+    "blend-renderer": ["node", "tools/test-blend-renderer.mjs"],
 }
 
 
@@ -43,7 +47,9 @@ def main():
     # Browser imports need the caller's Playwright install, not the fixture's empty APPDATA.
     check_env = os.environ.copy()
     check_env.update(AIRGLOW_VISUAL_OUTPUT=str(output / "screenshots"), AIRGLOW_ROADMAP_OUTPUT=str(output / "roadmap"),
-                     AIRGLOW_RESPONSIVE_OUTPUT=str(output / "responsive"), AIRGLOW_TELEMETRY_OUTPUT=str(output / "telemetry"))
+                     AIRGLOW_RESPONSIVE_OUTPUT=str(output / "responsive"), AIRGLOW_TELEMETRY_OUTPUT=str(output / "telemetry"),
+                     AIRGLOW_PERSONALIZATION_OUTPUT=str(output / "personalization"),
+                     AIRGLOW_RIG3D_OUTPUT=str(output / "rig-3d"), AIRGLOW_CREATIVE_OUTPUT=str(output / "creative"))
     result = {"fixture": str(fixture), "checks": {}}
     with (output / "fixture.log").open("w", encoding="utf-8") as log:
         server = subprocess.Popen([sys.executable, "-u", "tools/dev_server.py", "--demo"], cwd=ROOT, env=env,

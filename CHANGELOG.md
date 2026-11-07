@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.14.0
+- Explore your configured lighting layout in an interactive 3D view, with orbit, pan, zoom, keyboard controls and
+  adjustable presentation depth. The existing 2D arrangement and physical lighting positions remain available.
+- Paint and erase LED masks directly in Studio, with brush controls, numeric selection and gesture undo. Masks
+  stay with saved effects and follow LED positions; painting starts in screen preview.
+- Blend two saved effects into a new portable effect. Preview the mix, swap A and B, adjust the blend numerically,
+  and save snapshots of both originals without activating your lights automatically.
+- Customize the interface accent, density, size, rig framing and motion. Save personal looks and import or export
+  appearance recipes while retaining all twelve interface designs.
+- Keep named Overview workspaces, create lighting or monitoring layouts, import/export arrangements and undo layout
+  edits. Living Rig frames use configured geometry and incoming lighting colors.
+- Studio adds named variations, parameter Hold controls, A/B recall and blending, plus keyboard-accessible scene
+  previews. Reduced motion and hidden-window rendering limits apply throughout the new tools.
+
 ## 1.13.1
 - Fan thermal protection includes the GPU hotspot. Sensor reads have a total deadline, and fan control rejects
   stale temperatures. Shutdown fan commands have a bounded time budget while retaining channels for release.

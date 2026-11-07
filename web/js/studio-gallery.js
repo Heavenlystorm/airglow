@@ -3,18 +3,27 @@ import { $, $$, S, emit, esc, fail, get, post, setHTML, toast } from "./core.js"
 import { closeSheet, openSheet } from "./sheet.js";
 const LICENSES = ["MIT", "Apache-2.0", "BSD-3-Clause", "MPL-2.0", "GPL-3.0-or-later"];
 export function createStudioGallery({ H, E, box, remember, save, queueStills, addStill, effectRunnable }) {
-let sheetGallery = null;
+let sheetGallery = null, generation = 0;
+const isOpen = () => H.view === "community" && !!box() && !box().closest(".view")?.hidden;
+function deactivate() {
+  generation++;
+  H.io?.disconnect(); H.io = null;
+  clearTimeout(H.t);
+}
 async function renderCommunity() {
+  deactivate();
+  const requestGeneration = generation;
   setHTML(box(), `<div class="st-home"><div class="page-head"><div><h1>Community effects</h1>
-    <p class="lede">Effects people made in the Studio and shared. Point at one to see it on your own case.</p></div>
+    <p class="lede">Scenes made in Studio. Preview a scene on your rig, then make it your own.</p></div>
     <div class="btn-row"><button class="btn" data-st="learn">Learn</button><a class="btn" href="#studio">Back to the Studio</a></div></div>
     <p class="hint">Loading the gallery from GitHub…</p></div>`);
   try {
-    H.gallery = await get("/api/studio/gallery");
-    if (H.view !== "community") return;
+    const result = await get("/api/studio/gallery");
+    if (requestGeneration !== generation || !isOpen()) return;
+    H.gallery = result;
     for (const r of H.gallery.revoked_now || []) toast(`${r.name} was taken down from the gallery and is off now${r.reason ? `: ${r.reason}` : ""}.`, true);
   } catch (e) {
-    if (H.view !== "community") return;
+    if (requestGeneration !== generation || !isOpen()) return;
     setHTML(box(), `<div class="st-home"><div class="page-head"><div><h1>Community effects</h1>
       <p class="lede">The gallery didn't load: ${esc(e.message)}</p></div><div class="btn-row"><a class="btn" href="#studio">Back</a>
       <button class="btn primary" data-st="community-retry">Try again</button></div></div></div>`);
@@ -24,13 +33,14 @@ async function renderCommunity() {
 }
 
 function paintCommunity() {
+  if (!isOpen()) return;
   const g = H.gallery;
   const q = H.search.toLowerCase();
   const tags = [...new Set(g.effects.flatMap((e) => e.tags))].sort();
   const items = g.effects.filter((e) => (!H.tag || (H.tag === "music" ? e.audio : e.tags.includes(H.tag)))
     && (!q || `${e.name} ${e.author} ${e.description} ${e.tags.join(" ")}`.toLowerCase().includes(q)));
   setHTML(box(), `<div class="st-home"><div class="page-head"><div><h1>Community effects</h1>
-    <p class="lede">${g.effects.length} effects people made in the Studio and shared. Point at one to see it on your own case.</p></div>
+    <p class="lede">${g.effects.length} shared scenes. Hover, focus or press Play preview to see one on your rig.</p></div>
     <div class="btn-row"><button class="btn" data-st="learn">Learn</button><a class="btn" href="#studio">Back to the Studio</a></div></div>
     <div class="st-filter"><input class="text" id="st-search" placeholder="Search names, authors, tags" value="${esc(H.search)}" spellcheck="false">
       <div class="chips"><button class="chip-btn" data-tag="" aria-pressed="${!H.tag}">All</button><button class="chip-btn" data-tag="music" aria-pressed="${H.tag === "music"}">Music</button>
@@ -38,7 +48,7 @@ function paintCommunity() {
     ${items.length ? `<div class="st-grid">${items.map((e) => `<div class="st-card" data-card="${esc(e.id)}"><canvas class="st-live" aria-hidden="true"></canvas>
       <div class="st-cap"><strong>${esc(e.name)}${e.featured ? ` <span class="tag new">Featured</span>` : ""}</strong><span>by ${esc(e.author)}${e.audio ? ` <i class="st-badge">Music</i>` : ""}</span>
       ${e.description ? `<p class="st-desc">${esc(e.description)}</p>` : ""}</div>
-      <div class="st-acts">${e.installed && !e.update ? `<button class="btn" disabled>Installed</button>` : `<button class="btn primary" data-install="${esc(e.id)}">${e.update ? "Update" : "Install"}</button>`}
+      <div class="st-acts"><button class="btn quiet st-scene-play" data-preview="${esc(e.id)}" aria-pressed="false" aria-label="Play preview of ${esc(e.name)}">Play preview</button>${e.installed && !e.update ? `<button class="btn" disabled>Installed</button>` : `<button class="btn primary" data-install="${esc(e.id)}">${e.update ? "Update" : "Install"}</button>`}
         <button class="btn" data-gremix="${esc(e.id)}">Remix</button>
         <button class="btn quiet" data-gdet="${esc(e.id)}">How it's made</button></div></div>`).join("")}</div>`
       : `<p class="hint">${g.effects.length ? "Nothing matches." : "No shared effects yet. Make one and press Share: yours could be the first."}</p>`}
@@ -58,11 +68,13 @@ function paintCommunity() {
   H.io?.disconnect();                 // every repaint (a search keystroke) used to leave an observer watching old cards
   const io = (H.io = new IntersectionObserver(async (entries) => {
     for (const en of entries) {
+      if (!isOpen() || H.io !== io) return;
       if (!en.isIntersecting) continue;
       io.unobserve(en.target);
       const id = en.target.dataset.card;
       try {
         const { effect } = await get(`/api/studio/gallery/effect?id=${encodeURIComponent(id)}`);
+        if (!isOpen() || H.io !== io || !en.target.isConnected) continue;
         addStill({ key: id, eff: effectRunnable(effect) });
       } catch { /* the card stays dark */ }
     }
@@ -128,5 +140,5 @@ async function galleryDetail(id) {
 }
 
 
-return { renderCommunity, paintCommunity, shareIt, galleryDetail, getSheetEffect: () => sheetGallery };
+return { renderCommunity, paintCommunity, shareIt, galleryDetail, deactivate, getSheetEffect: () => sheetGallery };
 }

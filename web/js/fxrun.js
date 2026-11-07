@@ -30,7 +30,8 @@ export function ledPoints(zones) {
     for (let i = 0; i < z.positions.length; i++) {
       const [x, y] = z.positions[i];
       points.push([x * UNIT, y * UNIT, z.spot || null, local[i], fans[i],
-        (z.zone && z.zone.name) || z.name || z.key]);
+        (z.zone && z.zone.name) || z.name || z.key,
+        [Math.round(x / 1.6 * 10000), Math.round(y * 10000)]]);
     }
   }
   return { points, slices };
