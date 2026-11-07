@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.15.0
+- Overview becomes a Lighting Canvas with closely framed 2D and interactive 3D rig views. Select a zone to open
+  its Lighting controls, with brightness and power still directly accessible on the tile.
+- New Instrument tiles give temperatures, memory, load, power and network readings distinct displays. Larger
+  tiles reveal history, statistics and comparisons; missing readings remain unavailable and history retains gaps.
+- Profiles show saved lighting colors and pattern artwork. Enlarged fan tiles show the active curve and requested
+  operating point alongside reported channel duty and measured RPM.
+- Create optional Showcase, Monitoring and Balanced workspaces. Customize any tile's accent and emphasis, with
+  snap guides, keyboard editing, layout undo/redo and portable workspace settings.
+- Darkroom's reading surfaces are calmer while the lighting frame retains its texture. Existing saved layouts,
+  explicit tile styles, all twelve themes and real lighting colors are preserved.
+- Known existing issue: narrow windows at 120% interface scale can leave a blank strip at the bottom. This release
+  does not change the global appearance sizing behavior.
+
 ## 1.14.0
 - Explore your configured lighting layout in an interactive 3D view, with orbit, pan, zoom, keyboard controls and
   adjustable presentation depth. The existing 2D arrangement and physical lighting positions remain available.
