@@ -14,10 +14,15 @@ def _points(raw):
     if not isinstance(raw, list) or len(raw) > 4096:
         raise ValueError("preview needs at most 4096 LED positions")
     for point in raw:
-        if not isinstance(point, list) or not 2 <= len(point) <= 6:
+        if not isinstance(point, list) or not 2 <= len(point) <= 7:
             raise ValueError("invalid preview LED position")
         if any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in point[:2]):
             raise ValueError("preview LED positions must be finite numbers")
+        if len(point) == 7:
+            pair = point[6]
+            if (not isinstance(pair, list) or len(pair) != 2
+                    or any(type(n) is not int or not -100000 <= n <= 100000 for n in pair)):
+                raise ValueError("invalid painted LED position")
     return raw
 
 

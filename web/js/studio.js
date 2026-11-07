@@ -16,6 +16,10 @@ import { MASTER, uid, newDoc, normalizeDoc, snapDoc as snapshotDocument, createH
 import { createLivePreview } from "./studio-preview.js";
 import { createStudioGallery } from "./studio-gallery.js";
 import { scenePackExport, scenePackImport, packHistoryHTML } from "./studio-packs.js";
+import { VARIATION_LIMIT, documentKey, captureVariation, restoreVariation, interpolateVariation,
+  varyMaster, addVariation, createVariationStore, canPlayScene } from "./studio-variations.js";
+import { PAINT_LIMIT, paintPoints, cleanPaint, invertMask, setLedMask, bindPaintCanvas, drawPaintOverlay } from "./studio-paint.js";
+import { openBlend, closeBlend } from "./studio-blend.js";
 
 const AREAS = { all: "Whole case", front: "Front", top: "Top", rear: "Rear", bottom: "Bottom", side: "Side panel",
   cooler: "CPU cooler", ram: "Memory", board: "Motherboard", gpu: "Graphics card", desk: "Desk" };
@@ -43,6 +47,11 @@ const draftStore = createDraftStorage({
   getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value),
   removeItem: key => localStorage.removeItem(key),
 });
+const variationStore = createVariationStore({
+  getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value),
+});
+let V = null; // Editor-local A/B captures; the named tray and locks are stored separately from effect files.
+const P = { enabled: false, erase: false, radius: 24, selected: 0, cursor: null, map: null, binding: null, gesture: null };
 const LIVE = createLivePreview({ post, onChange: state => {
   E.lights = state.wanted;
   const cb = $("#st-lights"); if (cb) { cb.checked = state.wanted; cb.disabled = state.pending; }
@@ -112,6 +121,199 @@ function palettesHTML() {
     ${palettes.length ? `<ul class="st-palettes">${palettes.map((p, i) => `<li><button class="btn quiet st-palette" data-palette="${i}" title="Use ${esc(p.name)}"><span class="st-palette-colors" aria-hidden="true">${p.colors.map(c => `<i style="background:${c}"></i>`).join("")}</span><span>${esc(p.name)}</span></button><button class="icon-btn" data-palette-delete="${i}" aria-label="Delete palette ${esc(p.name)}"><svg><use href="#i-trash"/></svg></button></li>`).join("")}</ul>` : '<p class="hint">Save two to four colours from the effect palette to reuse in another effect.</p>'}</details>`;
 }
 
+// Master-only variations remain outside the effect format. Recalling is a normal undoable edit.
+function persistVariations() {
+  if (!V) return;
+  V.error = !variationStore.write(V.key, V);
+  if (E.doc?.dirty) saveDraftNow(); // keeps the unsaved document's local identity through recovery
+}
+
+// Paint edits stay local until an explicit Save / Use / Live preview action, including after draft recovery.
+const paintLayer = () => E.doc?.mode === "layers" && typeof E.sel === "number" ? E.doc.layers[E.sel] : null;
+const currentPaintPoints = () => paintPoints(rigZones(), paintLayer()?.mask);
+function beginPaintEdit() {
+  finishVariationGesture();
+  P.gesture = { dirty: E.doc.dirty, pending: !!E.doc.paintPending };
+  E.doc.paintPending = true; clearTimeout(E.auto); E.auto = 0; HIST.at = -Infinity;
+}
+function finishPaintEdit() {
+  if (!P.gesture || !E.doc) return;
+  P.gesture = null; histPush(); HIST.at = -Infinity; saveDraftNow(); paintPaintStatus();
+}
+function cancelPaintEdit() {
+  if (!P.gesture || !E.doc) return;
+  const before = P.gesture; P.gesture = null;
+  E.doc.dirty = before.dirty; E.doc.paintPending = before.pending;
+  pushLayers(); E.painted = -1; setSavedLabel(); saveDraftNow(); refreshLayerRow(); paintPaintStatus();
+}
+function changedPaint() {
+  changed(true, { hist: false, auto: false }); E.painted = -1; refreshLayerRow(); paintPaintStatus();
+}
+function stopPainting() {
+  P.binding?.finish(); P.enabled = false; P.cursor = null; E.painted = -1;
+  $("#st-canvas")?.classList.remove("is-painting");
+  $("[data-paint=toggle]")?.setAttribute("aria-pressed", "false");
+  paintPaintStatus();
+}
+async function startPainting() {
+  if (!paintLayer()) return false;
+  const doc = E.doc, layer = paintLayer();
+  if (LIVE.state.wanted || LIVE.state.confirmed || LIVE.state.pending) await setLights(false);
+  if (E.doc !== doc || paintLayer() !== layer) return false;
+  if (LIVE.state.error || LIVE.state.confirmed) { toast("Stop live preview before painting.", true); return false; }
+  P.enabled = true; E.painted = -1;
+  $("#st-canvas")?.classList.add("is-painting");
+  $("[data-paint=toggle]")?.setAttribute("aria-pressed", "true");
+  paintPaintStatus(); return true;
+}
+function paintControlsHTML() {
+  return `<section class="st-paint" aria-label="Paint layer LEDs"><div class="st-paint-head"><h3>Paint LEDs</h3><button class="btn" data-paint="toggle" aria-pressed="${P.enabled}">Paint on preview</button></div>
+    <div class="st-paint-tools" role="group" aria-label="Paint tool"><button class="btn quiet" data-paint="brush" aria-pressed="${!P.erase}">Brush</button><button class="btn quiet" data-paint="erase" aria-pressed="${P.erase}">Erase</button></div>
+    <label class="lab" for="st-paint-radius">Brush radius</label><div class="st-paint-radius"><input id="st-paint-radius" type="range" min="4" max="80" step="1" value="${P.radius}"><input class="text" id="st-paint-radius-number" type="number" min="4" max="80" step="1" value="${P.radius}" aria-label="Brush radius in screen pixels"><span>px</span></div>
+    <div class="btn-row"><button class="btn quiet" data-paint="clear">Clear</button><button class="btn quiet" data-paint="invert">Invert</button><button class="btn quiet" data-paint="remove">Remove mask</button></div>
+    <details data-details="paint-numeric"><summary>Choose LEDs by number</summary><label class="lab" for="st-paint-led">LED number</label><div class="st-paint-led"><input class="text" id="st-paint-led" type="number" min="1" max="${currentPaintPoints().length}" step="1" value="${P.selected + 1}"><button class="btn quiet" data-paint="add-led">Add LED</button><button class="btn quiet" data-paint="remove-led">Remove LED</button></div><p class="hint" id="st-paint-led-label"></p></details>
+    <p class="hint" id="st-paint-status" role="status"></p><p class="hint">Paint follows LED positions; moved LEDs need repainting. LEDs at the same position share selection. The Where area still applies.</p>
+    <p class="hint">Drag once for one undo step. On the preview, arrow keys choose an LED and Space paints or erases it. Escape cancels a stroke.</p></section>`;
+}
+function paintPaintStatus() {
+  const layer = paintLayer(), status = $("#st-paint-status");
+  if (!layer || !status) return;
+  const points = currentPaintPoints(); P.selected = Math.max(0, Math.min(P.selected, points.length - 1));
+  let selected = null;
+  try { selected = layer.paint ? new Set(cleanPaint(layer.paint).points.map(p => p.join(","))) : null; } catch { selected = new Set(); }
+  const count = points.filter(p => p.eligible && (!selected || selected.has(p.pair.join(",")))).length;
+  const bytes = new TextEncoder().encode(JSON.stringify(E.doc.layers.map(l => l.paint || null))).length;
+  const active = E.doc.fx_id && S.state?.effective?.effect === E.doc.fx_id;
+  status.textContent = `${count} LEDs selected. ${layer.paint ? `${layer.paint.points?.length || 0}/${PAINT_LIMIT} positions; ${(bytes / 1000).toFixed(1)} KB mask data. ` : "No painted mask yet. "}Effect files have a 32 KB limit. ${E.doc.paintPending ? active ? "Preview only. Save updates this currently applied effect; Use applies it explicitly." : "Preview only. Save keeps this mask; Use applies it to your lights." : P.enabled ? "Painting is ready. Brush begins an empty mask; Erase begins with all LEDs." : "Enable painting or choose an LED number."}`;
+  const label = $("#st-paint-led-label"), point = points[P.selected];
+  if (label) label.textContent = point ? `${point.label}${point.eligible ? "" : " — outside this layer's area"}` : "No LEDs available";
+  const number = $("#st-paint-led"); if (number && document.activeElement !== number) number.value = String(P.selected + 1);
+}
+async function paintAction(action) {
+  if (!paintLayer()) return;
+  if (action === "toggle") { if (P.enabled) stopPainting(); else await startPainting(); return; }
+  if (action === "brush" || action === "erase") {
+    P.binding?.finish(); P.erase = action === "erase";
+    for (const tool of ["brush", "erase"]) $(`[data-paint=${tool}]`)?.setAttribute("aria-pressed", String((tool === "erase") === P.erase));
+    E.painted = -1; return;
+  }
+  if (!await startPainting()) return;
+  P.binding?.finish(); const layer = paintLayer(), points = currentPaintPoints();
+  try {
+    const next = action === "clear" ? { v: 1, points: [] } : action === "invert" ? invertMask(layer.paint, points)
+      : action === "remove" ? undefined : setLedMask(layer.paint, points, P.selected, action === "remove-led");
+    if (JSON.stringify(next) === JSON.stringify(layer.paint)) return;
+    beginPaintEdit(); if (next === undefined) delete layer.paint; else layer.paint = next;
+    changedPaint(); finishPaintEdit();
+  } catch (error) { fail(error); }
+}
+function wirePaintControls() {
+  for (const id of ["st-paint-radius", "st-paint-radius-number"]) {
+    const input = $("#" + id); if (!input) continue;
+    input.addEventListener("input", e => {
+      if (!Number.isFinite(e.target.valueAsNumber)) return;
+      P.radius = Math.round(Math.max(4, Math.min(80, e.target.valueAsNumber)));
+      for (const other of ["st-paint-radius", "st-paint-radius-number"]) if (other !== id) $("#" + other).value = String(P.radius);
+      E.painted = -1;
+    });
+    for (const event of ["change", "blur"]) input.addEventListener(event, () => { input.value = String(P.radius); });
+  }
+  const number = $("#st-paint-led");
+  number?.addEventListener("input", e => {
+    if (!Number.isFinite(e.target.valueAsNumber)) return;
+    P.selected = Math.round(Math.max(0, Math.min(currentPaintPoints().length - 1, e.target.valueAsNumber - 1)));
+    E.painted = -1; paintPaintStatus();
+  });
+  for (const event of ["change", "blur"]) number?.addEventListener(event, () => { number.value = String(P.selected + 1); });
+  paintPaintStatus();
+}
+function wirePaintCanvas() {
+  P.binding?.destroy();
+  const canvas = $("#st-canvas"); if (!canvas) return;
+  P.binding = bindPaintCanvas(canvas, { getLayer: paintLayer, getPoints: currentPaintPoints, getMap: () => P.map, getSettings: () => P,
+    onBegin: beginPaintEdit, onChange: changedPaint, onCommit: finishPaintEdit, onCancel: cancelPaintEdit, onError: fail,
+    onHover: cursor => { if (P.enabled) { P.cursor = cursor; E.painted = -1; } } });
+  canvas.addEventListener("keydown", e => {
+    if (!P.enabled || !paintLayer()) return;
+    if (["ArrowLeft", "ArrowDown", "ArrowRight", "ArrowUp"].includes(e.key)) {
+      e.preventDefault(); e.stopPropagation();
+      P.selected = Math.max(0, Math.min(currentPaintPoints().length - 1, P.selected + (["ArrowLeft", "ArrowDown"].includes(e.key) ? -1 : 1)));
+      E.painted = -1; paintPaintStatus();
+    } else if (e.key === " ") { e.preventDefault(); e.stopPropagation(); paintAction(P.erase ? "remove-led" : "add-led"); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); P.binding?.cancel(); stopPainting(); }
+  });
+}
+
+function paintInstrument() {
+  const root = $("#st-instrument");
+  if (!root || !V || E.doc?.mode !== "layers") return;
+  const restoreFocus = preserveEditorFocus();
+  const compatible = !!interpolateVariation(E.doc, V.a, V.b, .5, V.locks);
+  const colors = master => `<span class="st-variation-colors" aria-hidden="true">${master.palette.map(c => `<i style="background:${c}"></i>`).join("")}</span>`;
+  root.innerHTML = `<section class="st-instrument" aria-label="Effect variations">
+    <div class="st-instrument-head"><div><h2>Variations <span>${V.variations.length}/${VARIATION_LIMIT}</span></h2><p>Keep a mood. Try another.</p></div>
+      <button class="btn" data-var="vary"${Object.values(V.locks).every(Boolean) ? " disabled" : ""}>Vary unlocked</button></div>
+    <div class="st-capture"><input class="text" id="st-variation-name" aria-label="Variation name" maxlength="32" placeholder="Name this variation" value="${esc(V.name || "")}"><button class="btn" data-var="capture"${V.variations.length >= VARIATION_LIMIT ? " disabled" : ""}>Capture</button></div>
+    ${V.variations.length ? `<ul class="st-variation-tray">${V.variations.map(v => `<li><button class="st-variation-recall" data-vrestore="${v.id}" title="Restore all four master controls">${colors(v.master)}<strong>${esc(v.name)}</strong><span>${v.master.speed}% speed · ${v.master.brightness}% brightness</span></button><button class="icon-btn" data-vdelete="${v.id}" aria-label="Delete variation ${esc(v.name)}"><svg><use href="#i-trash"/></svg></button></li>`).join("")}</ul>` : '<p class="st-instrument-note">Capture your starting point, then hold any macros you want to keep.</p>'}
+    <details class="st-ab" data-details="comparison"><summary>Compare A / B</summary><div class="st-ab-captures">${["a", "b"].map(slot => `<div><button class="btn" data-vcapture="${slot}">Capture ${slot.toUpperCase()}</button><button class="btn quiet" data-vrecall="${slot}"${V[slot] ? "" : " disabled"}>Recall ${slot.toUpperCase()}</button>${V[slot] ? colors(V[slot].master) : '<span class="st-instrument-note">Not captured</span>'}</div>`).join("")}</div>
+      <label class="st-blend-label" for="st-variation-blend">Blend A to B</label><div class="st-blend"><span>A</span><input type="range" id="st-variation-blend" min="0" max="100" step="1" value="${V.blend}"${compatible ? "" : " disabled"}><span>B</span><input class="text" type="number" id="st-variation-blend-number" aria-label="Blend toward B, percent" min="0" max="100" step="1" value="${V.blend}"${compatible ? "" : " disabled"}><span>%</span></div>
+      <p class="st-instrument-note">${V.a && V.b && !compatible ? "Use the same number of palette colours in A and B to blend." : "Hold keeps a macro steady during Vary and Blend. Recall restores all four. A/B stays in this editing session."}</p></details>
+    <p class="st-instrument-note${V.error ? " st-instrument-error" : ""}" role="status">${V.error ? "Local storage is unavailable. These variations are only kept while this editor is open." : V.variations.length >= VARIATION_LIMIT ? "Tray full. Delete a variation to make room. Variations stay on this PC." : "Variations stay on this PC. Save keeps the current effect."}</p>
+  </section>`;
+  $("#st-variation-name")?.addEventListener("input", e => { V.name = e.target.value; });
+  $("#st-variation-name")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); variationAction("capture"); } });
+  for (const input of [$("#st-variation-blend"), $("#st-variation-blend-number")]) {
+    input.addEventListener("input", () => {
+      if (!input.value.trim() || !Number.isFinite(input.valueAsNumber)) return;
+      const amount = Math.round(Math.max(0, Math.min(100, input.valueAsNumber)));
+      const master = interpolateVariation(E.doc, V.a, V.b, amount / 100, V.locks);
+      if (!master) return;
+      V.blend = amount;
+      if (!V.gesture) { HIST.at = -Infinity; V.gesture = true; }
+      clearTimeout(E.auto);
+      E.doc.master = master;
+      changed(true, { hist: false, auto: false });
+      const slider = $("#st-variation-blend"), number = $("#st-variation-blend-number");
+      if (input !== slider) slider.value = String(amount);
+      if (input !== number) number.value = String(amount);
+      rangeFill(slider);
+      rerenderSides();
+    });
+    const finish = () => { finishVariationGesture(); if (V) input.value = String(V.blend); };
+    input.addEventListener("change", finish);
+    input.addEventListener("blur", finish);
+  }
+  rangeFill($("#st-variation-blend"));
+  restoreFocus();
+}
+
+function finishVariationGesture() {
+  if (!V?.gesture || !E.doc) return;
+  V.gesture = false;
+  histPush(); HIST.at = -Infinity;
+  scheduleSave(); saveDraftNow();
+}
+
+function variationEdit(master) {
+  if (!master || !E.doc) return;
+  finishVariationGesture();
+  E.doc.master = structuredClone(master);
+  HIST.at = -Infinity;
+  changed(true); HIST.at = -Infinity;
+  rerenderSides();
+}
+
+function variationAction(action) {
+  if (!V || E.doc?.mode !== "layers") return;
+  if (action === "vary") variationEdit(varyMaster(E.doc.master, V.locks));
+  if (action === "capture") {
+    if (V.variations.length >= VARIATION_LIMIT) return toast("Delete a variation to make room first.", true);
+    try { V.variations = addVariation(V.variations, V.name, captureVariation(E.doc)); V.name = ""; persistVariations(); }
+    catch (error) { fail(error); return; }
+  }
+  paintInstrument();
+}
+
 // A rerender must keep keyboard position and the details the creator chose to open.
 function preserveEditorFocus() {
   const root = box(), active = document.activeElement;
@@ -167,6 +369,18 @@ export function initStudio() {
   window.addEventListener("resize", () => { E.painted = -1; });      // the preview canvas changed size: repaint it
   on("state", () => { followLights(); if (!box().closest(".view").hidden) paintProblems(); });
   on("zones", () => { if (E.runner) restartRunner(); });
+  document.addEventListener("visibilitychange", () => {
+    refreshSceneMotion();
+    if (!document.hidden && H.view !== "edit") {
+      for (const [key, frame] of STILL.frames) {
+        const canvas = cardCanvas(key);
+        if (canvas) paintRig(canvas, frame.frames, { pad: 18, zones: frame.zones });
+      }
+      pump();
+    }
+  });
+  window.matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", refreshSceneMotion);
+  new MutationObserver(refreshSceneMotion).observe(document.documentElement, { attributes: true, attributeFilter: ["data-motion"] });
 }
 
 export function openStudio(req) {
@@ -177,6 +391,7 @@ export function openStudio(req) {
 
 function onKey(e) {
   if (!E.doc) return;
+  if (e.key === "Escape" && P.enabled) { e.preventDefault(); P.binding?.cancel(); stopPainting(); return; }
   const menu = $("#st-menu");
   if (e.key === "Escape" && menu && !menu.hidden) {
     e.preventDefault(); menu.hidden = true; const add = $('[data-st="add"]'); add?.setAttribute("aria-expanded", "false"); add?.focus(); return;
@@ -228,6 +443,9 @@ export async function renderStudio(arg) {
 }
 
 export function leaveStudio() {
+  closeBlend();
+  H.view = "closed";
+  gallery.deactivate();
   stopStills();
   closeEditor(true);
 }
@@ -441,9 +659,18 @@ function histPush() { if (E.doc && !E.applying) HIST.push(snapDoc(), performance
 
 async function histGo(dir) {
   if (!E.doc) return;
+  P.binding?.finish();
+  finishVariationGesture();
   const stored = HIST.go(dir);
   if (stored === null) return;
   const snap = JSON.parse(stored);
+  // History stores effect content, not the explicit-apply guard. Restoring a mask after Save must
+  // return to preview-only editing instead of quietly replacing a currently applied effect.
+  const masks = doc => JSON.stringify((doc.layers || []).filter(layer => layer.paint).map(layer => [layer.id, layer.paint]));
+  if (masks(E.doc) !== masks(snap)) {
+    E.doc.paintPending = true; clearTimeout(E.auto); E.auto = 0;
+    if (LIVE.state.wanted || LIVE.state.confirmed || LIVE.state.pending) void setLights(false);
+  }
   const fx = E.doc.fx_id;
   E.applying = true;
   Object.assign(E.doc, snap);
@@ -461,6 +688,7 @@ async function histGo(dir) {
     rerenderSides();
     changed(true, { hist: false });
   }
+  paintInstrument();
 }
 
 // ------------------------------------------------------------ home
@@ -469,7 +697,7 @@ function cardHTML(eff, acts) {
   const music = eff.permissions?.includes("audio") ? `<i class="st-badge">Music</i>` : "";
   return `<div class="st-card" data-card="${esc(eff.fx_id || eff.id)}"><canvas class="st-live" aria-hidden="true"></canvas>
     <div class="st-cap"><strong>${esc(eff.name)}</strong><span>${by} ${music}</span></div>
-    <div class="st-acts">${acts}</div></div>`;
+    <div class="st-acts"><button class="btn quiet st-scene-play" data-preview="${esc(eff.fx_id || eff.id)}" aria-pressed="false" aria-label="Play preview of ${esc(eff.name)}">Play preview</button>${acts}</div></div>`;
 }
 
 function renderHome(pickStart) {
@@ -481,15 +709,17 @@ function renderHome(pickStart) {
     <div class="page-head"><div><h1>Studio</h1>
       <p class="lede">Choose a starting effect, edit its palette and layers, then save. Apply it to your lights when you are ready.</p></div>
       <div class="btn-row"><button class="btn" data-st="learn">Learn</button><a class="btn" href="#studio/community">Community effects</a>
-      <button class="btn" data-st="surprise">Surprise me</button><button class="btn primary" data-st="new">New effect</button></div></div>
+      <button class="btn" data-st="blend-effects">Blend saved effects</button><button class="btn" data-st="surprise">Surprise me</button><button class="btn primary" data-st="new">New effect</button></div></div>
     ${draftBanner()}
     ${workflowHTML()}
     ${rig ? "" : `<div class="banner"><span>No lights are set up yet, so previews use a sample case. <a href="#devices">Set up your lights</a> to see your own.</span></div>`}
     <section class="st-sec${pickStart ? " flash" : ""}" id="st-start"><h2 class="st-h">Start from</h2>
-      <div class="st-grid">${LAYER_TEMPLATES.map((t) => `<button class="st-card st-tpl" data-card="${t.id}" data-tpl="${t.id}"><canvas class="st-live" aria-hidden="true"></canvas>
-        <div class="st-cap"><strong>${esc(t.name)}</strong><span>${esc(t.description)}</span></div></button>`).join("")}
-        ${CODE_TEMPLATES.map((t) => `<button class="st-card st-tpl" data-card="code-${t.id}" data-code-tpl="${t.id}"><canvas class="st-live" aria-hidden="true"></canvas>
-        <div class="st-cap"><strong>${esc(t.name)} <i class="st-badge">Code</i></strong><span>${esc(t.description)}</span></div></button>`).join("")}</div></section>
+      <div class="st-grid">${LAYER_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="${t.id}"><canvas class="st-live" aria-hidden="true"></canvas>
+        <div class="st-cap"><strong>${esc(t.name)}</strong><span>${esc(t.description)}</span></div>
+        <div class="st-acts"><button class="btn quiet st-scene-play" data-preview="${t.id}" aria-pressed="false" aria-label="Play preview of ${esc(t.name)}">Play preview</button><button class="btn" data-tpl="${t.id}">Start here</button></div></div>`).join("")}
+        ${CODE_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="code-${t.id}"><canvas class="st-live" aria-hidden="true"></canvas>
+        <div class="st-cap"><strong>${esc(t.name)} <i class="st-badge">Code</i></strong><span>${esc(t.description)}</span></div>
+        <div class="st-acts"><button class="btn quiet st-scene-play" data-preview="code-${t.id}" aria-pressed="false" aria-label="Play preview of ${esc(t.name)}">Play preview</button><button class="btn" data-code-tpl="${t.id}">Start here</button></div></div>`).join("")}</div></section>
     <section class="st-sec"><h2 class="st-h">Your effects</h2>
       ${mine.length ? `<div class="st-grid">${mine.map((e) => cardHTML(e, `
         <button class="btn${using === e.fx_id ? " on" : ""}" data-use="${esc(e.fx_id)}">${using === e.fx_id ? "On your lights" : "Use"}</button>
@@ -532,61 +762,128 @@ function effectRunnable(e) {
 const rigZones = () => (litZones().length ? litZones() : sampleZones());
 
 // ------------------------------------------------------------ live cards: a still for each, live while pointed at
-const STILL = { queue: [], items: [], running: false, live: null, gen: 0 };
+const STILL = { queue: [], items: [], running: false, live: null, cancel: null, gen: 0, cache: new Map(), frames: new Map() };
 
-function stopStills() { STILL.queue = []; STILL.items = []; STILL.gen++; STILL.live?.stop(); STILL.live = null; }
+function stopStills() { stopCard(); STILL.queue = []; STILL.items = []; STILL.frames.clear(); STILL.gen++; STILL.cancel?.(); }
 
 function queueStills(items) { stopStills(); wireHover(); items.forEach(addStill); }
 
-function addStill(item) { STILL.items.push(item); STILL.queue.push(item); pump(); }
+const galleryActive = () => ["home", "community"].includes(H.view) && !!box() && !box().closest(".view")?.hidden;
+
+function addStill(item) { if (!galleryActive()) return; STILL.items.push(item); STILL.queue.push(item); pump(); }
 
 // one effect at a time: start it, take one frame, stop it
 async function pump() {
-  if (STILL.running) return;
+  if (STILL.running || document.hidden || !galleryActive()) return;
   STILL.running = true;
   const gen = STILL.gen;
-  while (STILL.queue.length && gen === STILL.gen) {
+  while (STILL.queue.length && gen === STILL.gen && !document.hidden && galleryActive()) {
     const it = STILL.queue.shift();
     const c = cardCanvas(it.key);
-    if (c) await still(c, it.eff, gen).catch(() => {});
+    if (c) await still(c, it.eff, gen, it.key).catch(() => {});
   }
   STILL.running = false;
   if (STILL.queue.length) pump();
 }
 
 function wireHover() {
-  box().onpointerover = (e) => {
-    const card = e.target.closest("[data-card]");
-    const key = card?.dataset.card;
-    if (STILL.live?.key === key) return;
-    if (!key) {                                   // off the cards but still in the Studio: stop the preview
-      STILL.live?.stop();
-      STILL.live = null;
-      return;
-    }
-    STILL.live?.stop();
-    STILL.live = null;
-    const item = STILL.items.find((i) => i.key === key);
-    if (item) STILL.live = playOn(card.querySelector(".st-live"), item.eff, key);
+  box().onpointerover = e => {
+    if (e.pointerType === "touch" || STILL.live?.pinned || e.target.closest("[data-preview]")) return;
+    playCard(e.target.closest("[data-card]")?.dataset.card);
   };
-  box().onpointerleave = () => { STILL.live?.stop(); STILL.live = null; };
+  box().onpointerleave = () => { if (!STILL.live?.pinned) stopCard(); };
+  // Stable listeners are deduplicated by the DOM on repaints; onfocusin is not a portable handler property.
+  box().addEventListener("focusin", sceneFocused);
+  box().addEventListener("focusout", sceneBlurred);
+  box().onkeydown = e => { if (e.key === "Escape" && STILL.live) { e.preventDefault(); stopCard(); } };
+  refreshSceneMotion();
+}
+
+function sceneFocused(e) {
+  if (!e.target.closest("[data-preview]")) playCard(e.target.closest("[data-card]")?.dataset.card);
+}
+
+function sceneBlurred(e) {
+  if (!STILL.live?.pinned && !e.target.closest("[data-card]")?.contains(e.relatedTarget)) stopCard();
 }
 
 const cardCanvas = (key) => $(`[data-card="${CSS.escape(key)}"] .st-live`, box());
 
-function still(canvas, eff, gen) {
+function sceneMotionAllowed() {
+  return canPlayScene({ hidden: document.hidden || !galleryActive(), reducedSystem: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    motion: document.documentElement.dataset.motion });
+}
+
+function refreshSceneMotion() {
+  const allowed = sceneMotionAllowed();
+  if (!allowed) stopCard();
+  if (document.hidden) STILL.cancel?.();
+  $$("[data-preview]", box()).forEach(button => {
+    button.disabled = !allowed;
+    button.title = allowed ? "Preview on screen; Escape stops playback" : "Still preview follows your reduced-motion preference";
+  });
+}
+
+function stopCard() {
+  if (!STILL.live) return;
+  const { key } = STILL.live;
+  STILL.live.stop(); STILL.live = null;
+  const canvas = cardCanvas(key), frame = STILL.frames.get(key);
+  if (canvas && frame) paintRig(canvas, frame.frames, { pad: 18, zones: frame.zones });
+  const card = canvas?.closest("[data-card]");
+  card?.classList.remove("is-playing");
+  const button = card?.querySelector("[data-preview]");
+  if (button) { button.setAttribute("aria-pressed", "false"); button.textContent = "Play preview"; }
+}
+
+function playCard(key, pinned = false) {
+  if (H.view === "edit" || !sceneMotionAllowed()) return;
+  if (STILL.live?.key === key) {
+    if (pinned) { STILL.live.pinned = true; }
+    return;
+  }
+  stopCard();
+  const item = STILL.items.find(i => i.key === key), canvas = key && cardCanvas(key);
+  if (!item || !canvas) return;
+  STILL.live = { ...playOn(canvas, item.eff, key), pinned };
+  const card = canvas.closest("[data-card]"); card.classList.add("is-playing");
+  const button = card.querySelector("[data-preview]");
+  if (button) { button.setAttribute("aria-pressed", "true"); button.textContent = "Stop preview"; }
+}
+
+function still(canvas, eff, gen, key) {
+  const zones = rigZones(), stamp = JSON.stringify([eff, zones]);
+  const cached = STILL.cache.get(stamp);
+  if (cached) { STILL.frames.set(key, cached); paintRig(canvas, cached.frames, { pad: 18, zones }); return Promise.resolve(); }
   return new Promise((resolve) => {
-    const zones = rigZones();
     const { points, slices } = ledPoints(zones);
-    let done = false;
-    const finish = () => { if (done) return; done = true; runner.destroy(); resolve(); };
+    let done = false, timeout = 0;
+    const finish = () => {
+      if (done) return;
+      done = true; clearTimeout(timeout); runner.destroy();
+      if (STILL.cancel === cancel) STILL.cancel = null;
+      resolve();
+    };
+    const cancel = () => {
+      if (!done && gen === STILL.gen) STILL.queue.unshift({ key, eff });
+      finish();
+    };
     const runner = new PreviewRunner({
-      onReady: () => runner.tick(2.0, 1 / 30, testAudio(2.0)),
-      onFrame: (colors) => { if (gen === STILL.gen) paintRig(canvas, zoneFrames(colors, slices), { pad: 10, zones }); finish(); },
+      onReady: () => { if (document.hidden) cancel(); else runner.tick(2.0, 1 / 30, testAudio(2.0)); },
+      onFrame: (colors) => {
+        if (gen === STILL.gen) {
+          const frame = { frames: zoneFrames(colors, slices), zones };
+          STILL.frames.set(key, frame); STILL.cache.set(stamp, frame);
+          if (STILL.cache.size > 48) STILL.cache.delete(STILL.cache.keys().next().value);
+          if (STILL.live?.key !== key && !document.hidden) paintRig(canvas, frame.frames, { pad: 18, zones });
+        }
+        finish();
+      },
       onStopped: finish, onError: finish,
     });
+    STILL.cancel = cancel;
     runner.load(eff, points);
-    setTimeout(finish, 15000);
+    timeout = setTimeout(finish, 15000);
   });
 }
 
@@ -594,9 +891,12 @@ function playOn(canvas, eff, key) {
   const zones = rigZones();
   const { points, slices } = ledPoints(zones);
   let raf = 0, t0 = performance.now(), last = t0;
-  const runner = new PreviewRunner({ onFrame: (colors) => paintRig(canvas, zoneFrames(colors, slices), { pad: 10, zones }) });
+  const runner = new PreviewRunner({ onFrame: (colors) => { if (sceneMotionAllowed()) paintRig(canvas, zoneFrames(colors, slices), { pad: 18, zones }); } });
   runner.load(eff, points);
-  const loop = (now) => { const t = (now - t0) / 1000 + 2; runner.tick(t, (now - last) / 1000, testAudio(t)); last = now; raf = requestAnimationFrame(loop); };
+  const loop = (now) => {
+    if (!sceneMotionAllowed()) { stopCard(); return; }
+    const t = (now - t0) / 1000 + 2; runner.tick(t, (now - last) / 1000, testAudio(t)); last = now; raf = requestAnimationFrame(loop);
+  };
   raf = requestAnimationFrame(loop);
   return { key, stop: () => { cancelAnimationFrame(raf); runner.destroy(); } };
 }
@@ -604,11 +904,13 @@ function playOn(canvas, eff, key) {
 // ------------------------------------------------------------ community
 // ------------------------------------------------------------ the editor
 async function openEditor(doc) {
+  stopPainting(); P.binding?.destroy(); P.binding = null; P.map = null;
   stopStills();
   H.view = "edit";
   H.io?.disconnect();
   clearTimeout(H.t);
   E.doc = normalizeDoc(doc);
+  V = { key: documentKey(E.doc), ...variationStore.read(documentKey(E.doc)), a: null, b: null, blend: 0, gesture: false, error: false };
   E.sel = "effect";
   E.saveError = ""; E.saving = false; E.recoveryError = false;
   E.logs = [];
@@ -638,6 +940,8 @@ async function openEditor(doc) {
 }
 
 function closeEditor(keepHash) {
+  stopPainting(); P.binding?.destroy(); P.binding = null; P.map = null;
+  finishVariationGesture();
   if (LIVE.state.wanted || LIVE.state.confirmed || LIVE.state.pending) setLights(false);
   clearTimeout(E.auto);
   saveDraftNow();
@@ -647,11 +951,13 @@ function closeEditor(keepHash) {
   clearInterval(E.watch);
   E.watch = null;
   E.doc = null;
+  V = null;
   E.saved = null;
   if (!keepHash && location.hash === "#studio/edit") history.replaceState(null, "", "#studio");
 }
 
 function renderEditor() {
+  stopPainting();
   const restoreFocus = preserveEditorFocus();
   const d = E.doc;
   setHTML(box(), `<div class="st-edit ${d.mode === "code" ? "is-code" : ""}">
@@ -682,13 +988,16 @@ function renderEditor() {
         </div>
         <span class="spacer"></span><span class="st-meter" id="st-meter"></span>
       </div>
-      <div class="st-stage"><canvas id="st-canvas" aria-label="Your effect on your case"></canvas>
+      <div class="st-stage"><canvas id="st-canvas" tabindex="0" aria-label="Your effect on your case. When painting, use arrow keys to choose LEDs and Space to paint."></canvas>
         ${litZones().length ? "" : `<p class="st-sample">Sample case · <a href="#devices">set up your lights</a></p>`}</div>
       <div class="st-console" id="st-console" aria-live="polite"></div>
+      ${d.mode === "layers" ? '<div id="st-instrument"></div>' : ""}
     </section>
     <aside class="st-right" id="st-right">${inspectorHTML()}</aside>
   </div>`);
   wireEditor();
+  wirePaintCanvas();
+  paintInstrument();
   if (d.mode === "code") mountCode();
   paintConsole();
   setSavedLabel();
@@ -724,7 +1033,8 @@ function layerLine(l) {
   if (l.palette) bits.push("palette");
   if ((l.opacity ?? 100) < 100) bits.push(`${l.opacity}%`);
   if (l.blend && l.blend !== "normal") bits.push(BLENDS[l.blend].toLowerCase());
-  if (l.mask && l.mask !== "all") bits.push(`only ${AREAS[l.mask].toLowerCase()}`);
+  if (l.mask && l.mask !== "all") bits.push(`only ${(AREAS[l.mask] || l.mask).toLowerCase()}`);
+  if (l.paint) bits.push(`${l.paint.points?.length || 0} painted positions`);
   if ((l.react?.amount || 0) > 0) bits.push("follows the music");
   return bits.join(", ") || "Whole case";
 }
@@ -732,7 +1042,7 @@ function layerLine(l) {
 // ---- right: the selected layer, or the effect's details
 const MASTER_SPECS = [
   { id: "palette", label: "Palette", type: "colors", default: MASTER.palette, min: 2, max: 4 },
-  { id: "speed", label: "Speed, all layers", type: "range", default: 100, min: 0, max: 200, step: 5, unit: "%" },
+  { id: "speed", label: "Speed, all layers", type: "range", default: 100, min: 0, max: 200, step: 1, unit: "%" },
   { id: "brightness", label: "Brightness", type: "range", default: 100, min: 0, max: 100, step: 1, unit: "%" },
   { id: "react", label: "Music reactivity", type: "range", default: 50, min: 0, max: 100, step: 1, unit: "%" },
 ];
@@ -753,7 +1063,7 @@ function masterHTML() {
   const exposed = Object.entries(d.expose || {});
   const palCount = d.layers.filter(l => l.palette).length;
   return `<div class="ins-block"><div class="ins-title"><h2>Palette and macros</h2></div>
-    <div id="st-master">${MASTER_SPECS.map(s => fieldHTML(s, d.master[s.id], "mm", { reset: true })).join("")}</div>
+    <div id="st-master">${MASTER_SPECS.map(s => `<div class="st-macro">${fieldHTML(s, d.master[s.id], "mm", { reset: true })}<button class="st-lock" data-vlock="${s.id}" aria-pressed="${!!V?.locks[s.id]}" aria-label="Hold ${esc(s.label)} during Vary and Blend" title="Hold during Vary and Blend">${V?.locks[s.id] ? "Held" : "Hold"}</button></div>`).join("")}</div>
     <p class="hint">${palCount ? `${palCount} layer${palCount === 1 ? " uses" : "s use"} this palette.` : "Enable the effect palette in a colour layer to use these colours."} Speed and brightness apply to all layers.</p>
     ${palettesHTML()}
     <details class="st-details" data-details="controls"><summary>Controls people can change</summary>
@@ -801,7 +1111,7 @@ function inspectorHTML() {
     </div>
     ${hasColour ? `<label class="st-expose"><input type="checkbox" data-layer-palette="1"${l.palette ? " checked" : ""}> Take its colour from the effect palette</label>` : ""}
     <div class="rule-line"></div>
-    <div class="ins-block" id="st-general">${GENERAL_SPECS.map((s) => fieldHTML(s, l[s.id] ?? s.default, "lg", { reset: true })).join("")}</div></div>`;
+    <div class="ins-block" id="st-general">${GENERAL_SPECS.map((s) => fieldHTML(s, l[s.id] ?? s.default, "lg", { reset: true })).join("")}</div>${paintControlsHTML()}</div>`;
 }
 
 function codeInspectorHTML() {
@@ -897,8 +1207,9 @@ function wireInspector() {
     });
   const general = GENERAL_SPECS;
   wireFields($("#st-general"), { params: general }, { opacity: l.opacity ?? 100, blend: l.blend || "normal", mask: l.mask || "all" }, (v) => {
-    Object.assign(l, v); changed(true); refreshLayerRow();
+    P.binding?.finish(); Object.assign(l, v); changed(true); refreshLayerRow(); paintPaintStatus(); E.painted = -1;
   });
+  wirePaintControls();
   $$("[data-expose]").forEach((cb) => cb.addEventListener("change", () => {
     const k = cb.dataset.expose, spec = t.params.find((s) => s.id === k);
     l.expose ||= {};
@@ -938,6 +1249,7 @@ function wireDrag() {
 }
 
 function rerenderSides() {
+  P.binding?.finish();
   const restoreFocus = preserveEditorFocus();
   if (E.doc.mode === "layers") { $("#st-left").innerHTML = layersHTML(); wireDrag(); }
   $("#st-right").innerHTML = inspectorHTML();
@@ -1015,21 +1327,23 @@ function setSavedLabel() {
 
 function scheduleSave() {
   clearTimeout(E.auto);
-  if (!E.doc?.fx_id) return;
+  E.auto = 0;
+  if (!E.doc?.fx_id || E.doc.paintPending) return;
   E.auto = setTimeout(() => quietSave(), 1500);
 }
 
 async function quietSave() {
-  if (!E.doc?.fx_id || !E.doc.dirty) return;
+  if (!E.doc?.fx_id || !E.doc.dirty || E.doc.paintPending) return;
   return save({ quiet: true });
 }
 
 const syncLights = coalesce(() => {
-  if (E.doc) LIVE.sync({ ...payload(E.doc), values: E.doc.values, fx_id: E.doc.fx_id });
+  if (E.doc && !E.doc.paintPending) LIVE.sync({ ...payload(E.doc), values: E.doc.values, fx_id: E.doc.fx_id });
 }, 350);
 function followLights() { LIVE.observe(S.state); paintWorkflow(); }
 async function setLights(on) {
   if (on && !E.doc) return;
+  if (on) { stopPainting(); E.doc.paintPending = false; }
   await LIVE.set(on, on ? { ...payload(E.doc), values: E.doc.values, fx_id: E.doc.fx_id } : {});
   paintWorkflow();
 }
@@ -1091,7 +1405,11 @@ function loop(now) {
 function paintStage() {
   const c = $("#st-canvas");
   if (!c) return;
-  paintRig(c, E.frames, { fit: "stage", backdrop: E.backdrop, pad: 26, maxScale: 4, zones: rigZones(), overlay: E.overlay ? drawOverlay : null });
+  paintRig(c, E.frames, { fit: "stage", backdrop: E.backdrop, pad: 26, maxScale: 4, zones: rigZones(), overlay: (ctx, map) => {
+    P.map = map;
+    if (E.overlay) drawOverlay(ctx, map);
+    if (P.enabled && paintLayer()) drawPaintOverlay(ctx, map, currentPaintPoints(), paintLayer().paint, P);
+  } });
 }
 
 // The x/y grid and every eighth LED's number, drawn on the same mapping as the rig.
@@ -1310,7 +1628,9 @@ async function openInEditor() {
 const saves = new Map();
 async function save({ quiet = false } = {}) {
   const d = E.doc;
-  if (!d) return null;
+  if (!d || (quiet && d.paintPending)) return null;
+  P.binding?.finish();
+  finishVariationGesture();
   clearTimeout(E.auto);
   const key = d.fx_id || d, queue = saves.get(key) || { tail: null };
   const before = snapDoc(d), previous = queue.tail;
@@ -1320,16 +1640,31 @@ async function save({ quiet = false } = {}) {
     if (previous) await previous;
     try {
       // A queued first save must reuse the ID created by the preceding write.
+      const oldScope = documentKey(d);
       const r = await post("/api/studio/save", { ...payload(JSON.parse(before)), fx_id: d.fx_id });
       d.fx_id = r.effect.fx_id;
+      const nextScope = documentKey(d);
+      if (oldScope !== nextScope) {
+        const moved = variationStore.move(oldScope, nextScope);
+        if (E.doc === d && V) {
+          V.key = nextScope;
+          V.variations.forEach(entry => { entry.scope = nextScope; });
+          for (const slot of ["a", "b"]) if (V[slot]) V[slot].scope = nextScope;
+          V.error = !moved;
+          if (!moved) persistVariations();
+          paintInstrument();
+        }
+      }
       // Reopening the new effect must join the same queue, including its already queued first saves.
       if (key !== d.fx_id) saves.delete(key);
       saves.set(d.fx_id, queue);
       d.dirty = snapDoc(d) !== before || queue.tail !== writing;
+      if (!quiet && !d.dirty) d.paintPending = false;
       if (E.doc === d) {
         if (!d.dirty) forgetDraft();
         if (!quiet) E.saved = before;          // Revert goes back to this deliberate save
         E.saving = queue.tail !== writing; E.saveError = ""; setSavedLabel();
+        paintPaintStatus();
       }
       if (!quiet) {
         S.effects = await get("/api/effects");
@@ -1578,6 +1913,13 @@ async function onClick(e) {
   const t = e.target.closest("button, a, [data-sel]");
   if (!t) return;
   const ds = t.dataset;
+  if (ds.paint) return paintAction(ds.paint);
+  if (ds.st === "blend-effects") return openBlend(H.lib?.effects || [], { onSaved: effect => openStudio({ fx_id: effect.fx_id }) });
+  if (ds.preview) {
+    if (STILL.live?.key === ds.preview) stopCard();
+    else playCard(ds.preview, true);
+    return;
+  }
   if (ds.jump) return jumpToLine(+ds.jump);
   if (ds.st === "new") { $("#st-start")?.scrollIntoView({ behavior: "smooth" }); $("#st-start")?.classList.add("flash"); return; }
   if (ds.st === "community-retry") return renderCommunity();
@@ -1631,6 +1973,24 @@ async function onClick(e) {
   }
   if (!E.doc) return;
   // ---- editor
+  if (ds.var) return variationAction(ds.var);
+  if (ds.vlock && V && Object.hasOwn(V.locks, ds.vlock)) {
+    finishVariationGesture();
+    V.locks[ds.vlock] = !V.locks[ds.vlock]; persistVariations(); rerenderSides(); paintInstrument(); return;
+  }
+  if (ds.vcapture && V && ["a", "b"].includes(ds.vcapture)) {
+    finishVariationGesture(); V[ds.vcapture] = captureVariation(E.doc); paintInstrument(); return;
+  }
+  if ((ds.vrestore || ds.vrecall) && V) {
+    const entry = ds.vrestore ? V.variations.find(v => v.id === ds.vrestore) : V[ds.vrecall];
+    finishVariationGesture();
+    if (entry && restoreVariation(E.doc, entry)) { variationEdit(E.doc.master); paintInstrument(); }
+    return;
+  }
+  if (ds.vdelete && V) {
+    V.variations = V.variations.filter(v => v.id !== ds.vdelete); persistVariations(); paintInstrument();
+    $("#st-variation-name")?.focus({ preventScroll: true }); return;
+  }
   if (ds.st === "palette-save") {
     try {
       const list = addPalette(favoritePalettes(), $("#st-palette-name")?.value, E.doc.master.palette);
@@ -1660,6 +2020,7 @@ async function onClick(e) {
   }
   if (ds.mode && ds.mode !== E.doc.mode) return ds.mode === "code" ? toCode() : toLayers();
   if (ds.sel !== undefined && !e.target.closest("[data-toggle]")) {
+    stopPainting();
     E.sel = ds.sel === "effect" ? "effect" : +ds.sel;
     $$("#st-left [data-sel]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.sel === String(E.sel))));
     $("#st-right").innerHTML = inspectorHTML();

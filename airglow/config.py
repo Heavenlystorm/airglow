@@ -26,6 +26,9 @@ DEFAULT_CURVES = {
     "performance": [[40, 45], [55, 60], [68, 80], [75, 100]],
 }
 
+DEFAULT_APPEARANCE = {"accent": None, "density": "comfortable", "scale": 100,
+                      "rig": "frame", "motion": "system"}
+
 DEFAULT_CONFIG = {
     "port": 8787,
     # not "localhost": Windows tries ::1 and then 127.0.0.1, so a poll with LHM missing waited out two timeouts
@@ -33,6 +36,8 @@ DEFAULT_CONFIG = {
     "temp_source": "max",
     "temp_unit": "C",
     "design": "graphite",             # how the window looks; the lights keep their real colours either way
+    "appearance": DEFAULT_APPEARANCE,
+    "looks": [],                      # personal display recipes; no lighting or cooling settings
     "energy_price": 0.3797,           # €/kWh for the Cost per hour tile: the German household average, H1 2026
     "fan_failsafe_duty": 30,
     "fan_max_step": 5,
@@ -101,7 +106,7 @@ SCHEMA_VERSION = 1
 RESETTABLE_SETTINGS = ("lhm_url", "temp_source", "temp_unit", "fan_failsafe_duty", "fan_max_step", "fancontrol_exe",
                        "fancontrol_configs_dir", "openrgb_enabled", "openrgb_host", "openrgb_port",
                        "lights_off_on_sleep", "lights_off_on_lock", "dynamic_lighting_enabled", "online_checks",
-                       "update_channel", "design", "energy_price")
+                       "update_channel", "design", "appearance", "energy_price")
 
 
 # ---------------------------------------------------------------- validation
@@ -154,6 +159,53 @@ def validate_curve(points):
     return clean
 
 
+def validate_appearance(value):
+    if not isinstance(value, dict) or set(value) - set(DEFAULT_APPEARANCE):
+        raise ValueError("appearance must contain supported display preferences")
+    out = {**DEFAULT_APPEARANCE, **value}
+    accent = out["accent"]
+    if accent is not None:
+        if not isinstance(accent, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
+            raise ValueError("accent must be a colour like #12abef or null")
+        out["accent"] = accent.lower()
+    if out["density"] not in ("comfortable", "compact"):
+        raise ValueError("density must be comfortable or compact")
+    if type(out["scale"]) is not int or out["scale"] not in (90, 100, 110, 120):
+        raise ValueError("interface scale must be 90, 100, 110 or 120")
+    if out["rig"] not in ("frame", "minimal"):
+        raise ValueError("rig presentation must be frame or minimal")
+    if out["motion"] not in ("system", "reduced"):
+        raise ValueError("motion must be system or reduced")
+    return out
+
+
+def _named_display_record(value, allowed, kind):
+    if not isinstance(value, dict) or set(value) - set(allowed):
+        raise ValueError(f"{kind} contains unsupported fields")
+    rid, name = value.get("id"), value.get("name")
+    if not isinstance(rid, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", rid):
+        raise ValueError(f"{kind} needs a short lowercase id")
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 40 or any(ord(c) < 32 for c in name):
+        raise ValueError(f"{kind} names must have 1 to 40 characters")
+    return {"id": rid, "name": name.strip()}
+
+
+def validate_looks(looks):
+    if not isinstance(looks, list) or len(looks) > 12:
+        raise ValueError("up to 12 personal looks can be saved")
+    out, seen = [], set()
+    for look in looks:
+        item = _named_display_record(look, ("id", "name", "design", "appearance"), "look")
+        if item["id"] in seen:
+            raise ValueError("look ids must be unique")
+        seen.add(item["id"])
+        if look.get("design") not in DESIGNS:
+            raise ValueError("look needs a known interface design")
+        item.update(design=look["design"], appearance=validate_appearance(look.get("appearance", {})))
+        out.append(item)
+    return out
+
+
 def validate_settings(patch):
     """Validate a partial settings update; returns the cleaned subset."""
     out = {}
@@ -170,6 +222,10 @@ def validate_settings(patch):
             if value not in DESIGNS:
                 raise ValueError(f"unknown interface design '{value}'")
             out[key] = value
+        elif key == "appearance":
+            out[key] = validate_appearance(value)
+        elif key == "looks":
+            out[key] = validate_looks(value)
         elif key == "energy_price":
             try:
                 price = float(value)
@@ -330,7 +386,7 @@ def _sensor_id(v):
     return v
 
 
-def validate_overview(o):
+def _validate_overview_layout(o):
     if not isinstance(o, dict):
         raise ValueError("the overview must be an object")
     tiles, seen = [], set()
@@ -368,6 +424,28 @@ def validate_overview(o):
         raise ValueError("up to 4 readings can be pinned")
     pins = list(dict.fromkeys(_sensor_id(p) for p in pins))
     return {"tiles": tiles, "pins": pins}
+
+
+def validate_overview(o):
+    out = _validate_overview_layout(o)
+    if "workspaces" not in o and "active_workspace" not in o:
+        return out                      # old documents retain exactly their existing shape
+    workspaces = o.get("workspaces", [])
+    if not isinstance(workspaces, list) or len(workspaces) > 8:
+        raise ValueError("up to 8 workspaces can be saved")
+    cleaned, seen = [], set()
+    for workspace in workspaces:
+        item = _named_display_record(workspace, ("id", "name", "tiles", "pins"), "workspace")
+        if item["id"] in seen:
+            raise ValueError("workspace ids must be unique")
+        seen.add(item["id"])
+        item.update(_validate_overview_layout(workspace))
+        cleaned.append(item)
+    active = o.get("active_workspace")
+    if active is not None and (not isinstance(active, str) or active not in seen):
+        raise ValueError("active workspace must name a saved workspace")
+    out.update(workspaces=cleaned, active_workspace=active)
+    return out
 
 
 # ---------------------------------------------------------------- default zone placement
@@ -720,8 +798,8 @@ class Store:
     # -- settings / curves
     def settings(self):
         with self._lock:
-            return {k: v for k, v in self.config.items()
-                    if k not in ("fan_curves", "zones", "schema", "fan_channels", "device_ids")}
+            return copy.deepcopy({k: v for k, v in self.config.items()
+                                  if k not in ("fan_curves", "zones", "schema", "fan_channels", "device_ids")})
 
     def update_settings(self, patch):
         clean = validate_settings(patch)
@@ -1028,11 +1106,18 @@ class Store:
             return copy.deepcopy(self.overview)
 
     def set_overview(self, overview):
-        clean = validate_overview(overview)
         with self._lock:
+            candidate = copy.deepcopy(overview)
+            if isinstance(candidate, dict) and "workspaces" not in candidate and "workspaces" in self.overview:
+                candidate["workspaces"] = copy.deepcopy(self.overview["workspaces"])
+                candidate.setdefault("active_workspace", self.overview.get("active_workspace"))
+            clean = validate_overview(candidate)
+            for workspace in clean.get("workspaces", []):
+                if workspace["id"] == clean.get("active_workspace"):
+                    workspace.update(tiles=copy.deepcopy(clean["tiles"]), pins=list(clean["pins"]))
             self._write("overview.json", clean)
             self.overview = clean
-        return clean
+            return copy.deepcopy(clean)
 
     def reset_overview(self):
         return self.set_overview(copy.deepcopy(DEFAULT_OVERVIEW))

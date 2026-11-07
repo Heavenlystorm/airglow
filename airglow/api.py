@@ -521,7 +521,8 @@ def route(server, method, path, body, query=None):
                 ctrl.manager.bridge.client.port = store.settings()["openrgb_port"]
                 ctrl.manager.bridge.client.close()
                 ctrl.manager.bridge._last_try = 0.0           # try the new address now, not after the retry wait
-            ctrl.apply()
+            if set(clean) - {"design", "appearance", "looks", "temp_unit", "energy_price"}:
+                ctrl.apply()                                 # display-only edits never issue hardware work
         return _settings_view(store, server.updater)
     if path == "/api/settings/reset":
         store.reset_settings()

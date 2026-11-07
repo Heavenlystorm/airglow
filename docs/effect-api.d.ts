@@ -42,6 +42,9 @@ interface AirglowLed {
   area: string | null;
   /** Its index in the whole rig. */
   index: number;
+  /** Exact painted position: normalized raw stage x/y times 10,000, rounded to integers.
+   * Unlike x/y this retains positions outside the stage. null for legacy callers/backdrops. */
+  paintPosition?: [number, number] | null;
 }
 
 interface AirglowZone {
@@ -138,6 +141,10 @@ interface AirglowLayer {
   blend?: "normal" | "add" | "screen" | "multiply";
   /** "all" or an area (front, top, rear, bottom, side, cooler, ram, board, gpu, desk). */
   mask?: string;
+  /** Optional painted LED-position selection, intersected with mask. Empty points hides this layer.
+   * Up to 2,048 unique integer pairs, each coordinate -100000..100000, at 1/10000 precision.
+   * Missing paint preserves the normal area mask. Moved LEDs need repainting; colocated LEDs share selection. */
+  paint?: { v: 1; points: [number, number][] };
   /** Take this layer's colour (or colours) from the effect-wide palette. */
   palette?: boolean;
   /** Follow the music. */

@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import fxformat, fxgallery, fxlibrary, scenepacks
+from . import fxblend, fxformat, fxgallery, fxlibrary, scenepacks
 from .lighting import effects, studio
 
 log = logging.getLogger(__name__)
@@ -130,6 +130,9 @@ def _route(ctrl, hooks, method, path, body, query):
             return {"mtime": f.stat().st_mtime_ns, "source": f.read_text(encoding="utf-8")}
         raise StudioError(404, "not found")
 
+    if path == "/api/studio/blend":                  # screen-only build; saving/applying stay explicit
+        source = fxblend.build(body)
+        return {"source": source, "effect": _summary({**fxformat.validate(source), "fx_id": None, "origin": "draft"}, False)}
     if path == "/api/studio/build":                  # builder parts -> a checked effect file
         source = _source(body)
         return {"source": source, "effect": _summary({**fxformat.validate(source), "fx_id": None, "origin": "draft"}, False)}

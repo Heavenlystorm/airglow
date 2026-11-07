@@ -24,9 +24,12 @@ export const currentDesign = () => document.documentElement.dataset.design || DE
 
 // Apply a design for this session and remember it for the pre-paint script. Unknown ids fall back to Graphite:
 // the CSS then paints the default rather than a half-styled page.
-export function applyDesign(id) {
+export function applyDesign(id, { persist = true } = {}) {
   const chosen = isDesign(id) ? id : DESKTOP;
   document.documentElement.dataset.design = chosen;
-  try { localStorage.setItem(KEY, chosen); } catch (e) { /* storage off: the server value still applies next boot */ }
+  if (persist) {
+    try { localStorage.setItem(KEY, chosen); } catch (e) { /* storage off: the server value still applies next boot */ }
+  }
+  document.dispatchEvent(new CustomEvent("designchange", { detail: chosen }));
   return chosen;
 }

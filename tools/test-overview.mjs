@@ -8,18 +8,19 @@ import vm from "node:vm";
 const source = readFileSync(new URL("../web/js/overview.js", import.meta.url), "utf8");
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297px", paddingLeft: "28px", paddingRight: "28px" }, gridWidth = 1280) {
+async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297px", paddingLeft: "28px", paddingRight: "28px" }, gridWidth = 1280, zoom = 1) {
   gridStyle = { gridAutoRows: "152px", columnGap: "12px", rowGap: "12px", ...gridStyle };
   const timers = new Map(), requests = [], errors = [];
   let nextTimer = 0;
   const context = vm.createContext({
-    window: { addEventListener() {} }, document: {},
+    window: { addEventListener() {} }, document: {}, structuredClone,
     getComputedStyle: () => gridStyle,
     setTimeout(fn) { timers.set(++nextTimer, fn); return nextTimer; },
     clearTimeout(id) { timers.delete(id); },
   });
   const core = {
-    $: () => ({ clientWidth: gridWidth }),
+    $: () => ({ clientWidth: gridWidth, offsetWidth: gridWidth, getBoundingClientRect: () => ({ width: gridWidth * zoom }) }),
+    $$: () => [],
     clamp: (v, lo, hi) => Math.max(lo, Math.min(hi, v)),
     S: {}, emit() {}, fail(error) { errors.push(error); },
     post(path, body) {
@@ -30,9 +31,11 @@ async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297
     .map((m) => [m[2], m[1].split(",").map((name) => name.trim())]));
   const module = new vm.SourceTextModule(source + "\nexport { save, O, cell, onKey, onPointerMove, seriesPath, fanSummary };", { context });
   await module.link((specifier) => {
+    if (specifier === "./overview-workspaces.js") return new vm.SourceTextModule(readFileSync(new URL("../web/js/overview-workspaces.js", import.meta.url), "utf8"), { context });
     const names = imports.get(specifier);
     return new vm.SyntheticModule(names, function () {
-      for (const name of names) this.setExport(name, specifier === "./core.js" && name in core ? core[name] : () => {});
+      for (const name of names) this.setExport(name, specifier === "./core.js" && name in core ? core[name]
+        : name === "flip" ? (_el, mutate) => mutate() : () => {});
     }, { context });
   });
   await module.evaluate();
@@ -101,6 +104,26 @@ test("grabbing a clamped tile resize handle without moving does not shrink it", 
   h.onPointerMove({ clientX: 0, clientY: 0 });
   assert.equal(tile.w, 4);
   assert.ok(!h.O.drag.changed);
+});
+
+test("resize snap thresholds follow visual cells at 90 and 120 percent appearance scale", async () => {
+  for (const [zoom, delta, size] of [[.9, .52, 2], [1.2, .45, 1]]) {
+    const h = await harness(undefined, 1280, zoom), tile = h.O.layout.tiles[0];
+    tile.w = 1; tile.h = 1;
+    h.O.drag = { mode: "resize", t: tile, el: { style: {}, dataset: {} }, w0: 1, savedW0: 1, h0: 1, x0: 0, y0: 0 };
+    h.onPointerMove({ clientX: 309 * zoom * delta, clientY: 164 * zoom * delta });
+    assert.equal(tile.w, size); assert.equal(tile.h, size);
+  }
+});
+
+test("drag transforms convert viewport movement into CSS coordinates at custom appearance scales", async () => {
+  for (const zoom of [.9, 1.2]) {
+    const h = await harness(undefined, 1280, zoom), el = { style: {} };
+    h.O.drag = { mode: "move", t: h.O.layout.tiles[0], el, started: true, ox: 10, oy: 5, natural: { left: 100, top: 100 } };
+    h.onPointerMove({ clientX: 110 + 25 * zoom, clientY: 105 + 20 * zoom });
+    const [x, y] = el.style.transform.match(/[-\d.]+/g).map(Number);
+    assert.ok(Math.abs(x - 25) < .001); assert.ok(Math.abs(y - 20) < .001);
+  }
 });
 
 test("edits during a save survive its response and persist in the next serialized request", async () => {

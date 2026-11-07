@@ -2,7 +2,9 @@
 // "Animation effects" setting (prefers-reduced-motion) and jumps straight to the end state when it's off.
 
 const mq = matchMedia("(prefers-reduced-motion: reduce)");
-export const reduced = () => mq.matches;
+export const reduced = () => mq.matches || document.documentElement.dataset.motion === "reduced";
+// DOM rectangles use rendered pixels; CSS transforms use pixels before interface zoom.
+const uiScale = () => Number(document.documentElement?.dataset.scale || 100) / 100;
 
 // Spring-like settle: quick start, soft landing with the slightest overshoot.
 export const SPRING = "cubic-bezier(.22, 1.15, .36, 1)";
@@ -30,7 +32,7 @@ export function flip(container, mutate, { skip = null, duration = 380 } = {}) {
       continue;
     }
     const b = el.getBoundingClientRect();
-    const dx = a.left - b.left, dy = a.top - b.top, sx = a.width / b.width, sy = a.height / b.height;
+    const dx = (a.left - b.left) / uiScale(), dy = (a.top - b.top) / uiScale(), sx = a.width / b.width, sy = a.height / b.height;
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) continue;
     el.animate([{ transformOrigin: "top left", transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
                 { transformOrigin: "top left", transform: "none" }], { duration, easing: SPRING });
@@ -41,7 +43,7 @@ export function flip(container, mutate, { skip = null, duration = 380 } = {}) {
 export function moveMarker(marker, target, instant = false) {
   if (!marker || !target) return;
   const nav = marker.parentElement.getBoundingClientRect(), r = target.getBoundingClientRect();
-  const x = r.left - nav.left + 12, w = r.width - 24;
+  const x = (r.left - nav.left) / uiScale() + 12, w = r.width / uiScale() - 24;
   if (instant || reduced()) marker.style.transition = "none";
   marker.style.transform = `translateX(${x}px)`;
   marker.style.width = `${w}px`;

@@ -222,7 +222,7 @@ async function harness(file, exports) {
     refreshZones: () => request("GET", "/api/zones").then(z => { core.S.zones = z; return z; }),
   };
   const sources = new Map([[`./${file}.js`, source + `\nexport { ${exports.join(", ")} };`]]);
-  for (const name of ["studio-document", "studio-preview", "studio-gallery", "studio-packs"]) {
+  for (const name of ["studio-document", "studio-preview", "studio-gallery", "studio-packs", "studio-variations"]) {
     sources.set(`./${name}.js`, readFileSync(new URL(`../web/js/${name}.js`, import.meta.url), "utf8"));
   }
   const imports = new Map(), modules = new Map();

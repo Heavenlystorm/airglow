@@ -254,6 +254,24 @@ def master_controls(master, expose):
     return out
 
 
+def clean_paint(raw):
+    """Optional exact LED-position selection, quantized to 1/10000 effect coordinates."""
+    if (not isinstance(raw, dict) or type(raw.get("v")) is not int or raw["v"] != 1
+            or not isinstance(raw.get("points"), list) or len(raw["points"]) > 2048):
+        raise FormatError("a painted mask needs version 1 and up to 2,048 LED positions")
+    points, seen = [], set()
+    for pair in raw["points"]:
+        if (not isinstance(pair, list) or len(pair) != 2
+                or any(type(n) is not int or not -100000 <= n <= 100000 for n in pair)):
+            raise FormatError("painted LED positions are pairs of integers from -100000 to 100000")
+        key = tuple(pair)
+        if key in seen:
+            raise FormatError("a painted mask cannot repeat an LED position")
+        seen.add(key)
+        points.append(list(pair))
+    return {"v": 1, "points": points}
+
+
 def clean_layers(raw):
     """Validate builder layers. Returns (layers, params): params are the settings marked "Show as a control"."""
     types, blends = layer_types()
@@ -309,6 +327,8 @@ def clean_layers(raw):
                "blend": layer.get("blend", "normal"), "mask": mask, "params": values, "expose": clean_expose}
         if lid is not None:
             out["id"] = lid
+        if "paint" in layer:
+            out["paint"] = clean_paint(layer["paint"])
         if palette:
             out["palette"] = True
         if amount:

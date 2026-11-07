@@ -7,10 +7,52 @@ const U = 1000;                       // canvas units -> viewBox units
 const VB_W = 1600, VB_H = 1000;
 const VB_M = 48;                      // room around the case: a zone at its very edge still shows whole, glow and all
 
-const st = { selected: null, arranging: false, drag: null, view: { s: 1, ox: 0, oy: 0 }, frames: {} };
+const st = { selected: null, arranging: false, drag: null, mode: "2d", view: { s: 1, ox: 0, oy: 0 }, frames: {} };
+let rig3d = null, rigModule = null, modeRequest = 0;
 
 const canvas = () => $("#stage-canvas");
 const svg = () => $("#stage-svg");
+
+// Stay in the established 2D editor until the optional renderer is ready. A late
+// import cannot reopen 3D after Arrange, 2D, or setup placement has been requested.
+async function setRigMode(mode, focus = false) {
+  const request = ++modeRequest;
+  const button = $("#stage-view-3d");
+  if (mode === "3d") {
+    button?.setAttribute("aria-busy", "true");
+    try {
+      rigModule ||= import("./rig-3d.js").catch(error => { rigModule = null; throw error; });
+      const { createRig3D } = await rigModule;
+      if (request !== modeRequest) return;
+      rig3d ||= createRig3D($("#stage"), {
+        onSelect: key => selectZone(key),
+        isVisible: () => !$('[data-view="lighting"]').hidden,
+        onUnavailable: () => {
+          rig3d?.dispose(); rig3d = null; setRigMode("2d");
+          fail(new Error("3D drawing became unavailable. Your layout is back in 2D."));
+        },
+      });
+      st.arranging = false; st.drag = null;
+      $("#arrange").setAttribute("aria-pressed", "false");
+      rig3d.setZones(S.zones?.zones || []); rig3d.setFrames(st.frames); rig3d.select(st.selected);
+    } catch (error) {
+      if (request !== modeRequest) return;
+      mode = "2d";
+      fail(new Error(`3D view is unavailable. You can continue in 2D. ${error.message || ""}`));
+    } finally { if (request === modeRequest) button?.removeAttribute("aria-busy"); }
+  } else button?.removeAttribute("aria-busy");
+  st.mode = mode;
+  const active = mode === "3d";
+  canvas().hidden = active; svg().toggleAttribute("hidden", active);
+  $("#stage-hint").hidden = active;
+  $("#stage-view-2d")?.setAttribute("aria-pressed", String(!active));
+  button?.setAttribute("aria-pressed", String(active));
+  $("#stage").classList.toggle("in-3d", active);
+  rig3d?.setVisible(active);
+  renderOverlay();
+  if (active && focus) rig3d.focus();
+  if (!active) { computeView(); draw(); }
+}
 
 // ------------------------------------------------------------ geometry helpers
 function ledRadius(z) {
@@ -29,7 +71,95 @@ function fanCentres(z) {
   });
 }
 
+const framed = () => document.documentElement.dataset.rig !== "minimal";
+
+function matrixCorners(L) {
+  const a = L.angle * Math.PI / 180, w = L.length * U / 2, h = w * L.rows / L.cols;
+  return [[-w, -h], [w, -h], [w, h], [-w, h]].map(([dx, dy]) => [
+    L.x * U + Math.cos(a) * dx - Math.sin(a) * dy, L.y * U + Math.sin(a) * dx + Math.cos(a) * dy,
+  ]);
+}
+
+function portraitBounds(zones) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const include = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
+  for (const z of zones) {
+    for (const [x, y] of z.positions) include(x * U, y * U);
+    if (z.config.layout.shape === "fans" && z.positions.length) {
+      const r = z.config.layout.size * U / 2;
+      for (const [x, y] of fanCentres(z)) { include(x - r, y - r); include(x + r, y + r); }
+    } else if (z.config.layout.shape === "matrix" && z.positions.length) {
+      for (const [x, y] of matrixCorners(z.config.layout)) include(x, y);
+    }
+  }
+  return Number.isFinite(x0) ? { x0, y0, x1, y1 } : null;
+}
+
+// A neutral display frame around the user's layout. Its rings and tracks come from configured
+// zone geometry, not guessed case models, fan detection or simulated airflow. LEDs are painted
+// afterwards with the unchanged live frame colors; interface accents never tint this layer.
+function paintPortrait(ctx, zones, { ox, oy, s, w, h }, bounds = portraitBounds(zones)) {
+  if (!framed() || !bounds || !s) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  const margin = Math.max(15, Math.min(32, 45 * s));
+  const x = Math.max(8, ox + bounds.x0 * s - margin), y = Math.max(8, oy + bounds.y0 * s - margin);
+  const right = Math.min(w - 8, ox + bounds.x1 * s + margin), bottom = Math.min(h - 8, oy + bounds.y1 * s + margin);
+  const plate = ctx.createLinearGradient(x, y, right, bottom);
+  plate.addColorStop(0, "#20252b"); plate.addColorStop(.42, "#0c1014"); plate.addColorStop(1, "#15191e");
+  ctx.fillStyle = plate;
+  ctx.strokeStyle = "#41474e"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.roundRect(x, y, Math.max(1, right - x), Math.max(1, bottom - y), 12); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = "#7c858e"; ctx.lineWidth = 1;
+  const tick = Math.min(17, Math.max(6, (right - x) / 12));
+  for (const [cx, cy, dx, dy] of [[x, y, 1, 1], [right, y, -1, 1], [x, bottom, 1, -1], [right, bottom, -1, -1]]) {
+    ctx.beginPath(); ctx.moveTo(cx + dx * 5, cy + dy * tick); ctx.lineTo(cx + dx * 5, cy + dy * 5); ctx.lineTo(cx + dx * tick, cy + dy * 5); ctx.stroke();
+  }
+  for (const z of zones) {
+    if (!z.positions.length) continue;
+    const L = z.config.layout;
+    ctx.strokeStyle = "#373d44"; ctx.lineWidth = 1;
+    if (L.shape === "fans") {
+      const r = L.size * U * s / 2;
+      for (const [cx, cy] of fanCentres(z)) {
+        const px = ox + cx * s, py = oy + cy * s;
+        const disc = ctx.createRadialGradient(px - r * .2, py - r * .3, r * .1, px, py, r);
+        disc.addColorStop(0, "#262d34"); disc.addColorStop(.45, "#14191f"); disc.addColorStop(1, "#080c10");
+        ctx.fillStyle = disc;
+        ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(px, py, r * .76, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = "#1c2228";
+        ctx.beginPath(); ctx.arc(px, py, r * .29, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+    } else if (L.shape === "matrix") {
+      ctx.beginPath();
+      for (const [i, [px0, py0]] of matrixCorners(L).entries()) {
+        const px = ox + px0 * s, py = oy + py0 * s;
+        if (!i) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath(); ctx.fillStyle = "#11171d"; ctx.fill(); ctx.stroke();
+    } else {
+      ctx.lineWidth = Math.max(4, ledRadius(z) * s * 2.8); ctx.lineCap = "round"; ctx.strokeStyle = "#242a30";
+      // A one-LED GPU zone has a nominal strip length too. Use its actual points so it
+      // remains a point; drawing that nominal length invents a long unlit bar around it.
+      if (z.positions.length === 1) {
+        const [px, py] = z.positions[0];
+        ctx.fillStyle = "#242a30"; ctx.beginPath(); ctx.arc(ox + px * U * s, oy + py * U * s, Math.max(3, ledRadius(z) * s * 1.4), 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.beginPath();
+        z.positions.forEach(([px, py], i) => {
+          if (!i) ctx.moveTo(ox + px * U * s, oy + py * U * s);
+          else ctx.lineTo(ox + px * U * s, oy + py * U * s);
+        });
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
+}
+
 function computeView() {
+  if (st.mode === "3d") return;
   const c = canvas(), r = c.getBoundingClientRect();
   const s = Math.min(r.width / (VB_W + VB_M * 2), r.height / (VB_H + VB_M * 2));
   st.view = { s, ox: (r.width - VB_W * s) / 2, oy: (r.height - VB_H * s) / 2, w: r.width, h: r.height };
@@ -87,7 +217,13 @@ export function renderOverlay() {
   const s = svg();
   s.setAttribute("viewBox", `${-VB_M} ${-VB_M} ${VB_W + VB_M * 2} ${VB_H + VB_M * 2}`);
   const zones = S.zones?.zones || [];
+  rig3d?.setZones(zones); rig3d?.select(st.selected);
   const visible = zones.filter((z) => z.device.online && (z.config.enabled || st.arranging));
+  const identity = $("#stage-identity");
+  if (identity) {
+    const selected = visible.find((z) => z.key === st.selected);
+    identity.innerHTML = `<b>Living Rig</b><span>${selected ? esc(selected.config.name) : `${visible.length} zone${visible.length === 1 ? "" : "s"}`}<span class="rig-stage-note"> · ${selected ? `${selected.positions.length} LEDs` : "Your layout"}</span></span>`;
+  }
   $("#stage-empty").hidden = zones.some((z) => z.device.online && z.config.enabled) || st.arranging;
   let html = "", handles = "";
   for (const z of visible) {
@@ -165,6 +301,7 @@ function glowFor(ctx, hex, r, peak = 0.55, spread = 4.2) {
 }
 
 function draw() {
+  if (st.mode === "3d" || document.hidden || $('[data-view="lighting"]').hidden) return;
   const c = canvas();
   const ctx = c.getContext("2d");
   const v = st.view;
@@ -172,6 +309,8 @@ function draw() {
   ctx.clearRect(0, 0, v.w, v.h);
   const zones = (S.zones?.zones || []).filter((z) => z.device.online && (z.config.enabled || st.arranging));
   const drag = st.drag;
+  // During a move the original frame stays stationary, keeping the layout's reference point clear.
+  paintPortrait(ctx, zones, v);
   // dark "unlit LED" dots first, then additive light
   for (const pass of [0, 1]) {
     ctx.globalCompositeOperation = pass ? "lighter" : "source-over";
@@ -221,7 +360,7 @@ function draw() {
 // The Overview's lighting tile: every lit zone, zoomed to fit, same glow as the stage.
 // frames: zone key -> hex colours; the live ones by default, or a profile's preview from the gallery
 export function paintMini(c, frames = st.frames) {
-  paintRig(c, frames, { fit: "zones", maxScale: Math.max(0.6, Math.min(2, c.clientHeight / 600)) });
+  paintRig(c, frames, { fit: "zones", pad: framed() ? 42 : 22, maxScale: Math.max(0.6, Math.min(2, c.clientHeight / 600)) });
 }
 
 export const litZones = () => (S.zones?.zones || []).filter((z) => z.device.online && z.config.enabled && z.positions.length);
@@ -240,14 +379,18 @@ export function paintRig(c, frames, { fit = "zones", backdrop = null, pad = 22, 
   ctx.globalCompositeOperation = "source-over";
   ctx.clearRect(0, 0, r.width, r.height);
   const zones = given || litZones();
+  const bounds = portraitBounds(zones);
   let x0 = 0, y0 = 0, x1 = 1.6, y1 = 1.0;
   if (fit === "zones") {
-    if (!zones.length) return;
+    if (!bounds) return;
     x0 = y0 = Infinity; x1 = y1 = -Infinity;
     for (const z of zones) for (const [x, y] of z.positions) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    if (framed()) { x0 = bounds.x0 / U; y0 = bounds.y0 / U; x1 = bounds.x1 / U; y1 = bounds.y1 / U; }
   }
-  const s = Math.min((r.width - pad * 2) / Math.max((x1 - x0) * U, 1), (r.height - pad * 2) / Math.max((y1 - y0) * U, 1), maxScale);
+  const inset = Math.min(pad, r.width * .18, r.height * .18);
+  const s = Math.min((r.width - inset * 2) / Math.max((x1 - x0) * U, 1), (r.height - inset * 2) / Math.max((y1 - y0) * U, 1), maxScale);
   const ox = (r.width - (x1 - x0) * U * s) / 2 - x0 * U * s, oy = (r.height - (y1 - y0) * U * s) / 2 - y0 * U * s;
+  paintPortrait(ctx, zones, { ox, oy, s, w: r.width, h: r.height }, bounds);
   if (backdrop) {                                    // the effect's canvas, faint and soft, behind the LEDs
     ctx.save();
     ctx.globalAlpha = 0.32;
@@ -293,6 +436,8 @@ export function paintRig(c, frames, { fit = "zones", backdrop = null, pad = 22, 
 // LED frames arrive on the live stream (live.js) while a view with the preview is showing.
 function onLiveFrames(f) {
   st.frames = f.zones;
+  rig3d?.setFrames(st.frames);
+  if (document.hidden) return;
   if (!$('[data-view="lighting"]').hidden) draw();
   if (!$('[data-view="overview"]').hidden) emit("frames");
 }
@@ -410,6 +555,7 @@ function onPointerUp() {
 // The setup guide's last step: Arrange mode with the new light picked out, so you drag it to where it sits.
 // keys: the zones being placed (a graphics card's zones move together), or null when done.
 export function placing(keys) {
+  setRigMode("2d");
   st.arranging = !!keys;
   st.placing = keys;
   st.selected = keys?.[0] || null;
@@ -424,6 +570,15 @@ export function select(key) {
 }
 
 export function initStage() {
+  const identity = document.createElement("div");
+  identity.id = "stage-identity"; identity.className = "stage-identity";
+  $("#stage").append(identity);
+  const switcher = document.createElement("div");
+  switcher.className = "stage-view-switch"; switcher.setAttribute("role", "group"); switcher.setAttribute("aria-label", "Lighting view");
+  switcher.innerHTML = '<button type="button" class="chip-btn" id="stage-view-2d" aria-pressed="true">2D</button><button type="button" class="chip-btn" id="stage-view-3d" aria-pressed="false" title="Explore your lighting layout in 3D">3D</button>';
+  $(".stage-tools").append(switcher);
+  $("#stage-view-2d").addEventListener("click", () => setRigMode("2d"));
+  $("#stage-view-3d").addEventListener("click", () => setRigMode("3d", true));
   computeView();
   new ResizeObserver(() => { computeView(); draw(); declutter(); }).observe($("#stage"));
   document.fonts?.ready.then(declutter);              // labels measured before the font arrives come out too narrow
@@ -433,6 +588,7 @@ export function initStage() {
   svg().addEventListener("pointercancel", onPointerUp);
   svg().addEventListener("keydown", onKey);
   const setArranging = (on) => {
+    if (on) setRigMode("2d");
     st.arranging = on;
     $("#arrange").setAttribute("aria-pressed", String(on));
     renderOverlay();
@@ -443,6 +599,10 @@ export function initStage() {
     if (e.key === "Escape" && st.arranging && !$("#sheet").open) setArranging(false);
   });
   on("zones", () => { renderOverlay(); draw(); });
+  document.addEventListener("appearancechange", () => {
+    if (!document.hidden && !$('[data-view="lighting"]').hidden) { computeView(); draw(); declutter(); }
+  });
+  new MutationObserver(() => draw()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-rig"] });
   renderOverlay();
   on("frames:live", onLiveFrames);
 }

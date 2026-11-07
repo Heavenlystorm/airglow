@@ -4,8 +4,10 @@ import { $, $$, S, emit, esc, fail, get, on, post, rangeFill, setHTML, toast } f
 import { paintTools, refreshTools } from "./helpers.js";
 import { openWelcome } from "./onboarding.js";
 import { openShortcuts } from "./help.js";
-import { openSheet } from "./sheet.js";
+import { openSheet, closeSheet } from "./sheet.js";
 import { DESIGNS, applyDesign, currentDesign } from "./design.js";
+import { DEFAULT_APPEARANCE, applyAppearance, normalizeAppearance, createAppearanceTransaction,
+  serializeWrites, parseLookRecipe, encodeLookRecipe } from "./appearance.js";
 import { exportRig, openRigImport } from "./rig-migration.js";
 
 const SECTIONS = [["general", "General"], ["lighting", "Lighting"], ["fans", "Fans"], ["helpers", "Helper programs"],
@@ -94,12 +96,16 @@ function markDesign(id) {
 
 // One write at a time, so two quick clicks cannot land out of order and leave the server on the first design.
 let designQueue = Promise.resolve();
+let designRevision = 0, pendingDesign = null;
 function pickDesign(id) {
-  const chosen = applyDesign(id);
+  const revision = ++designRevision;
+  const chosen = applyDesign(id, { persist: false });
+  pendingDesign = chosen;
   markDesign(chosen);
-  designQueue = designQueue
-    .then(() => save({ design: chosen }, "Design saved"))
+  designQueue = save({ design: chosen }, "Design saved")
     .then(() => {
+      if (revision !== designRevision) return;
+      pendingDesign = null;
       const confirmed = S.settings?.settings?.design || chosen;
       applyDesign(confirmed);
       markDesign(confirmed);
@@ -125,6 +131,181 @@ function designSheet() {
   (d.querySelector('[aria-checked="true"]') || d.querySelector("[data-design-card]"))?.focus({ preventScroll: true });
 }
 
+// This sheet edits one draft, including its saved-look library. Only Keep writes it.
+let appearanceSession = null;
+const appearanceName = (value) => {
+  const a = normalizeAppearance(value);
+  return `${a.scale}% · ${a.density === "compact" ? "Compact" : "Comfortable"} · ${a.rig === "frame" ? "Framed rig" : "Minimal rig"}`;
+};
+const setPresentation = (value, persist = false) => {
+  applyDesign(value.design, { persist });
+  applyAppearance(value.appearance, { persist });
+};
+
+export async function openAppearance() {
+  // A prior theme selection must be confirmed before taking the Cancel baseline.
+  await designQueue;
+  await pendingSettings;
+  if (appearanceSession && !appearanceSession.closed) return;
+  const initial = S.settings?.settings;
+  if (!initial) return;
+  const tx = createAppearanceTransaction(initial, {
+    apply: (value) => setPresentation(value),
+    save: async (value) => (await save(value, "Personal look saved", true)).settings,
+  });
+  appearanceSession = tx;
+  const a = tx.draft.appearance;
+  const d = openSheet(`<form id="appearance-form" class="appearance-sheet">
+    <div class="appearance-heading"><div><h2>Your personal look</h2><p class="lede">Try it across Airglow. Keep what feels right.</p></div><span class="appearance-state">Live preview</span></div>
+    <div class="appearance-editor">
+      <div class="appearance-controls">
+        <label class="appearance-field" for="ap-design"><span>Starting design</span><select class="select" id="ap-design">${DESIGNS.map((item) => `<option value="${item.id}"${item.id === tx.draft.design ? " selected" : ""}>${esc(item.name)}</option>`).join("")}</select></label>
+        <fieldset class="appearance-accent"><legend>Interface accent</legend><div class="appearance-color-row"><input type="color" id="ap-color" value="${a.accent || "#dfb878"}" aria-label="Choose interface accent"><input class="text" id="ap-hex" aria-label="Interface accent hex color" maxlength="7" value="${a.accent || ""}" placeholder="Design default" spellcheck="false"><button type="button" class="btn quiet" id="ap-default-accent">Use default</button></div><p class="hint" id="ap-accent-note">Adjusted for legibility. Lights keep their own colors.</p></fieldset>
+        <div class="appearance-pair">
+          <label class="appearance-field" for="ap-density"><span>Density</span><select class="select" id="ap-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+          <label class="appearance-field" for="ap-scale"><span>Interface size</span><select class="select" id="ap-scale">${[90, 100, 110, 120].map((scale) => `<option value="${scale}">${scale}%${scale === 100 ? " · Default" : ""}</option>`).join("")}</select></label>
+        </div>
+        <div class="appearance-pair">
+          <label class="appearance-field" for="ap-rig"><span>Rig presentation</span><select class="select" id="ap-rig"><option value="frame">Case frame</option><option value="minimal">Minimal</option></select></label>
+          <label class="appearance-field" for="ap-motion"><span>Motion</span><select class="select" id="ap-motion"><option value="system">Follow system</option><option value="reduced">Reduced</option></select></label>
+        </div>
+        <div class="appearance-portable"><button type="button" class="btn quiet" id="ap-import">Import recipe</button><button type="button" class="btn quiet" id="ap-export">Export recipe</button><input type="file" id="ap-file" accept=".json,application/json" hidden></div>
+      </div>
+      <aside class="appearance-library" aria-label="Saved looks"><div class="appearance-library-heading"><h3>Saved looks</h3><span class="hint" id="ap-look-count"></span></div><div id="ap-looks"></div>
+        <label class="appearance-field" for="ap-name"><span>Name this look</span><input class="text" id="ap-name" maxlength="40" placeholder="Evening desk" autocomplete="off"></label>
+        <button type="button" class="btn" id="ap-save-look">Add to saved looks</button>
+        <p class="hint">Your collection is saved when you keep changes.</p>
+      </aside>
+    </div>
+    <p class="appearance-error" id="ap-error" role="alert" hidden></p>
+    <div class="actions appearance-actions"><button type="button" class="btn quiet" id="ap-reset">Reset appearance</button><span class="spacer"></span><button type="button" class="btn" id="ap-cancel">Cancel</button><button type="submit" class="btn primary" id="ap-keep">Keep changes</button></div>
+  </form>`);
+  const form = d.querySelector("#appearance-form");
+  const find = (id) => form.querySelector(`#${id}`);
+  let importedName = "", renameId = null;
+  const error = (message = "") => { find("ap-error").textContent = message; find("ap-error").hidden = !message; };
+  const sync = () => {
+    const value = tx.draft;
+    find("ap-design").value = value.design;
+    for (const key of ["density", "scale", "rig", "motion"]) find(`ap-${key}`).value = String(value.appearance[key]);
+    find("ap-color").value = value.appearance.accent || "#dfb878";
+    find("ap-hex").value = value.appearance.accent || "";
+    find("ap-hex").setCustomValidity("");
+    find("ap-accent-note").textContent = value.design === "contrast"
+      ? "High contrast keeps its yellow accent. Your custom color is retained for other designs."
+      : "Adjusted for legibility. Lights keep their own colors.";
+  };
+  const paintLooks = () => {
+    const looks = tx.draft.looks;
+    find("ap-look-count").textContent = `${looks.length} / 12`;
+    find("ap-save-look").disabled = !renameId && looks.length >= 12;
+    find("ap-save-look").textContent = renameId ? "Rename look" : "Add to saved looks";
+    setHTML(find("ap-looks"), looks.length ? looks.map((look) => `<div class="appearance-look" data-look="${look.id}">
+      <button type="button" class="appearance-look-apply" data-look-apply="${look.id}" aria-label="Apply ${esc(look.name)}"><span class="appearance-look-swatch dsg-preview" data-design="${look.design}" aria-hidden="true"><i style="background:${look.appearance.accent || "var(--brass)"}"></i></span><span><strong>${esc(look.name)}</strong><small>${esc(DESIGNS.find((item) => item.id === look.design)?.name || "Graphite")} · ${look.appearance.scale}%</small></span></button>
+      <div class="appearance-look-actions"><button type="button" class="btn quiet" data-look-rename="${look.id}" aria-label="Rename ${esc(look.name)}">Rename</button><button type="button" class="btn quiet" data-look-delete="${look.id}" aria-label="Delete ${esc(look.name)}">Delete</button></div></div>`).join("")
+      : `<p class="appearance-empty">A quieter evening. A closer view.<br>Keep a few looks that feel like yours.</p>`);
+  };
+  const preview = (patch) => { tx.preview(patch); sync(); error(); };
+  const restore = () => {
+    tx.cancel();
+    if (appearanceSession === tx) appearanceSession = null;
+    observer.disconnect();
+    d.removeEventListener("cancel", onCancel);
+    d.removeEventListener("close", onClose);
+  };
+  const onCancel = (event) => { if (tx.saving) event.preventDefault(); };
+  const onClose = () => restore();
+  // Replacing a shared sheet is also a Cancel, even without a native close event.
+  const observer = new MutationObserver(() => { if (!d.contains(form)) restore(); });
+  observer.observe(d, { childList: true });
+  d.addEventListener("cancel", onCancel);
+  d.addEventListener("close", onClose);
+  form.addEventListener("change", (event) => {
+    const target = event.target;
+    if (target.id === "ap-design") preview({ design: target.value });
+    else if (["ap-density", "ap-scale", "ap-rig", "ap-motion"].includes(target.id)) {
+      const key = target.id.slice(3);
+      preview({ appearance: { ...tx.draft.appearance, [key]: key === "scale" ? Number(target.value) : target.value } });
+    } else if (target.id === "ap-hex") {
+      const value = target.value.trim();
+      if (value && !/^#[0-9a-f]{6}$/i.test(value)) { target.setCustomValidity("Use a six-digit hex color, such as #dfb878."); target.reportValidity(); return; }
+      preview({ appearance: { ...tx.draft.appearance, accent: value || null } });
+    }
+  });
+  find("ap-hex").addEventListener("input", () => find("ap-hex").setCustomValidity(""));
+  find("ap-color").addEventListener("input", (event) => preview({ appearance: { ...tx.draft.appearance, accent: event.target.value } }));
+  find("ap-default-accent").addEventListener("click", () => preview({ appearance: { ...tx.draft.appearance, accent: null } }));
+  find("ap-reset").addEventListener("click", () => preview({ appearance: DEFAULT_APPEARANCE }));
+  find("ap-cancel").addEventListener("click", () => { if (!tx.saving) { restore(); closeSheet(); } });
+  find("ap-looks").addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button || tx.saving) return;
+    const id = button.dataset.lookApply || button.dataset.lookRename || button.dataset.lookDelete;
+    const look = tx.draft.looks.find((item) => item.id === id);
+    if (!look) return;
+    if (button.dataset.lookApply) { preview({ design: look.design, appearance: look.appearance }); importedName = look.name; }
+    else if (button.dataset.lookRename) { renameId = id; find("ap-name").value = look.name; paintLooks(); find("ap-name").focus(); find("ap-name").select(); }
+    else { preview({ looks: tx.draft.looks.filter((item) => item.id !== id) }); if (renameId === id) renameId = null; paintLooks(); }
+  });
+  find("ap-save-look").addEventListener("click", () => {
+    const name = find("ap-name").value.trim();
+    if (!name) { error("Give this look a name first."); find("ap-name").focus(); return; }
+    const draft = tx.draft;
+    if (renameId) draft.looks = draft.looks.map((look) => look.id === renameId ? { ...look, name } : look);
+    else {
+      if (draft.looks.length >= 12) { error("Your collection is full. Delete a look before adding another."); return; }
+      draft.looks.push({ id: `look-${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}`, name, design: draft.design, appearance: draft.appearance });
+    }
+    preview({ looks: draft.looks }); renameId = null; importedName = name; find("ap-name").value = ""; paintLooks();
+  });
+  find("ap-name").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); find("ap-save-look").click(); }
+  });
+  find("ap-import").addEventListener("click", () => find("ap-file").click());
+  find("ap-file").addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      if (file.size > 65536) throw new Error("Choose an appearance recipe smaller than 64 KB.");
+      const recipe = parseLookRecipe(await file.text());
+      if (tx.closed || tx.saving || !d.contains(form)) return;
+      importedName = recipe.name; renameId = null;
+      preview({ design: recipe.design, appearance: recipe.appearance });
+      find("ap-name").value = recipe.name; paintLooks();
+    } catch (e) { error(e.message); }
+    event.target.value = "";
+  });
+  find("ap-export").addEventListener("click", () => {
+    const name = find("ap-name").value.trim() || importedName || "My look";
+    const url = URL.createObjectURL(new Blob([encodeLookRecipe({ ...tx.draft, name })], { type: "application/json" }));
+    const link = document.createElement("a"); link.href = url; link.download = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) || "my-look"}.airglow-look.json`;
+    link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (tx.saving || !form.reportValidity()) return;
+    error();
+    const controls = [...form.querySelectorAll("button, input, select")];
+    controls.forEach((control) => { control.disabled = true; });
+    find("ap-keep").textContent = "Saving…";
+    try {
+      const confirmed = await tx.keep();
+      setPresentation(confirmed, true);
+      const stillHere = d.contains(form);
+      restore();
+      if (stillHere) closeSheet();
+      renderSettings();
+    } catch (e) {
+      error(`Could not save: ${e.message}. Your preview is still here.`);
+      controls.forEach((control) => { control.disabled = false; });
+      find("ap-keep").textContent = "Keep changes";
+      paintLooks();
+    }
+  });
+  sync(); paintLooks();
+  find("ap-design").focus({ preventScroll: true });
+}
+
 export async function loadSettings() {
   try { S.settings = await get("/api/settings"); renderSettings(); } catch (e) { fail(e); }
   refreshTools();
@@ -134,7 +315,9 @@ export function renderSettings() {
   const v = S.settings;
   if (!v) return;
   const s = v.settings;
-  applyDesign(s.design);
+  if (appearanceSession && !appearanceSession.closed) setPresentation(appearanceSession.draft);
+  else if (pendingDesign) setPresentation({ ...s, design: pendingDesign });
+  else setPresentation(s, true);
   const designName = DESIGNS.find((d) => d.id === s.design)?.name || "Graphite";
   const sensorsOk = S.state?.sensors?.online;
   setHTML($("#settings"), `
@@ -143,6 +326,7 @@ export function renderSettings() {
       ${row("Temperature unit", "", `<div class="seg" id="s-unit" role="radiogroup" aria-label="Temperature unit"><button role="radio" data-v="C" aria-checked="${s.temp_unit === "C"}">°C</button><button role="radio" data-v="F" aria-checked="${s.temp_unit === "F"}">°F</button></div>`)}
       ${row("Interface design", "Changes how Airglow looks, not what it does. Your lights keep their real colours in every design.",
         `<span class="design-current"><span class="dsg-preview" data-design="${esc(s.design)}" aria-hidden="true">${previewHTML()}</span><button type="button" class="btn" id="s-design" aria-label="Change interface design (currently ${esc(designName)})">Change</button></span>`)}
+      ${row("Personal look", esc(appearanceName(s.appearance)), `<button type="button" class="btn" id="s-appearance">Customize</button>`)}
       ${row("Electricity price", "Feeds the Cost per hour tile. It starts at the German household average of 37.97 ct/kWh (Destatis, first half of 2026); Hamburg tariffs run from about 35 ct to 45 ct. Only the processor and graphics card power Airglow already reads is counted.",
         `<input class="text num" id="s-price" type="number" min="0.01" max="5" step="0.01" value="${s.energy_price}" aria-label="Electricity price per kilowatt hour" style="width:110px"><span class="hint">€/kWh</span>`)}
     </section>
@@ -240,14 +424,21 @@ function noteSaved(label = "Saved") {
   savedTimer = setTimeout(() => { el.textContent = ""; el.classList.remove("show"); }, 2400);
 }
 
-async function save(patch, label = "Saved") {
+const writeSettings = serializeWrites(({ path, patch }) => post(path, patch));
+let pendingSettings = Promise.resolve();
+function save(patch, label = "Saved", propagate = false, path = "/api/settings") {
+  const result = saveSettings(patch, label, propagate, path);
+  pendingSettings = result.catch(() => {});
+  return result;
+}
+async function saveSettings(patch, label, propagate, path) {
   // Rebuilding the page is what the server's answer is; keep the scroll position and the focused control where they
   // were instead of dropping the user at the top after every change.
   const view = $('[data-view="settings"]');
   const scrollTop = view?.scrollTop || 0;
   const focused = document.activeElement?.id;
   try {
-    S.settings = await post("/api/settings", patch);
+    S.settings = await writeSettings({ path, patch });
     renderSettings();
     if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
     if (view) {
@@ -257,7 +448,8 @@ async function save(patch, label = "Saved") {
     paintNav();
     noteSaved(label);
     emit("refresh");
-  } catch (e) { fail(e); renderSettings(); }
+    return S.settings;
+  } catch (e) { if (!propagate) fail(e); renderSettings(); if (propagate) throw e; }
 }
 
 export function initSettings() {
@@ -304,6 +496,7 @@ export function initSettings() {
     if (e.target.closest("#s-welcome")) openWelcome();
     if (e.target.closest("#s-keys")) openShortcuts();
     if (e.target.closest("#s-design")) designSheet();
+    if (e.target.closest("#s-appearance")) openAppearance().catch(fail);
     if (e.target.closest("#s-rig-import")) openRigImport();
     if (e.target.closest("#s-rig-export")) {
       const button = e.target.closest("#s-rig-export");
@@ -319,7 +512,7 @@ export function initSettings() {
     }
     if (e.target.closest("#s-reset")) {
       if (!confirm("Put the settings back to how they start on a new PC?\n\nZones, presets, fan curves and overview tiles are kept.")) return;
-      post("/api/settings/reset", {}).then((v) => { S.settings = v; renderSettings(); noteSaved("Settings reset"); emit("refresh"); }).catch(fail);
+      save({}, "Settings reset", false, "/api/settings/reset");
     }
   });
   on("state", paintUpdate);

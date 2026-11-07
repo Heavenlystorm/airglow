@@ -70,9 +70,10 @@ async function harness() {
     if (!elements.has(selector)) elements.set(selector, element());
     return elements.get(selector);
   }
-  const document = Object.assign(element(), { createElement: element, visibilityState: "hidden" });
+  const document = Object.assign(element(), { createElement: element, visibilityState: "hidden", hidden: true, documentElement: element() });
   const context = vm.createContext({
-    document, window: element(), location: { hash: "#lighting" }, console,
+    document, window: Object.assign(element(), { matchMedia: () => ({ matches: false, addEventListener() {} }) }), location: { hash: "#lighting" }, console,
+    MutationObserver: class { observe() {} disconnect() {} },
     structuredClone, AbortController, TextEncoder, performance, confirm: () => true,
     localStorage: {
       getItem: (key) => storage.get(key) ?? null,
@@ -91,7 +92,7 @@ async function harness() {
       }));
     },
   });
-  const real = new Set(["core", "studio", "studio-start", "studio-document", "studio-preview", "studio-gallery", "studio-packs", "fans", "main", "lighting"]);
+  const real = new Set(["core", "studio", "studio-start", "studio-document", "studio-preview", "studio-gallery", "studio-packs", "studio-variations", "fans", "main", "lighting"]);
   const extra = {
     studio: "export { E, save, quietSave, newDoc, snapDoc, saveDraftNow, pending };",
     fans: "export { E, renderEditor, movePoint };",
