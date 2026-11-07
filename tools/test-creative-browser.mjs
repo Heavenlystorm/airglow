@@ -80,9 +80,16 @@ test("paint supports freehand, gesture undo, numeric edits and saved-mask recove
   await eventually(() => page.locator("#st-paint-status").textContent(), x => x.startsWith("0 LEDs"), "Clear creates an empty mask");
   await page.locator("#st-paint-radius-number").fill("80");
   const canvas = page.locator("#st-canvas"); await canvas.scrollIntoViewIfNeeded();
+  await eventually(() => page.locator("#st-meter").textContent(), x => x.includes("LEDs"), "Editor preview has rendered before drawing");
   const r = await canvas.boundingBox();
-  await page.mouse.move(r.x + r.width / 2, r.y + r.height * .15); await page.mouse.down();
-  await page.mouse.move(r.x + r.width / 2, r.y + r.height * .85, { steps: 12 }); await page.mouse.up();
+  // A configured LED need not be on the canvas centerline. One continuous sweep covers the visible rig.
+  await page.mouse.move(r.x + 12, r.y + 12); await page.mouse.down();
+  let right = true;
+  for (let y = 12; y < r.height; y += 80) {
+    await page.mouse.move(r.x + (right ? r.width - 12 : 12), r.y + y, { steps: 8 });
+    right = !right;
+  }
+  await page.mouse.up();
   await eventually(() => page.locator("#st-paint-status").textContent(), x => !x.startsWith("0 LEDs"), "Freehand stroke selects LEDs");
   await page.keyboard.press("Control+z");
   await eventually(() => page.locator("#st-paint-status").textContent(), x => x.startsWith("0 LEDs"), "One undo reverts the stroke");
