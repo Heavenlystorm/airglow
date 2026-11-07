@@ -151,6 +151,62 @@ class LayoutTests(unittest.TestCase):
     def test_default_is_valid(self):
         self.assertEqual(config.validate_overview(config.DEFAULT_OVERVIEW), config.DEFAULT_OVERVIEW)
 
+    def test_tile_presentation_roundtrips_in_active_and_saved_workspaces(self):
+        tiles = [
+            {"id": "rig", "type": "lighting", "w": 3, "h": 2, "view": "3d",
+             "appearance": {"emphasis": "focus", "accent": "#AABB12"}},
+            {"id": "cpu", "type": "sensor", "sensors": ["auto/cpu_temp"], "style": "auto", "w": 1, "h": 1,
+             "appearance": {"emphasis": "quiet", "accent": None}},
+            {"id": "fans", "type": "fans", "w": 2, "h": 2, "appearance": {}},
+        ]
+        original = {"tiles": tiles, "pins": ["auto/cpu_temp"], "active_workspace": "desk",
+                    "workspaces": [{"id": "desk", "name": "Desk", "tiles": copy.deepcopy(tiles), "pins": ["auto/cpu_temp"]}]}
+        before = copy.deepcopy(original)
+        expected = copy.deepcopy(original)
+        for layout in (expected, expected["workspaces"][0]):
+            layout["tiles"][0]["appearance"]["accent"] = "#aabb12"
+            layout["tiles"][2]["appearance"] = {"emphasis": "standard", "accent": None}
+        store = config.Store(self.tmp.name)
+        self.assertEqual(store.set_overview(original), expected)
+        self.assertEqual(config.Store(self.tmp.name).get_overview(), expected)
+        self.assertEqual(original, before)
+
+    def test_omitted_tile_presentation_keeps_legacy_document_shape(self):
+        original = copy.deepcopy(config.DEFAULT_OVERVIEW)
+        self.assertEqual(config.validate_overview(original), original)
+        self.assertTrue(all("appearance" not in tile and "view" not in tile for tile in original["tiles"]))
+
+    def test_invalid_tile_presentation_fails_before_any_saved_state_changes(self):
+        store = config.Store(self.tmp.name)
+        good = {"tiles": [{"id": "rig", "type": "lighting", "w": 2, "h": 2}], "pins": [],
+                "active_workspace": "desk", "workspaces": [
+                    {"id": "desk", "name": "Desk", "tiles": [{"id": "fans", "type": "fans", "w": 1, "h": 1}], "pins": []}]}
+        before = store.set_overview(good)
+        disk_before = Path(self.tmp.name, "overview.json").read_bytes()
+        invalid = [
+            {"appearance": None}, {"appearance": []}, {"appearance": "focus"},
+            {"appearance": {"emphasis": None}}, {"appearance": {"emphasis": "loud"}},
+            {"appearance": {"accent": "red"}}, {"appearance": {"accent": "#abc"}},
+            {"appearance": {"accent": "#aabbcc;"}}, {"appearance": {"accent": 0}},
+            {"appearance": {"accent": "#aabbcc\n"}},
+            {"appearance": {"accent": False}}, {"appearance": {"effect": "rainbow"}},
+            {"view": None}, {"view": "4d"}, {"type": "fans", "view": "2d"},
+        ]
+        for change in invalid:
+            for saved_workspace in (False, True):
+                bad = copy.deepcopy(before)
+                layout = bad["workspaces"][0] if saved_workspace else bad
+                layout["tiles"][0].update(change)
+                with self.subTest(change=change, saved_workspace=saved_workspace):
+                    with self.assertRaises(ValueError):
+                        store.set_overview(bad)
+                    self.assertEqual(store.get_overview(), before)
+                    self.assertEqual(Path(self.tmp.name, "overview.json").read_bytes(), disk_before)
+
+    def test_explicit_null_sensor_style_is_invalid(self):
+        with self.assertRaises(ValueError):
+            config.validate_overview({"tiles": [{"id": "cpu", "type": "sensor", "sensors": ["auto/cpu_temp"], "style": None}], "pins": []})
+
     def test_rejects_bad_tiles(self):
         good = copy.deepcopy(config.DEFAULT_OVERVIEW)
         for bad in (

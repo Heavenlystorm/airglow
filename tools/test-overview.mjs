@@ -110,7 +110,7 @@ test("resize snap thresholds follow visual cells at 90 and 120 percent appearanc
   for (const [zoom, delta, size] of [[.9, .52, 2], [1.2, .45, 1]]) {
     const h = await harness(undefined, 1280, zoom), tile = h.O.layout.tiles[0];
     tile.w = 1; tile.h = 1;
-    h.O.drag = { mode: "resize", t: tile, el: { style: {}, dataset: {} }, w0: 1, savedW0: 1, h0: 1, x0: 0, y0: 0 };
+    h.O.drag = { mode: "resize", t: tile, el: { style: { removeProperty() {}, setProperty() {} }, dataset: {} }, w0: 1, savedW0: 1, h0: 1, x0: 0, y0: 0 };
     h.onPointerMove({ clientX: 309 * zoom * delta, clientY: 164 * zoom * delta });
     assert.equal(tile.w, size); assert.equal(tile.h, size);
   }

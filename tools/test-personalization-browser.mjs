@@ -143,7 +143,7 @@ test("workspace starters preserve the old layout, switch, undo, and import", asy
   await page.locator("#ov-workspace-manage").click();
   await page.locator("#ov-workspace-new").click();
   await page.locator("#ov-workspace-name").fill("Living Rig");
-  await page.locator("#ov-workspace-starter").selectOption("lighting");
+  await page.locator("#ov-workspace-starter").selectOption("showcase");
   await page.locator("#ov-workspace-form button[type=submit], #ov-workspace-form .primary").click();
   const created = await eventually(() => api("/api/overview"), x => x.workspaces?.length >= 2, "Workspace creation saved");
   const old = created.workspaces.find(x => x.id !== created.active_workspace);

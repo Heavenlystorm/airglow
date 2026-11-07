@@ -72,7 +72,7 @@ DEFAULT_PRESETS = [
 
 # The Overview: a grid of tiles (4 columns). Sensor tiles name readings by id ("auto/..." shortcuts work on any PC).
 TILE_TYPES = ("sensor", "lighting", "presets", "fans", "control")
-TILE_STYLES = ("spark", "ring", "graph", "bar")
+TILE_STYLES = ("auto", "spark", "ring", "graph", "bar")
 GRID_COLUMNS = 4
 DEFAULT_OVERVIEW = {
     "tiles": [
@@ -386,6 +386,19 @@ def _sensor_id(v):
     return v
 
 
+def _validate_tile_appearance(value):
+    if not isinstance(value, dict) or set(value) - {"emphasis", "accent"}:
+        raise ValueError("tile appearance must contain supported display preferences")
+    emphasis, accent = value.get("emphasis", "standard"), value.get("accent")
+    if emphasis not in ("standard", "focus", "quiet"):
+        raise ValueError("tile emphasis must be standard, focus or quiet")
+    if accent is not None:
+        if not isinstance(accent, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
+            raise ValueError("tile accent must be a colour like #12abef or null")
+        accent = accent.lower()
+    return {"emphasis": emphasis, "accent": accent}
+
+
 def _validate_overview_layout(o):
     if not isinstance(o, dict):
         raise ValueError("the overview must be an object")
@@ -405,6 +418,13 @@ def _validate_overview_layout(o):
             raise ValueError(f"unknown tile type '{kind}'")
         tile = {"id": tid, "type": kind, "w": _int_in(t.get("w", 1), 1, GRID_COLUMNS, "Tile width"),
                 "h": _int_in(t.get("h", 1), 1, 3, "Tile height")}
+        # Omitted fields retain the old document shape; explicit preferences are validated in full.
+        if "appearance" in t:
+            tile["appearance"] = _validate_tile_appearance(t["appearance"])
+        if "view" in t:
+            if kind != "lighting" or t["view"] not in ("2d", "3d"):
+                raise ValueError("lighting view must be 2d or 3d")
+            tile["view"] = t["view"]
         if kind == "sensor":
             ids = t.get("sensors")
             if not isinstance(ids, list) or not 1 <= len(ids) <= 2:

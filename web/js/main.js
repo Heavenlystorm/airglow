@@ -67,7 +67,7 @@ async function route() {
   if (view === "fans") { m.renderFans(); if (arg) m.showFan?.(decodeURIComponent(arg)); }
   else if (view === "devices") { if (arg) m.showZone(decodeURIComponent(arg)); m.renderDevices(); }
   else if (view === "settings") m.loadSettings();
-  else if (view === "lighting") m.renderLighting();
+  else if (view === "lighting") { if (arg) m.showZone(decodeURIComponent(arg)); m.renderLighting(); }
   else if (view === "studio") await m.renderStudio(arg);
 }
 window.addEventListener("hashchange", () => { route().catch(fail); });

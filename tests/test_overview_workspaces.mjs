@@ -125,3 +125,114 @@ test("server reconciliation keeps matching tile objects while removing obsolete 
   next.tiles[0].w = 1;
   assert.equal(doc.tiles[0].w, 3);
 });
+
+test("tile appearance, rig view and automatic instruments survive export/import and workspace switches", () => {
+  const doc = original();
+  doc.tiles[0].view = "3d";
+  doc.tiles[0].appearance = { emphasis: "focus", accent: "#AABB12" };
+  doc.tiles[1].appearance = { emphasis: "quiet", accent: null };
+  doc.tiles[1].style = "auto";
+  W.initializeWorkspaces(doc);
+  const imported = W.importWorkspace(JSON.stringify(W.exportWorkspace(doc)));
+  assert.deepEqual(imported.tiles[0], { id: "rig", type: "lighting", w: 3, h: 2, view: "3d",
+    appearance: { emphasis: "focus", accent: "#aabb12" } });
+  assert.deepEqual(imported.tiles[1], { id: "cpu", type: "sensor", sensors: ["auto/cpu_temp"], style: "auto",
+    w: 1, h: 1, label: "Processor", appearance: { emphasis: "quiet", accent: null } });
+  W.createWorkspace(doc, "Imported", imported);
+  W.switchWorkspace(doc, "my-workspace"); W.switchWorkspace(doc, "imported");
+  assert.deepEqual(doc.tiles, imported.tiles);
+  imported.tiles[0].appearance.accent = null;
+  assert.equal(doc.tiles[0].appearance.accent, "#aabb12");
+});
+
+test("optional tile presentation defaults only inside an explicitly supplied appearance", () => {
+  const recipe = { format: "airglow-workspace", version: 1, name: "Desk", ...original() };
+  assert.deepEqual(W.importWorkspace(JSON.stringify(recipe)), { name: "Desk", ...original() });
+  recipe.tiles[0].appearance = {};
+  recipe.tiles[1].appearance = { accent: "#123ABC" };
+  const imported = W.importWorkspace(JSON.stringify(recipe));
+  assert.deepEqual(imported.tiles[0].appearance, { emphasis: "standard", accent: null });
+  assert.deepEqual(imported.tiles[1].appearance, { emphasis: "standard", accent: "#123abc" });
+  assert.equal(Object.hasOwn(imported.tiles[0], "view"), false);
+});
+
+test("invalid presentation imports and workspace creation leave the entire document unchanged", () => {
+  const doc = original(); W.initializeWorkspaces(doc);
+  const before = structuredClone(doc);
+  for (const change of [
+    { appearance: null }, { appearance: [] }, { appearance: "focus" },
+    { appearance: { emphasis: null } }, { appearance: { emphasis: "loud" } },
+    { appearance: { accent: "red" } }, { appearance: { accent: "#abc" } },
+    { appearance: { accent: "#aabbcc;" } }, { appearance: { accent: 0 } },
+    { appearance: { accent: "#aabbcc\n" } },
+    { appearance: { accent: false } }, { appearance: { effect: "rainbow" } },
+    { view: null }, { view: "4d" }, { type: "fans", view: "2d" },
+  ]) {
+    const recipe = W.exportWorkspace(doc); Object.assign(recipe.tiles[0], change);
+    assert.throws(() => W.importWorkspace(JSON.stringify(recipe)), JSON.stringify(change));
+    assert.throws(() => W.createWorkspace(doc, "Invalid", recipe), JSON.stringify(change));
+    assert.deepEqual(doc, before);
+  }
+});
+
+test("explicit null sensor style is invalid instead of silently becoming a legacy style", () => {
+  const recipe = { format: "airglow-workspace", version: 1, name: "Desk", ...original() };
+  recipe.tiles[1].style = null;
+  assert.throws(() => W.importWorkspace(JSON.stringify(recipe)), /style/i);
+});
+
+test("optional starters are distinct automatic arrangements and retain the source and all sensor identities", () => {
+  const doc = original();
+  doc.tiles.push({ id: "gpu", type: "sensor", sensors: ["/gpu/0/load/0"], style: "ring", w: 1, h: 1 });
+  doc.pins.push("sys/net_down");
+  W.initializeWorkspaces(doc);
+  const before = structuredClone(doc), starters = {};
+  for (const kind of ["showcase", "monitoring", "balanced"]) {
+    const result = W.starterWorkspace(doc, kind); starters[kind] = result;
+    assert.deepEqual(doc, before);
+    const valid = W.importWorkspace(JSON.stringify({ format: "airglow-workspace", version: 1, name: kind, ...result }));
+    assert.deepEqual(valid.tiles, result.tiles);
+    assert.deepEqual(result.pins, before.pins);
+    assert.ok(result.tiles.some(t => t.type === "sensor"));
+    for (const tile of result.tiles.filter(t => t.type === "sensor")) {
+      assert.equal(tile.style, "auto");
+      assert.ok(tile.sensors.every(id => ["auto/cpu_temp", "/gpu/0/load/0", "sys/net_down"].includes(id)));
+    }
+  }
+  assert.notDeepEqual(starters.showcase.tiles, starters.balanced.tiles);
+  assert.notDeepEqual(starters.balanced.tiles, starters.monitoring.tiles);
+  assert.equal(starters.showcase.tiles[0].type, "lighting");
+  assert.deepEqual(starters.showcase.tiles[0].appearance, { emphasis: "focus", accent: null });
+  assert.equal(starters.showcase.tiles[0].view, "2d");
+  assert.ok(starters.monitoring.tiles.some(t => t.type === "fans"));
+  assert.deepEqual(W.starterWorkspace(doc, "lighting"), starters.showcase);
+  assert.deepEqual(W.starterWorkspace(doc, "current"), { tiles: before.tiles, pins: before.pins });
+  assert.throws(() => W.starterWorkspace(doc, "unknown"), /starter/i);
+  W.createWorkspace(doc, "Showcase", starters.showcase);
+  assert.deepEqual(doc.workspaces[0], before.workspaces[0]);
+  starters.showcase.tiles[0].appearance.accent = "#ffffff";
+  assert.equal(doc.tiles[0].appearance.accent, null);
+});
+
+test("starters handle empty layouts, colliding fallback IDs and the maximum tile count", () => {
+  for (const kind of ["showcase", "monitoring", "balanced"]) {
+    const empty = W.starterWorkspace({ tiles: [], pins: [] }, kind);
+    assert.equal(empty.tiles.some(t => t.type === "sensor"), false, "no fabricated sensors");
+    const doc = { tiles: Array.from({ length: 32 }, (_, i) => ({ id: i ? `s-${i}` : "lighting",
+      type: "sensor", sensors: [`/cpu/temperature/${i}`], style: "spark", w: 1, h: 1 })), pins: [] };
+    const before = structuredClone(doc);
+    const result = W.starterWorkspace(doc, kind);
+    assert.ok(result.tiles.length <= 32);
+    assert.equal(new Set(result.tiles.map(t => t.id)).size, result.tiles.length);
+    assert.doesNotThrow(() => W.importWorkspace(JSON.stringify({ format: "airglow-workspace", version: 1, name: kind, ...result })));
+    assert.deepEqual(doc, before);
+  }
+});
+
+test("balanced starter closes its instrument area for one through four sensors", () => {
+  for (let n=1;n<=4;n++) {
+    const doc={tiles:Array.from({length:n},(_,i)=>({id:`s${i}`,type:"sensor",sensors:[`auto/s${i}`],style:"spark",w:1,h:1})),pins:[]};
+    const instruments=W.starterWorkspace(doc,"balanced").tiles.filter(t=>t.type==="sensor");
+    assert.equal(instruments.reduce((area,t)=>area+t.w*t.h,0),4);
+  }
+});

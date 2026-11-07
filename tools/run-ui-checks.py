@@ -23,6 +23,7 @@ SUITES = {
     "rig3d": ["node", "--test", "tools/test-rig-3d-browser.mjs"],
     "creative": ["node", "--test", "tools/test-creative-browser.mjs"],
     "blend-renderer": ["node", "tools/test-blend-renderer.mjs"],
+    "overview-canvas": ["node", "--test", "tools/test-overview-canvas.mjs"],
 }
 
 
@@ -50,6 +51,7 @@ def main():
                      AIRGLOW_RESPONSIVE_OUTPUT=str(output / "responsive"), AIRGLOW_TELEMETRY_OUTPUT=str(output / "telemetry"),
                      AIRGLOW_PERSONALIZATION_OUTPUT=str(output / "personalization"),
                      AIRGLOW_RIG3D_OUTPUT=str(output / "rig-3d"), AIRGLOW_CREATIVE_OUTPUT=str(output / "creative"))
+    check_env["AIRGLOW_CANVAS_OUTPUT"] = str(output / "overview-canvas")
     result = {"fixture": str(fixture), "checks": {}}
     with (output / "fixture.log").open("w", encoding="utf-8") as log:
         server = subprocess.Popen([sys.executable, "-u", "tools/dev_server.py", "--demo"], cwd=ROOT, env=env,

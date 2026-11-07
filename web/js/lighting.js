@@ -290,6 +290,10 @@ function renderInspector(force = false) {
 }
 
 let lastKey = "";
+export function showZone(key) {
+  selectedZone = S.zones?.zones?.some(z => z.key === key) ? key : null;
+  select(selectedZone); lastKey = ""; renderInspector(true);
+}
 export function renderLighting() {
   if (!S.state) return;
   renderDeck();
