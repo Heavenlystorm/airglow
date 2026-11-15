@@ -321,14 +321,13 @@ class LibraryTests(unittest.TestCase):
 
     def test_saved_studio_scene_survives_a_fresh_start(self):
         # in a new process the settings load before anything imports lighting/studio.py; the scene must survive
-        import subprocess
-        import sys
+        from tests.isolation import run_python
         self.lib.save_mine(builder())
         (Path(self.tmp.name) / "state.json").write_text(json.dumps(
             {"scene": {"effect": "fx:me.aurora-wave", "params": {}, "brightness": 80, "on": True}}), encoding="utf-8")
         code = ("import sys; from airglow import fxlibrary; fxlibrary.LIBRARY = fxlibrary.Library(sys.argv[1]); "
                 "from airglow.config import Store; print(Store(sys.argv[1]).state['scene']['effect'])")
-        r = subprocess.run([sys.executable, "-c", code, self.tmp.name], capture_output=True, text=True, cwd=ROOT, check=True)
+        r = run_python(code, self.tmp.name, cwd=ROOT)
         self.assertEqual(r.stdout.strip(), "fx:me.aurora-wave", r.stderr)
 
     def test_registry_knows_studio_effects(self):
@@ -399,6 +398,21 @@ class HostTests(unittest.TestCase):
         self.assertEqual([p[3] for p in pts], [0.0, 0.25, 0.5, 0.75])
         self.assertEqual([p[4] for p in pts], [0, 0, 1, 1])
         self.assertTrue(all(p[5] == "hub/1" for p in pts))
+
+    def test_readiness_requires_the_exact_reserved_instance_ids(self):
+        zone = self.zone("hub/1")
+        required = self.host.reconcile([(self.eff, {}, zone)])
+        iid = next(iter(required))
+        frame = base64.b64encode(b"\xff\x00\x00" * zone.n).decode()
+        self.host.frames({"frames": {iid: frame}})
+        self.assertEqual(self.host.readiness(required), (True, []))
+        replacement = self.host.reconcile([(self.eff, {"changed": 1}, zone)])
+        self.host.frames({"frames": {next(iter(replacement)): frame}})
+        self.assertEqual(self.host.readiness(replacement), (True, []))
+        self.assertEqual(self.host.readiness(required), (False, []))
+        self.host.reconcile([])
+        self.assertEqual(self.host.readiness(required), (False, []))
+        self.assertEqual(self.host.readiness({}), (True, []))
 
     def test_render_loads_once_and_returns_the_hosts_colours(self):
         z = self.zone("hub/1")

@@ -174,13 +174,15 @@ def _route(ctrl, hooks, method, path, body, query):
         eff = lib.get(fx_id)
         if not eff:
             raise StudioError(404, "There's no such effect.")
-        if ctrl.trial and ctrl.trial.get("kind") == "studio":
-            ctrl.end_trial()
-        studio.HOST.retry(fx_id)
-        ctrl.set_scene({"effect": fx_id, "params": effects.clean_values(eff["schema"], body.get("values")), "on": True})
-        return {"scene": ctrl.base_scene, "effective": ctrl.effective_scene}
+        with ctrl._lock:
+            studio.HOST.retry(fx_id)
+            ctrl.set_scene({"effect": fx_id, "params": effects.clean_values(eff["schema"], body.get("values")), "on": True},
+                           end_trial_kind="studio")
+            return ctrl.scene_response()
     if path == "/api/studio/retry":
         studio.HOST.retry(body.get("fx_id"))
+        if not body.get("fx_id") or body.get("fx_id") == ctrl.base_scene.get("effect"):
+            ctrl.set_scene({"retry": True})
         return {"ok": True}
     if path == "/api/studio/share":
         login = str(body.get("author") or "").strip().lower().lstrip("@")

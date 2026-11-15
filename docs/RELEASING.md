@@ -1,22 +1,24 @@
 # Releasing
 
-Releases are built and published by GitHub Actions ([`release.yml`](../.github/workflows/release.yml)) when a
-version tag is pushed. Nothing is built on a laptop.
+Published releases are built by GitHub Actions ([`release.yml`](../.github/workflows/release.yml)) when a version
+tag is pushed.
 
 1. Set the version in `airglow/__init__.py` (the only place it lives). `1.6.0` is a stable release,
    `1.6.0-beta.1` a beta.
 2. Give it a section in `CHANGELOG.md` (`## 1.6.0`). A beta without its own section uses `## Unreleased`. The
    section becomes the release notes, on GitHub and in Airglow's update notice.
 3. Commit, then tag and push: `git tag v1.6.0` and `git push origin v1.6.0`.
-4. The workflow checks the tag matches the version, runs the tests, builds with PyInstaller, packs the Velopack
-   release (Setup.exe, the full package, a delta against the channel's previous release, a portable zip and the
-   release feed), publishes the GitHub release (betas as pre-releases), and for stable releases updates winget and
-   the Scoop bucket.
+4. The workflow requires the same source qualification as normal CI, checks the tag, builds with PyInstaller, then
+   packs the Velopack release. The package and native-host checks must pass before publication. Betas are
+   pre-releases. Stable releases also update winget and the Scoop bucket.
 5. Smoke-test the published Setup.exe on a PC (or VM) that has never had Airglow: install, open, check the Devices
    tab, quit from the tray, uninstall from Apps & features.
 
-`.\build.ps1` builds the same release locally into `dist\releases\` for trying it out. It needs
-`dotnet tool install -g vpk --version 1.2.161` (the .NET 8 SDK first, if it isn't there).
+`.\build.ps1` runs the source gate and builds a local candidate in `dist\releases\`. Install the build and browser
+dependencies listed in [Building from source](../README.md#building-from-source) and
+`dotnet tool install -g vpk --version 1.2.161`. Run `python -B tools/qualify.py package` afterwards to verify the
+release feed, ZIP and full package and smoke-test the compiled WebView2 effect host. The command writes logs and
+artifact checksums under `output/qualification/package`. The installer itself still needs the clean-machine check in step 5.
 
 ## How updates reach users
 Airglow uses [Velopack](https://velopack.io). Installs live in `%LOCALAPPDATA%\Airglow` (no admin prompt); the

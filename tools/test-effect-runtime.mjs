@@ -46,6 +46,7 @@ async function hostHarness() {
     constructor(h) { this.h = h; runners.push(this); }
     load() { return Promise.resolve(); }
     tick() { return false; }
+    setPoints() {}
     destroy() {}
   }
   const context = vm.createContext({ ...time, Uint8Array, URLSearchParams,
@@ -262,11 +263,15 @@ test("stopping or failing during initialization cancels the watchdog", () => {
 });
 
 async function runnerHarness({ assetsGate = Promise.resolve() } = {}) {
-  const time = clock(), listeners = new Set(), messages = [], events = [], appended = [];
-  const frame = {
-    style: {}, setAttribute() {}, removed: false,
-    contentWindow: { postMessage: (message) => messages.push(message) },
-    remove() { this.removed = true; },
+  const time = clock(), listeners = new Set(), messages = [], events = [], appended = [], frames = [];
+  const createFrame = () => {
+    const frame = {
+      style: {}, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; }, removed: false,
+      contentWindow: { postMessage: (message) => messages.push(message) },
+      remove() { this.removed = true; },
+    };
+    frames.push(frame);
+    return frame;
   };
   const context = vm.createContext({
     ...time, Uint8Array, ImageBitmap: class {},
@@ -274,7 +279,7 @@ async function runnerHarness({ assetsGate = Promise.resolve() } = {}) {
       addEventListener(type, fn) { listeners.add(fn); },
       removeEventListener(type, fn) { listeners.delete(fn); },
     },
-    document: { createElement: () => frame, body: { appendChild: (f) => appended.push(f) } },
+    document: { createElement: createFrame, body: { appendChild: (f) => appended.push(f) } },
     fetch: async () => {
       await assetsGate;
       return { ok: true, text: async () => "", json: async () => ({ types: {} }) };
@@ -287,10 +292,10 @@ async function runnerHarness({ assetsGate = Promise.resolve() } = {}) {
     onReady: () => events.push("ready"), onStopped: (reason) => events.push(reason),
     onError: (error) => events.push(error.message),
   });
-  const send = (data) => { for (const fn of listeners) fn({ source: frame.contentWindow, data }); };
+  const send = (data, source = runner.frame.contentWindow) => { for (const fn of listeners) fn({ source, data }); };
   const loading = runner.load({ kind: "code", code: "" }, []);
   await settle();
-  return { ...time, runner, frame, loading, send, messages, events, listeners, appended };
+  return { ...time, runner, get frame() { return runner.frame; }, frames, loading, send, messages, events, listeners, appended };
 }
 
 test("runtime assets retry after a failed HTTP response and coalesce concurrent retries", async () => {
@@ -355,7 +360,9 @@ test("destroy while loading assets never appends an orphaned iframe", async () =
 
 test("a page that never says hello reports its startup error and cleans up", async () => {
   const h = await runnerHarness();
-  h.advance(8000);
+  h.advance(4000);
+  await settle();
+  h.advance(4000);
   await h.loading;
   assert.equal(h.frame.removed, true);
   assert.equal(h.listeners.size, 0);
@@ -363,4 +370,60 @@ test("a page that never says hello reports its startup error and cleans up", asy
   assert.equal(h.events.length, 2);
   assert.match(h.events[0], /didn't start/);
   assert.equal(h.events[1], "error");
+  assert.equal(h.appended.length, 2);
+  assert.equal(h.frames.every(frame => frame.removed), true);
+  assert.equal(h.messages.some(message => message.type === "load"), false);
+});
+
+test("a failed pre-code bootstrap retries one fresh sandbox without accepting the old hello", async () => {
+  const h = await runnerHarness();
+  const first = h.frame;
+  h.runner.setParams({ speed: 70 });
+  h.advance(4000);
+  await settle();
+  assert.equal(h.appended.length, 2);
+  assert.equal(first.removed, true);
+  assert.notEqual(h.frame.contentWindow, first.contentWindow);
+  assert.equal(h.frame.attributes.sandbox, "allow-scripts");
+  h.send({ type: "hello" }, first.contentWindow);
+  await settle();
+  assert.equal(h.messages.filter(m => m.type === "load").length, 0);
+  h.send({ type: "hello" });
+  await h.loading;
+  assert.equal(h.messages.filter(m => m.type === "load").length, 1);
+  assert.equal(h.messages.at(-1).params.speed, 70);
+  assert.equal(h.timers.size, 0);
+  assert.deepEqual(h.events, []);
+});
+
+test("destroy during the second bootstrap cancels it without sending effect code", async () => {
+  const h = await runnerHarness();
+  h.advance(4000);
+  await settle();
+  assert.equal(h.appended.length, 2);
+  h.runner.destroy();
+  await h.loading;
+  h.advance(12000);
+  assert.equal(h.appended.length, 2);
+  assert.equal(h.frames.every(frame => frame.removed), true);
+  assert.equal(h.messages.some(message => message.type === "load"), false);
+  assert.equal(h.timers.size, 0);
+  assert.deepEqual(h.events, []);
+});
+
+test("effect initialization errors and worker hangs never retry the sandbox", async () => {
+  for (const reason of ["error", "hung"]) {
+    const h = await runnerHarness();
+    h.send({ type: "hello" });
+    await h.loading;
+    if (reason === "error") h.send({ type: "error", message: "bad init", line: 4 });
+    h.send({ type: "stopped", reason });
+    h.advance(12000);
+    await settle();
+    assert.equal(h.appended.length, 1);
+    assert.equal(h.messages.filter(message => message.type === "load").length, 1);
+    assert.equal(h.frame.removed, true);
+    assert.equal(h.timers.size, 0);
+    assert.deepEqual(h.events, reason === "error" ? ["bad init", "error"] : ["hung"]);
+  }
 });

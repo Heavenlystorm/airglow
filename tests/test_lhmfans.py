@@ -327,8 +327,10 @@ class HttpTests(unittest.TestCase):
             lhmfans.http_set(lhm.url, BOARD, 55)
 
     def test_lhm_not_running(self):
-        with self.assertRaises(OSError):
-            lhmfans.http_set("http://127.0.0.1:1", BOARD, 55, timeout=0.3)
+        from tests.isolation import refusing_port
+
+        with refusing_port() as port, self.assertRaises(OSError):
+            lhmfans.http_set(f"http://127.0.0.1:{port}", BOARD, 55, timeout=0.3)
 
 
 class ControllerTests(unittest.TestCase):
@@ -517,7 +519,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.sent()[BOARD], 100)
         self.assertEqual(self.sent()["/hid/nzxt-kraken/0/control/0"], 100)
 
-    def test_startup_grace_never_suppresses_a_hot_parts_pump_override(self):
+    def test_startup_without_selected_temperature_keeps_pump_failsafe_and_hot_override(self):
         pump = "/hid/nzxt-kraken/0/control/0"
         self.store.update_settings({"temp_source": "gpu"})
         self.store.set_fan_channel(pump, {"mode": "steady", "duty": 20})
@@ -525,7 +527,7 @@ class ControllerTests(unittest.TestCase):
         self.ctrl.tick()
         self.assertIsNone(self.ctrl.fan_temp)
         self.assertFalse(self.ctrl._temp_seen)
-        self.assertEqual(self.sent()[pump], 20)               # quiet grace while the known CPU is cool
+        self.assertEqual(self.sent()[pump], self.store.settings()["fan_failsafe_duty"])
         self.temps["cpu_temp"] = 95.0
         self.ctrl.tick()
         self.ctrl.tick()

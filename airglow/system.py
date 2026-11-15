@@ -13,6 +13,48 @@ log = logging.getLogger(__name__)
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+kernel32.WaitForSingleObject.restype = wintypes.DWORD
+kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE, *([ctypes.POINTER(wintypes.FILETIME)] * 4)]
+
+
+def _process_started_at(handle):
+    created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+    if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                                    ctypes.byref(kernel), ctypes.byref(user)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return (created.dwHighDateTime << 32) | created.dwLowDateTime
+
+
+def current_process_started_at():
+    return _process_started_at(kernel32.GetCurrentProcess())
+
+
+def wait_for_process_exit(pid, started_at, timeout):
+    """Wait for the process that sent the restart, even if its PID has since been reused."""
+    access = 0x100000 | 0x1000                    # SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
+    handle = kernel32.OpenProcess(access, False, pid)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == 87:                         # ERROR_INVALID_PARAMETER: the PID no longer exists
+            return True
+        raise ctypes.WinError(error)
+    try:
+        if _process_started_at(handle) != started_at:
+            return True
+        result = kernel32.WaitForSingleObject(handle, timeout * 1000)
+        if result == 0:                         # WAIT_OBJECT_0
+            return True
+        if result == 258:                       # WAIT_TIMEOUT
+            return False
+        raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        kernel32.CloseHandle(handle)
+
 
 class LASTINPUTINFO(ctypes.Structure):
     _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
@@ -124,6 +166,7 @@ class WNDCLASSW(ctypes.Structure):
 
 
 WM_POWERBROADCAST, WM_QUERYENDSESSION, WM_ENDSESSION, WM_WTSSESSION_CHANGE = 0x0218, 0x0011, 0x0016, 0x02B1
+WM_CLOSE = 0x0010
 PBT_APMSUSPEND, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND = 0x4, 0x12, 0x7
 WTS_SESSION_LOCK, WTS_SESSION_UNLOCK = 0x7, 0x8
 
@@ -141,11 +184,13 @@ class PowerEvents:
         self.handlers = handlers
         self._proc = WNDPROC(self._wndproc)        # keep a reference so it isn't garbage-collected
         self._hwnd = None
+        self._thread = None
+        self._stop = threading.Event()
         self._shutdown_at = 0.0
 
     def _fire(self, name):
         fn = self.handlers.get(name)
-        if fn:
+        if fn and not self._stop.is_set():
             try:
                 fn()
             except Exception:
@@ -159,6 +204,9 @@ class PowerEvents:
         self._fire("shutdown")
 
     def _wndproc(self, hwnd, msg, wparam, lparam):
+        if msg == WM_CLOSE:
+            user32.PostQuitMessage(0)
+            return 0
         if msg == WM_POWERBROADCAST:
             if wparam == PBT_APMSUSPEND:
                 self._fire("suspend")
@@ -187,23 +235,61 @@ class PowerEvents:
     def _run(self):
         user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, ctypes.c_ssize_t]
         user32.DefWindowProcW.restype = ctypes.c_ssize_t
+        kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+        kernel32.GetModuleHandleW.restype = wintypes.HMODULE
         hinst = kernel32.GetModuleHandleW(None)
         wc = WNDCLASSW(lpfnWndProc=self._proc, hInstance=hinst, lpszClassName="AirglowPowerEvents")
-        user32.RegisterClassW(ctypes.byref(wc))
-        user32.CreateWindowExW.restype = wintypes.HWND
-        self._hwnd = user32.CreateWindowExW(0, "AirglowPowerEvents", "Airglow power events", 0,
-                                            0, 0, 0, 0, None, None, hinst, None)
-        if not self._hwnd:
-            log.warning("power events unavailable (window creation failed)")
+        if not user32.RegisterClassW(ctypes.byref(wc)):
+            log.warning("power events unavailable (window class registration failed)")
             return
+        user32.CreateWindowExW.restype = wintypes.HWND
+        user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+                                          ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND,
+                                          wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
+        user32.DestroyWindow.argtypes = [wintypes.HWND]
+        user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+        wts = None
         try:
-            ctypes.WinDLL("wtsapi32").WTSRegisterSessionNotification(self._hwnd, 0)   # NOTIFY_FOR_THIS_SESSION
-        except OSError:
-            pass
-        msg = wintypes.MSG()
-        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-            user32.TranslateMessage(ctypes.byref(msg))
-            user32.DispatchMessageW(ctypes.byref(msg))
+            ex_style = 0x08000000 | 0x00000080      # WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+            self._hwnd = user32.CreateWindowExW(ex_style, wc.lpszClassName, "Airglow power events", 0,
+                                                0, 0, 0, 0, None, None, hinst, None)
+            if not self._hwnd:
+                log.warning("power events unavailable (window creation failed)")
+                return
+            try:
+                wts = ctypes.WinDLL("wtsapi32")
+                wts.WTSRegisterSessionNotification.argtypes = [wintypes.HWND, wintypes.DWORD]
+                wts.WTSUnRegisterSessionNotification.argtypes = [wintypes.HWND]
+                if not wts.WTSRegisterSessionNotification(self._hwnd, 0):  # NOTIFY_FOR_THIS_SESSION
+                    wts = None
+            except OSError:
+                pass
+            msg = wintypes.MSG()
+            while not self._stop.is_set() and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+        finally:
+            hwnd, self._hwnd = self._hwnd, None
+            if hwnd:
+                if wts is not None:
+                    wts.WTSUnRegisterSessionNotification(hwnd)
+                user32.DestroyWindow(hwnd)
+            user32.UnregisterClassW(wc.lpszClassName, hinst)
 
     def start(self):
-        threading.Thread(target=self._run, name="power-events", daemon=True).start()
+        self._thread = threading.Thread(target=self._run, name="power-events", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        if self._stop.is_set():
+            return
+        self._stop.set()
+        hwnd = self._hwnd
+        if hwnd:
+            user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        thread = self._thread
+        if thread and thread.ident is not None and thread is not threading.current_thread():
+            thread.join(timeout=2)
+            if thread.is_alive():
+                log.warning("power event thread is still stopping")

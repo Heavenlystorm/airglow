@@ -27,6 +27,9 @@ from . import effects
 log = logging.getLogger(__name__)
 
 MAX_INSTANCES = 4
+PACKED_BODY_LIMIT = 256 * 1024
+# A frame has a 1-byte ID length, up to 255 ID bytes and a 2-byte RGB length.
+MAX_INSTANCE_LEDS = min(0xFFFF, PACKED_BODY_LIMIT // MAX_INSTANCES - (1 + 255 + 2)) // 3
 UNUSED_SECONDS = 3.0          # an effect nobody rendered for this long is unloaded
 IDLE_STOP_SECONDS = 30.0      # the host process quits this long after the last effect went off
 FRAME_TIMEOUT = 4.0           # no frames for this long while effects run: the host is stuck
@@ -157,6 +160,57 @@ class EffectHost:
         return self._library or fxlibrary.library()
 
     # ------------------------------------------------------------ the engine's side
+    def reconcile(self, requirements):
+        """Reserve the complete next frame before allocating, independent of zone iteration order.
+
+        Changed parameters/geometry get a fresh id: late host replies cannot become the first frame
+        of a newer scene. Outgoing instances are reclaimed immediately, not after the idle grace.
+        """
+        groups = []
+        for eff, params, z in requirements:
+            group = next((g for g in groups if g[0].fx_id == eff.fx_id and
+                          g[0].sha256 == eff.sha256 and g[1] == params), None)
+            if group is None:
+                group = [eff, params, []]
+                groups.append(group)
+            group[2].append(z)
+        if len(groups) > MAX_INSTANCES:
+            raise ValueError(f"Only {MAX_INSTANCES} distinct Studio effects can run at once")
+        with self._lock:
+            keep, missing = {}, []
+            for eff, params, zones in groups:
+                inst = next((i for i in self.instances.values() if i.eff.fx_id == eff.fx_id and
+                             i.eff.sha256 == eff.sha256 and i.params == params and
+                             set(i.slices) == {z.key for z in zones} and
+                             all(i.slices[z.key][2] is z for z in zones)), None)
+                if inst:
+                    keep[inst.id] = inst
+                else:
+                    missing.append((eff, params, zones))
+            for iid in self.instances.keys() - keep.keys():
+                self._emit({"type": "unload", "id": iid})
+            self.instances = keep
+            for eff, params, zones in missing:
+                self._seq += 1
+                inst = Instance(f"i{self._seq}", eff, params, self._clock())
+                for z in zones:
+                    inst.use(z.key, z, self._tick, self._clock())
+                self.instances[inst.id] = inst
+            required = {iid: inst.eff.fx_id for iid, inst in self.instances.items()}
+            if self.instances:
+                self._ensure_running()
+            return required
+
+    def readiness(self, required):
+        """Check the exact reservation, including effects removed by a concurrent failure reply."""
+        with self._lock:
+            problems = [self.problems[fx_id] for fx_id in set(required.values()) if fx_id in self.problems]
+            ready = not problems and all(
+                (inst := self.instances.get(iid)) is not None and inst.eff.fx_id == fx_id and
+                inst.colors is not None and len(inst.colors) == len(inst.points) * 3
+                for iid, fx_id in required.items())
+            return ready, problems
+
     def render(self, eff, z, t, params):
         """Colours for one zone (called by JsEffect.render on the lighting thread)."""
         key = getattr(z, "key", None) or str(id(z))
@@ -275,7 +329,10 @@ class EffectHost:
                 inst = self.instances.get(iid)
                 if inst and isinstance(b64, str):
                     try:
-                        inst.colors = base64.b64decode(b64, validate=True)
+                        colors = base64.b64decode(b64, validate=True)
+                        if len(colors) != len(inst.points) * 3:
+                            continue
+                        inst.colors = colors
                         inst.gen += 1
                     except ValueError:
                         pass
@@ -320,7 +377,7 @@ class EffectHost:
                 self._frames_since_start += 1
             for iid, colours in frames.items():
                 inst = self.instances.get(iid)
-                if inst:
+                if inst and len(colours) == len(inst.points) * 3:
                     inst.colors = colours
                     inst.gen += 1
         return {"ok": True}
@@ -351,7 +408,7 @@ class EffectHost:
         """Start the host if one is wanted and it's safe to. Called on many frames: never blocks on a dying process."""
         if self._closing or self.url is None:
             return
-        if self.proc is not None and self.proc.poll() is None:
+        if self.proc is not None:                  # the watcher records a crash before permitting a replacement
             return
         now = self._clock()
         if self._dying is not None:

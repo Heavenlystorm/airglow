@@ -1,4 +1,4 @@
-# Builds Airglow: runs the tests, packages dist\Airglow\ with PyInstaller, then the Velopack release in dist\releases\
+# Builds Airglow: qualifies source, packages dist\Airglow\ with PyInstaller, then the Velopack release in dist\releases\
 # (Setup.exe, the full and delta packages, a portable zip and the release feed). The version comes from
 # airglow\__init__.py; versions like 1.6.0-beta.1 go to the beta channel.
 #
@@ -11,6 +11,7 @@
 #
 # Releases are built by .github/workflows/release.yml when a version tag is pushed, not with this script; it's for
 # trying a build locally. -Delta downloads the channel's latest release first, so a delta package is made too.
+# -SkipTests is used after separate source qualification. Qualify output explicitly with tools/qualify.py package.
 param(
   [switch]$SkipTests,
   [switch]$Delta
@@ -21,8 +22,8 @@ $ErrorActionPreference = "Continue"
 Set-Location $PSScriptRoot
 
 if (-not $SkipTests) {
-  python -m unittest discover -s tests -t . -q
-  if ($LASTEXITCODE -ne 0) { throw "Tests failed; not building." }
+  python -B tools\qualify.py source
+  if ($LASTEXITCODE -ne 0) { throw "Source qualification failed; not building." }
 }
 
 $version = (python tools\version_info.py).Trim()

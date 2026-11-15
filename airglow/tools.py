@@ -9,24 +9,32 @@ installs the PawnIO driver and the Visual C++ runtime if they're missing, turns 
 admin rights. Nothing that runs as admin is ever taken from a folder the user's other programs can write to.
 """
 
+import base64
+import csv
 import ctypes
 import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
+import socket
+import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
+import xml.etree.ElementTree as ET
 import zipfile
 from ctypes import wintypes
+from functools import partial
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from . import __version__, paths
+from . import __version__, fileio, paths
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +43,9 @@ LHM_URL = f"http://127.0.0.1:{LHM_PORT}"    # LHM's listener matches the Host he
 LHM_USER = "airglow"
 CREATE_NO_WINDOW = 0x08000000
 VCREDIST_OK = {0, 1638, 3010}               # done, a newer one is already installed, done but wants a restart
+TASK_TIMEOUT = 15
+HELPER_START_TIMEOUT = 30
+TASK_NS = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
 
 
 class SetupError(Exception):
@@ -43,6 +54,10 @@ class SetupError(Exception):
 
 class ElevationError(SetupError):
     """Windows did not start the elevated process; no helper install could have run."""
+
+
+class CleanRollbackError(SetupError):
+    """The previous helper files and tasks are intact."""
 
 
 def spec():
@@ -140,12 +155,29 @@ def lhm_headers():
     if _auth_cache[0] != mtime:
         try:
             a = json.loads(f.read_text(encoding="utf-8"))
-            import base64
-            token = base64.b64encode(f"{a['user']}:{a['password']}".encode()).decode()
-            _auth_cache = (mtime, {"Authorization": f"Basic {token}"})
+            _auth_cache = (mtime, {"Authorization": _lhm_authorization(a["user"], a["password"])})
         except (OSError, ValueError, KeyError, TypeError):
             _auth_cache = (mtime, {})
     return _auth_cache[1]
+
+
+def _lhm_authorization(user, password):
+    return "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode("ascii")
+
+
+def _lhm_job_headers(job):
+    header, saved_hash = job.get("lhm_authorization"), job.get("lhm_password_sha256")
+    if isinstance(header, str) and header.startswith("Basic ") and len(header) <= 1024:
+        try:
+            user, _, password = base64.b64decode(header[6:], validate=True).partition(b":")
+        except ValueError:
+            pass
+        else:
+            if (user == LHM_USER.encode() and password and isinstance(saved_hash, str)
+                    and re.fullmatch(r"[a-fA-F0-9]{64}", saved_hash)
+                    and secrets.compare_digest(hashlib.sha256(password).hexdigest(), saved_hash.lower())):
+                return {"Authorization": header}
+    raise SetupError("The sensor credentials in the setup job could not be verified.")
 
 
 # ---------------------------------------------------------------- what's on this PC
@@ -444,13 +476,13 @@ def _restore_openrgb_settings(path, before, written):
         tmp.replace(path)
 
 
-def _trusted_download(path):
+def _trusted_download(path, download_root=None):
     """The setup job names files Airglow downloaded a moment ago. The job file itself sits in a folder other programs
     can write, and this runs elevated, so only accept paths inside the downloads folder: an administrator's prompt
     must never run (or copy) a binary chosen from somewhere else on the disk."""
     try:
         p = Path(path).resolve()
-        folder = downloads_dir().resolve()
+        folder = Path(download_root or downloads_dir()).resolve()
     except (OSError, TypeError):
         raise SetupError("the setup job named a file that can't be read") from None
     if folder not in p.parents or not p.is_file():
@@ -458,61 +490,299 @@ def _trusted_download(path):
     return p
 
 
-def install(job, root=None, run=subprocess.run):
-    """The elevated part of setup. Returns the list of steps done; raises SetupError on the first failure."""
-    s, root = spec(), Path(root or tools_dir())
-    stage = root / ".staging"
-    shutil.rmtree(stage, ignore_errors=True)
-    stage.mkdir(parents=True)
-    done = []
+def _task(run, *args):
+    try:
+        return _run(["schtasks", *args], run, timeout=TASK_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise SetupError(f"Windows Task Scheduler timed out during {args[0]}") from None
+
+
+def _task_text(result):
+    output = result.stdout
+    if isinstance(output, str):
+        return output.lstrip("\ufeff")
+    if output.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return output.decode("utf-16")
+    if b"\0" in output[:16]:
+        return output.decode("utf-16-le")
+    try:
+        return output.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return output.decode("oem")
+
+
+def _task_names(run):
+    listing = _task(run, "/Query", "/FO", "CSV", "/NH")
+    if listing.returncode:
+        raise SetupError("couldn't list existing Windows tasks; no task can be safely replaced")
+    return {row[0].lstrip("\\").casefold() for row in csv.reader(_task_text(listing).splitlines()) if row}
+
+
+def _same_path(path, expected):
+    return bool(path) and Path(path).resolve() == expected
+
+
+def _owned_process(exe):
+    copies = _processes(exe.name)
+    if not copies:
+        return None
+    if len(copies) != 1 or not _same_path(copies[0][1], exe):
+        raise SetupError(f"{exe.name} has another running copy or its path can't be verified. Close it and retry.")
+    return copies[0][0]
+
+
+def _stop_repair_process(exe):
+    import psutil
+
+    pid = _owned_process(exe)
+    if pid is None:
+        return
+    try:
+        proc = psutil.Process(pid)
+        if _same_path(proc.exe(), exe):
+            proc.terminate()
+            proc.wait(timeout=5)
+    except psutil.NoSuchProcess:
+        pass
+    except (psutil.Error, OSError):
+        raise SetupError(f"couldn't stop {exe.name} for repair") from None
+    if _owned_process(exe) is not None:
+        raise SetupError(f"{exe.name} is still running")
+
+
+def _openrgb_probe(pid, port, timeout):
+    from . import openrgb
+    import psutil
+
+    deadline = time.monotonic() + timeout
+    def remaining():
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("OpenRGB health probe timed out")
+        return left
+
+    connections = psutil.Process(pid).net_connections(kind="tcp4")
+    if not any(c.status == psutil.CONN_LISTEN and c.laddr == ("127.0.0.1", port) for c in connections):
+        return False
+    with socket.create_connection(("127.0.0.1", port), timeout=remaining()) as client:
+        packet = openrgb.header(0, openrgb.REQUEST_PROTOCOL_VERSION, 4)
+        client.settimeout(remaining())
+        client.sendall(packet + struct.pack("<I", openrgb.CLIENT_PROTOCOL))
+        reply = bytearray()
+        while len(reply) < 20:
+            client.settimeout(remaining())
+            chunk = client.recv(20 - len(reply))
+            if not chunk:
+                return False
+            reply.extend(chunk)
+        return reply[:16] == packet and 1 <= struct.unpack_from("<I", reply, 16)[0] <= openrgb.CLIENT_PROTOCOL
+
+
+def _helper_healthy(tid, pid, port, headers, timeout):
+    import psutil
+
+    try:
+        if tid == "lhm":
+            from . import sensors
+
+            # HttpListener's TCP socket can be owned by the Windows System process.
+            tree = sensors.read_tree(LHM_URL, timeout=timeout, headers=headers)
+            return isinstance(tree, dict) and isinstance(tree.get("Children"), list)
+        return _openrgb_probe(pid, port, timeout)
+    except (psutil.Error, OSError):
+        return False
+
+
+def _wait_for_helper(exe, probe=None):
+    deadline = time.monotonic() + HELPER_START_TIMEOUT
+    while (remaining := deadline - time.monotonic()) > 0:
+        pid = _owned_process(exe)
+        if pid is not None and (probe is None or probe(pid, min(remaining, 1.0))):
+            if _owned_process(exe) == pid:
+                return
+        time.sleep(max(0, min(0.25, deadline - time.monotonic())))
+    raise SetupError(f"{exe.name} didn't pass its startup health check within {HELPER_START_TIMEOUT} seconds")
+
+
+class _HelperRepair:
+    def __init__(self, tid, tool, root, stage, run):
+        self.id, self.name, self.task, self.run = tid, tool["name"], tool["task"], run
+        self.folder = root / tool["folder"]
+        self.exe = self.folder / tool["exe"]
+        if (self.folder.resolve() != self.folder or self.exe.resolve() != self.exe
+                or self.folder.exists() and not self.folder.is_dir()):
+            raise SetupError(f"{self.name}'s install path doesn't belong to Airglow Tools")
+        self.candidate = stage / f"{tid}-new"
+        self.backup = stage / f"{tid}-previous"
+        self.new_task = stage / f"{tid}-new-task.xml"
+        self.old_task = stage / f"{tid}-previous-task.xml"
+        self.was_running = False
+        self.changed = False
+        self.promoted = False
+
+    def snapshot(self, tasks):
+        self.was_running = _owned_process(self.exe) is not None
+        if self.task.casefold() not in tasks:
+            if self.was_running:
+                raise SetupError(f"Close {self.name} before repair because it has no task to restart it.")
+            return
+        result = _task(self.run, "/Query", "/TN", "\\" + self.task, "/XML")
+        try:
+            xml = _task_text(result)
+            task = ET.fromstring(xml)
+            actions = task.findall("t:Actions/*", TASK_NS)
+            commands = task.findall("t:Actions/t:Exec/t:Command", TASK_NS)
+            principal = task.findtext("t:Principals/t:Principal/t:LogonType", namespaces=TASK_NS)
+            if (result.returncode or len(actions) != 1 or len(commands) != 1 or not _same_path(commands[0].text, self.exe)
+                    or principal != "InteractiveToken"):
+                raise ValueError("task isn't the Airglow helper")
+        except (ET.ParseError, ValueError, OSError) as error:
+            raise SetupError(f"couldn't back up {self.name}'s registered task") from error
+        enabled = task.findtext("t:Settings/t:Enabled", default="true", namespaces=TASK_NS)
+        if self.was_running and enabled.lower() in ("false", "0"):
+            raise SetupError(f"Close {self.name} before repair because its sign-in task is disabled.")
+        self.old_task.write_text(xml, encoding="utf-16", newline="\n")
+
+    def _stop_task(self):
+        if _task(self.run, "/Change", "/TN", self.task, "/Disable").returncode:
+            raise SetupError(f"couldn't pause the sign-in task for {self.name}")
+        # /End can return an error when the task had no running instance.
+        _task(self.run, "/End", "/TN", self.task)
+        _stop_repair_process(self.exe)
+
+    def _register(self, xml):
+        return _task(self.run, "/Create", "/TN", self.task, "/XML", xml, "/F").returncode == 0
+
+    def _start(self):
+        if _task(self.run, "/Run", "/TN", self.task).returncode:
+            raise SetupError(f"couldn't start {self.name} through its sign-in task")
+
+    def activate(self, port, headers):
+        self.changed = True
+        if self.old_task.exists():
+            self._stop_task()
+        elif _owned_process(self.exe) is not None:
+            raise SetupError(f"Close {self.name} before repair.")
+        if self.folder.exists():
+            self.folder.rename(self.backup)
+        self.candidate.rename(self.folder)
+        self.promoted = True
+        if not self._register(self.new_task):
+            raise SetupError(f"couldn't register {self.name} to start at sign-in")
+        self._start()
+        _wait_for_helper(self.exe, lambda pid, timeout: _helper_healthy(self.id, pid, port, headers, timeout))
+
+    def restore(self):
+        present = self.task.casefold() in _task_names(self.run)
+        if self.promoted:
+            if present:
+                self._stop_task()
+            else:
+                _stop_repair_process(self.exe)
+            self.folder.rename(self.candidate)
+        if self.backup.exists():
+            self.backup.rename(self.folder)
+        if self.old_task.exists():
+            if not self._register(self.old_task):
+                raise SetupError(f"couldn't restore the previous task for {self.name}")
+            if self.was_running and _owned_process(self.exe) is None:
+                self._start()
+                _wait_for_helper(self.exe)
+        elif present and self.promoted:
+            if _task(self.run, "/Delete", "/TN", self.task, "/F").returncode:
+                raise SetupError(f"couldn't remove the new sign-in task for {self.name}")
+
+
+def install(job, root=None, run=subprocess.run, *, download_root=None):
+    """Stage the entire setup, then retain each old helper until every replacement is healthy."""
+    global _installed_cache
+    stage = None
+    repairs, done = [], []
+    keep_recovery = False
 
     def staged(src, name):
-        src = _trusted_download(src)
         dst = stage / name
-        shutil.copyfile(src, dst)
+        shutil.copyfile(_trusted_download(src, download_root), dst)
         return dst
 
     try:
-        if job.get("vcredist"):
-            f = staged(job["vcredist"], "vc_redist.x64.exe")
-            if not _microsoft_signed(f, run):
-                raise SetupError("the Visual C++ runtime download isn't signed by Microsoft, so it wasn't installed")
-            code = _run([f, "/install", "/quiet", "/norestart"], run).returncode
+        s, root = spec(), Path(root or tools_dir()).resolve()
+        ids = job["tools"]
+        if not isinstance(ids, list) or any(not isinstance(i, str) or i not in s["tools"] for i in ids):
+            raise SetupError("the setup job has an unknown helper")
+        ids = list(dict.fromkeys(ids))
+        sid = job["user_sid"]
+        if not isinstance(sid, str) or len(sid) > 256 or not re.fullmatch(r"S-1-\d+(?:-\d+)+", sid):
+            raise SetupError("the setup job doesn't identify a Windows account")
+        port = int(job.get("openrgb_port", 6742))
+        if not 1 <= port <= 65535:
+            raise SetupError("the setup job has an invalid OpenRGB port")
+        headers = _lhm_job_headers(job) if "lhm" in ids else {}
+        root.mkdir(parents=True, exist_ok=True)
+        stage = Path(tempfile.mkdtemp(prefix=".repair-", dir=root))
+        for tid in ids:
+            tool = s["tools"][tid]
+            repair = _HelperRepair(tid, tool, root, stage, run)
+            archive = staged(job["files"][tid], f"{tid}.zip")
+            verify(archive, tool["size"], tool["sha256"])
+            try:
+                extract(archive, repair.candidate, tool["strip"])
+            except zipfile.BadZipFile as error:
+                raise SetupError(f"{tool['name']}'s verified download couldn't be unpacked") from error
+            if not (repair.candidate / tool["exe"]).is_file():
+                raise SetupError(f"{tool['name']} wasn't in its download where expected")
+            if tid == "lhm":
+                cfg = lhm_config(job["lhm_password_sha256"].lower())
+                (repair.candidate / "LibreHardwareMonitor.config").write_text(cfg, encoding="utf-8")
+            repair.new_task.write_text(task_xml(sid, repair.exe, tool["args"].format(openrgb_port=port), repair.folder,
+                                                f"Starts {repair.name} when you sign in, for Airglow."),
+                                       encoding="utf-16")
+            repairs.append(repair)
+        vc = staged(job["vcredist"], "vc_redist.x64.exe") if job.get("vcredist") else None
+        if vc and not _microsoft_signed(vc, partial(run, timeout=TASK_TIMEOUT)):
+            raise SetupError("the Visual C++ runtime download isn't signed by Microsoft, so it wasn't installed")
+        pawn = staged(job["pawnio"], "PawnIO_setup.exe") if job.get("pawnio") else None
+        if pawn:
+            verify(pawn, s["pawnio"]["size"], s["pawnio"]["sha256"])
+        tasks = _task_names(run) if repairs else set()
+        for repair in repairs:
+            repair.snapshot(tasks)
+        if vc:
+            code = _run([vc, "/install", "/quiet", "/norestart"], run, timeout=300).returncode
             if code not in VCREDIST_OK:
                 raise SetupError(f"the Visual C++ runtime installer failed (code {code})")
             done.append("vcredist")
-        if job.get("pawnio"):
-            p = s["pawnio"]
-            f = staged(job["pawnio"], "PawnIO_setup.exe")
-            verify(f, p["size"], p["sha256"])
-            _run([f, "-install"], run)
-            if pawnio_needed(s):
+        if pawn:
+            if _run([pawn, "-install"], run, timeout=300).returncode or pawnio_needed(s):
                 raise SetupError("the PawnIO driver didn't install")
             done.append("pawnio")
-        for tid in job["tools"]:
-            t = s["tools"][tid]
-            f = staged(job["files"][tid], f"{tid}.zip")
-            verify(f, t["size"], t["sha256"])
-            folder = root / t["folder"]
-            _stop(t, root, run)
-            shutil.rmtree(folder, ignore_errors=True)
-            extract(f, folder, t["strip"])
-            exe = folder / t["exe"]
-            if not exe.is_file():
-                raise SetupError(f"{t['name']} wasn't in its download where expected")
-            if tid == "lhm":
-                (folder / "LibreHardwareMonitor.config").write_text(lhm_config(job["lhm_password_sha256"]), encoding="utf-8")
-            args = t["args"].format(openrgb_port=int(job.get("openrgb_port", 6742)))
-            xml = stage / f"{tid}-task.xml"
-            xml.write_text(task_xml(job["user_sid"], exe, args, folder,
-                                    f"Starts {t['name']} when you sign in, for Airglow."), encoding="utf-16")
-            r = _run(["schtasks", "/Create", "/TN", t["task"], "/XML", xml, "/F"], run)
-            if r.returncode != 0:
-                raise SetupError(f"couldn't register {t['name']} to start at sign-in")
-            _run(["schtasks", "/Run", "/TN", t["task"]], run)
-            done.append(tid)
+        if repairs:
+            log.info("staged helper repair at %s", stage)
+            keep_recovery = True   # An interruption during promotion can leave a previous helper here.
+        for repair in repairs:
+            repair.activate(port, headers)
+            done.append(repair.id)
+        keep_recovery = False
+    except Exception as error:
+        failures = []
+        for repair in reversed(repairs):
+            if repair.changed:
+                try:
+                    repair.restore()
+                except Exception as restore_error:
+                    failures.append(f"{repair.name} ({restore_error})")
+        if failures:
+            retained = [str(path) for repair in repairs for path in (repair.backup, repair.old_task) if path.exists()]
+            saved = f" Retained previous copies: {', '.join(retained)}." if retained else ""
+            raise SetupError(f"{error}. The previous helper files and task XML could not be fully restored for "
+                             f"{', '.join(failures)}. Recovery folder: {stage}.{saved} "
+                             "Files already restored remain in their original install folders.") from error
+        keep_recovery = False
+        raise CleanRollbackError(str(error)) from error
     finally:
-        shutil.rmtree(stage, ignore_errors=True)
+        _installed_cache = (0.0, {})
+        if stage is not None and not keep_recovery:
+            shutil.rmtree(stage, ignore_errors=True)
     return done
 
 
@@ -547,19 +817,38 @@ def elevated_main(argv):
     logging.getLogger().addHandler(handler)
     logging.getLogger().setLevel(logging.INFO)
     job_path = Path(argv[1]) if len(argv) > 1 else None
-    job = json.loads(job_path.read_text(encoding="utf-8")) if job_path else {}
+    result_path = None
     result = {"ok": False, "done": [], "error": None}
     try:
         if argv[0] == "--setup-tools":
-            result["done"] = install(job)
+            if not job_path or job_path.name != "setup-job.json":
+                raise SetupError("the elevated setup step didn't receive an Airglow job")
+            downloads = job_path.parent.resolve()
+            if (downloads.name.casefold() != "downloads" or downloads.parent.name.casefold() != "airglow"
+                    or job_path.resolve() != downloads / job_path.name):
+                raise SetupError("the setup job isn't in the requesting account's Airglow downloads folder")
+            result_path = result_file(downloads / job_path.name, argv[0])
+            try:
+                if job_path.stat().st_size > 16384:
+                    raise SetupError("the setup job is too large")
+                job = json.loads(job_path.read_text(encoding="utf-8"))
+                if not isinstance(job, dict):
+                    raise SetupError("the setup job is invalid")
+            finally:
+                job_path.unlink(missing_ok=True)
+            result["done"] = install(job, download_root=downloads)
         else:
+            if job_path:
+                result_path = result_file(job_path, argv[0])
             remove()
         result["ok"] = True
-    except (SetupError, OSError, KeyError, ValueError) as e:
+    except (SetupError, OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError) as e:
         log.exception("helper setup failed")
         result["error"] = str(e)
-    if job_path:
-        result_file(job_path, argv[0]).write_text(json.dumps(result), encoding="utf-8")
+        if isinstance(e, CleanRollbackError):
+            result["rolled_back"] = True
+    if result_path:
+        fileio.atomic_write_text(result_path, json.dumps(result))
     return 0 if result["ok"] else 1
 
 
@@ -659,11 +948,15 @@ def _elevate(job, args, result):
     try:
         r = json.loads(result.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        r = {"ok": code == 0, "error": f"the setup step stopped (code {code})"}
+        raise SetupError(f"the elevated step returned no verification result (code {code})") from None
     finally:
         result.unlink(missing_ok=True)
-    if not r.get("ok"):
-        raise SetupError(r.get("error") or "the setup step failed")
+    if not isinstance(r, dict) or code != 0 or r.get("ok") is not True:
+        error = r.get("error") if isinstance(r, dict) else None
+        if (args[0] == "--setup-tools" and code != 0 and isinstance(r, dict)
+                and r.get("ok") is False and r.get("rolled_back") is True):
+            raise CleanRollbackError(error or "the setup step failed")
+        raise SetupError(error or "the setup step failed")
     return r
 
 
@@ -671,7 +964,7 @@ def start_setup(ctrl, store, ids=None):
     st = status(ctrl)
     wanted = ids or [t["id"] for t in st["tools"] if not t["working"] and not t["other_copy"]]
     s = spec()
-    wanted = [i for i in wanted if i in s["tools"]]
+    wanted = list(dict.fromkeys(i for i in wanted if i in s["tools"]))
     if not wanted:
         raise SetupError("everything is already working")
 
@@ -708,9 +1001,9 @@ def start_setup(ctrl, store, ids=None):
                 raise SetupError("the saved sensor credentials are invalid; no helper programs were changed")
             password = auth["password"]
             job_file["lhm_password_sha256"] = hashlib.sha256(password.encode()).hexdigest()
+            job_file["lhm_authorization"] = _lhm_authorization(LHM_USER, password)
         job.update(progress=1.0)
         path = dl / "setup-job.json"
-        path.write_text(json.dumps(job_file), encoding="utf-8")
         # Keep the credential before LHM can use it, even if a later setup step or this process fails.
         if new_auth:
             tmp = auth_file().with_suffix(".tmp")
@@ -727,28 +1020,38 @@ def start_setup(ctrl, store, ids=None):
                 try:
                     _restore_openrgb_settings(*edit)
                 except (OSError, ValueError, KeyError, TypeError) as e:
-                    raise SetupError("Setup didn't start, but OpenRGB's controller settings couldn't be restored. "
+                    raise SetupError("OpenRGB's previous controller settings couldn't be restored. "
                                      "Check its device detectors before using it.") from e
         try:
-            if "openrgb" in wanted:
-                # This user's settings, before OpenRGB starts; elevation can run as another Windows account.
-                from .hw import openrgb_detectors_to_disable
-                names = openrgb_detectors_to_disable(ctrl.manager.natives.values())
-                if names:
-                    settings = openrgb_settings_file()
-                    if not disable_openrgb_detectors(names, path=settings, changes=detector_edits):
+            try:
+                fileio.atomic_write_text(path, json.dumps(job_file))
+                if "openrgb" in wanted:
+                    # Prepare the requesting user's settings even when elevation uses another account.
+                    from .hw import openrgb_detectors_to_disable
+                    names = openrgb_detectors_to_disable(ctrl.manager.natives.values())
+                    if names and not disable_openrgb_detectors(names, changes=detector_edits):
                         raise SetupError("OpenRGB's controller settings couldn't be prepared; no helpers were installed")
+            except Exception:
+                undo_preparation()
+                raise
             try:
                 r = _elevate(job, ["--setup-tools", str(path)], result_file(path, "--setup-tools"))
             except ElevationError:
                 undo_preparation()
+                raise
+            except CleanRollbackError as error:
+                undo_preparation()
+                if detector_edits:
+                    raise SetupError(f"{error}. OpenRGB may need a restart to reload its previous detector settings.") from error
                 raise
         finally:
             path.unlink(missing_ok=True)
         if r is None:
             undo_preparation()
             return "cancelled"
-        job.update(state="working", step="Starting the programs")
+        if not isinstance(r.get("done"), list) or any(helper not in r["done"] for helper in wanted):
+            raise SetupError("setup did not verify every requested helper")
+        job.update(state="working", step="Connecting Airglow to the verified helper programs")
         if password:
             store.update_settings({"lhm_url": LHM_URL})
         if "lhm" in wanted and hasattr(ctrl, "lhm"):

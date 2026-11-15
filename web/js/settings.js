@@ -356,6 +356,7 @@ export function renderSettings() {
       ${row("LibreHardwareMonitor address", sensorsOk ? "Connected. Temperatures and power are coming through." : "Not responding. Open LibreHardwareMonitor and turn on Options, Remote Web Server, Run.", `<input class="text" id="s-lhm" aria-label="LibreHardwareMonitor address" value="${esc(s.lhm_url)}" spellcheck="false">`)}
     </section>
     <section class="set-group" id="set-devices"><h2>More devices</h2>
+      ${row("Scene transitions", "Fade between lighting scenes once the next effect is ready. Off always takes effect immediately.", `<select class="select" id="s-transition" aria-label="Scene transitions">${[[0, "Instant"], [200, "Quick · 200 ms"], [350, "Smooth · 350 ms"], [700, "Gentle · 700 ms"], [1200, "Slow · 1.2 s"]].map(([ms, label]) => `<option value="${ms}"${(s.lighting_transition_ms ?? 350) === ms ? " selected" : ""}>${label}</option>`).join("")}</select>`)}
       ${row("Use OpenRGB for other devices", esc(S.state?.openrgb?.status || ""),
         `${S.state?.openrgb?.enabled && !S.state?.openrgb?.connected && S.state?.openrgb?.installed ? `<button class="btn" id="s-orgb-start">Start OpenRGB</button>` : ""}${sw("s-orgb", s.openrgb_enabled, "Use OpenRGB for other devices")}`)}
       ${row("OpenRGB address", "Only change this if OpenRGB runs on another port or another PC.", `<input class="text" id="s-orgb-host" aria-label="OpenRGB host" value="${esc(s.openrgb_host)}" style="width:150px" spellcheck="false"><input class="text" id="s-orgb-port" aria-label="OpenRGB port" type="number" value="${s.openrgb_port}" style="width:90px">`)}
@@ -473,6 +474,7 @@ export function initSettings() {
     }
     else if (t.id === "s-failsafe") save({ fan_failsafe_duty: +t.value });
     else if (t.id === "s-step") save({ fan_max_step: +t.value });
+    else if (t.id === "s-transition") save({ lighting_transition_ms: +t.value });
     else if (t.id === "s-lhm") save({ lhm_url: t.value.trim() });
     else if (t.id === "s-dyn") save({ dynamic_lighting_enabled: t.checked }, t.checked ? "Looking for Dynamic Lighting devices" : "Dynamic Lighting devices off");
     else if (t.id === "s-orgb") save({ openrgb_enabled: t.checked }, t.checked ? "OpenRGB bridge on" : "OpenRGB bridge off");

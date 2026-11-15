@@ -1,6 +1,7 @@
 /* Personal settings extend the active design's typography and surfaces. */
-body { zoom: var(--ui-scale, 1); height: calc(100% / var(--ui-scale, 1)); }
+body { zoom: var(--ui-scale, 1); height: calc(100dvh / var(--ui-scale, 1)); }
 .sheet { max-height: calc((100dvh - 48px) / var(--ui-scale, 1)); }
+.tab-ink { transition-duration: 180ms; transition-timing-function: var(--ease); }
 :root[data-density="compact"] .set-row { padding-block: 11px; }
 :root[data-density="compact"] .set-group { margin-bottom: 20px; }
 :root[data-density="compact"] .ov-grid { gap: clamp(8px, .4cqw, 16px); }

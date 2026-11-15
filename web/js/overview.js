@@ -3,11 +3,13 @@
 // flashing, and dragging never fights the 2-second refresh.
 
 import { $, $$, S, clamp, curveLabel, effectName, emit, esc, fail, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
-import { R, ensureHistory, fmt, fmtText, level, loadCatalog, range, resample, sensorName, thresholds, value } from "./readings.js";
-import { EASE, SPRING, countTo, flip, reduced } from "./motion.js";
+import { applyLightingScene, waitForLightingScene } from "./scene-commands.js";
+import { R, WINDOW, ensureHistory, fmt, fmtText, level, loadCatalog, range, resample, sensorName, thresholds, value } from "./readings.js";
+import { animateMotion, countTo, flip, reduced, stopMotion } from "./motion.js";
+import { accentPalette } from "./appearance.js";
 import { createOverviewRig } from "./overview-rig.js";
 import { profileArtwork, fanInstrument } from "./overview-instruments.js";
-import { sensorFamily, instrumentModel } from "./overview-sensors.js";
+import { instrumentModel, peakBuckets, sensorFamily } from "./overview-sensors.js";
 import { closeSheet, openSheet } from "./sheet.js";
 import { createLayoutHistory, createWorkspace, deleteWorkspace, exportWorkspace, importWorkspace, initializeWorkspaces, renameWorkspace, restoreOverview, starterWorkspace, switchWorkspace, syncWorkspace } from "./overview-workspaces.js";
 
@@ -28,6 +30,8 @@ let overviewFrames = {};
 const grid = () => $("#ov-grid");
 const visible = () => !$('[data-view="overview"]').hidden;
 let measureRev = 0;                    // tile text is measured for overflow only when this changes (resize, font)
+let accentSurfaces;
+const tileAccents = new Map();
 window.addEventListener("resize", () => { measureRev++; });
 document.fonts?.ready.then(() => { measureRev++; if (visible()) renderOverview(); });
 
@@ -125,6 +129,11 @@ function changedWorkspace() {
   paintLightingTiles();
   emit("pins");
   ensureHistory([...new Set(O.layout.tiles.flatMap((t) => t.sensors || []))]).catch(() => {});
+}
+
+export function activateOverviewWorkspace(id) {
+  if (!O.layout || resetting || O.drag) throw new Error("Finish the current tile edit before switching workspaces.");
+  if (switchWorkspace(O.layout, id)) changedWorkspace();
 }
 
 function workspaceChange(change) {
@@ -255,17 +264,28 @@ function sizeTile(el, t) {
   el.style.gridRow = `span ${t.h}`;
   el.dataset.w = t.w; el.dataset.h = t.h;
   el.dataset.emphasis = t.appearance?.emphasis || "standard";
-  if (t.appearance?.accent) el.style.setProperty("--tile-accent", t.appearance.accent);
-  else el.style.removeProperty("--tile-accent");
+  const accent = t.appearance?.accent;
+  if (!accent) {
+    el.style.removeProperty("--tile-accent");
+    return;
+  }
+  if (!accentSurfaces) {
+    const computed = getComputedStyle(document.documentElement);
+    accentSurfaces = ["--panel", "--well"].map(token => computed.getPropertyValue(token).trim());
+  }
+  if (!tileAccents.has(accent)) {
+    if (tileAccents.size >= 64) tileAccents.clear();
+    tileAccents.set(accent, accentPalette(accent, accentSurfaces).accent);
+  }
+  el.style.setProperty("--tile-accent", tileAccents.get(accent));
 }
 
 // Sensor tile markup per style. Values and paths are filled in by update().
 function sensorMarkup(t) {
-  const two = t.sensors.length > 1;
   const head = `<header class="tile-head"><span class="tile-name"></span><span class="tile-src"></span></header>`;
   if (t.style === "auto") return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span></div>
-    <div class="instrument-meter"><div class="instrument-track"><i></i><b class="threshold-tick warning"></b><b class="threshold-tick critical"></b></div><div class="instrument-scale"><span class="scale-lo"></span><span class="scale-hi"></span></div></div>
-    <div class="instrument-history"><div class="history-caption"><span>10 min</span><span class="history-range"></span></div><svg viewBox="0 0 400 100" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/></svg><span class="history-empty">Collecting history</span></div>
+    <div class="instrument-meter"><div class="instrument-track" aria-hidden="true"><i></i><b class="thermal-marker"></b><b class="threshold-tick warning" title="Airglow warning"></b><b class="threshold-tick critical" title="Airglow high"></b></div><div class="instrument-scale"><span class="scale-lo"></span><span class="scale-hi"></span></div></div>
+    <div class="instrument-history"><div class="history-caption"><span></span><span class="history-range"></span></div><svg viewBox="0 0 400 100" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/><g class="network-bins"/></svg><span class="history-empty">Collecting history</span></div>
     <div class="instrument-detail"></div><div class="instrument-compare"></div>`;
   if (t.style === "ring") {
     return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span></div><div class="g-cap"></div><div class="gauge"><svg viewBox="0 0 120 120" aria-hidden="true">
@@ -286,7 +306,7 @@ function sensorMarkup(t) {
         ${t.sensors.map((_, i) => `<path class="area a-${i}"/><path class="line l-${i}"/>`).join("")}</svg>
         <span class="ax ax-hi"></span><span class="ax ax-mid"></span><span class="ax ax-hi ax-right" hidden></span><span class="ax ax-mid ax-right" hidden></span><span class="ax-time">10 min</span></div>`;
   }
-  return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span>${two ? "" : ""}</div>
+  return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span></div>
     <div class="minmax"></div>
     <svg class="spark" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/></svg>`;
 }
@@ -340,16 +360,16 @@ function arc(cx, cy, r, a0, a1) {
 }
 
 // Close each area separately so outages remain visible in both the line and fill.
-function seriesPath(vals, lo, hi, w, h, pad = 2) {
-  const n = vals.length;
+function seriesPath(vals, lo, hi, w, h, pad = 2, position = i => i / Math.max(1, vals.length - 1)) {
   let d = "", area = "", segment = "", first = null, last = null;
   const finish = () => {
-    if (segment) area += `${segment}L${last.toFixed(1)} ${h}L${first.toFixed(1)} ${h}Z`;
+    if (segment && first === last) d += "h0";
+    else if (segment) area += `${segment}L${last.toFixed(1)} ${h}L${first.toFixed(1)} ${h}Z`;
     segment = ""; first = last = null;
   };
   vals.forEach((v, i) => {
     if (!Number.isFinite(v)) { finish(); return; }
-    const x = (i / (n - 1)) * w, y = h - pad - ((clamp(v, lo, hi) - lo) / (hi - lo || 1)) * (h - pad * 2);
+    const x = position(i) * w, y = h - pad - ((clamp(v, lo, hi) - lo) / (hi - lo || 1)) * (h - pad * 2);
     const point = `${segment ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
     d += point; segment += point;
     if (first == null) first = x;
@@ -357,6 +377,19 @@ function seriesPath(vals, lo, hi, w, h, pad = 2) {
   });
   finish();
   return { d, area };
+}
+
+function recordedPath(points, now, lo, hi, height) {
+  const start = now - WINDOW;
+  const times = [], values = [];
+  for (const [time, sample] of points) {
+    if (time < start || time > now) continue;
+    // Sampling normally occurs every two seconds. Break a line across a recording outage.
+    if (time - times.at(-1) > 10) { times.push(time); values.push(null); }
+    times.push(time);
+    values.push(sample);
+  }
+  return seriesPath(values, lo, hi, 400, height, 3, i => (times[i] - start) / WINDOW);
 }
 
 function setPath(el, d) {
@@ -401,7 +434,7 @@ function updateSensor(el, t) {
     nameEl.title = [name, srcText, meta?.sensor_name].filter(Boolean).join(" · ");
     src.title = !src.hidden && src.scrollWidth > src.clientWidth ? srcText : "";
   }
-  const missing = t.sensors.every((sid) => value(sid) == null);
+  const missing = t.style === "graph" ? t.sensors.every((sid) => value(sid) == null) : v == null;
   el.classList.toggle("missing", missing);
   let note = el.querySelector(".tile-note");
   if (missing) {
@@ -488,30 +521,52 @@ function updateSensor(el, t) {
 
 function updateInstrument(el, t, meta, v, lo, hi) {
   const id = t.sensors[0], f = fmt(meta, v), limits = thresholds(id, meta);
-  const pts = resample(R.series[id]), samples = (R.series[id] || []).map(p => p[1]);
+  const now = Date.now() / 1000;
+  const points = (R.series[id] || []).filter(([time]) => time >= now - WINDOW && time <= now);
+  const samples = points.map(p => p[1]);
   const model = instrumentModel({value: v, lo, hi, samples, thresholds: limits});
+  const family = el.dataset.family;
+  const hasCapacity = family !== "capacity" || meta.unit === "%" || Number.isFinite(meta.max) && meta.max > 0;
+  el.dataset.capacityKnown = String(hasCapacity);
   countTo(el.querySelector(".readout .num"), f.num);
   setHTML(el.querySelector(".readout .unit"), esc(f.unit));
-  el.querySelector(".instrument-track i").style.width = `${model.fraction * 100}%`;
+  const fill = el.querySelector(".instrument-track i"), position = `${model.fraction * 100}%`;
+  fill.style.width = family === "load" ? "" : position;
+  if (family === "load") fill.style.setProperty("--load-fill", position);
+  const marker = el.querySelector(".thermal-marker");
+  marker.hidden = model.missing;
+  marker.style.left = position;
   for (const name of ["warning", "critical"]) {
     const tick = el.querySelector(`.threshold-tick.${name}`);
     tick.hidden = model[name] == null;
-    if (model[name] != null) tick.style.left = `${model[name] * 100}%`;
+    if (model[name] != null) {
+      tick.style.left = `${model[name] * 100}%`;
+      tick.title = `${name === "warning" ? "Airglow warning" : "Airglow high"} ${fmtText(meta, limits[name === "warning" ? 0 : 1])}`;
+    }
   }
   setHTML(el.querySelector(".scale-lo"), esc(fmtText(meta, lo)));
   setHTML(el.querySelector(".scale-hi"), esc(fmtText(meta, hi)));
-  const p = seriesPath(pts, lo, hi, 400, 100, 3);
+  const network = family === "network";
+  const p = network ? { d: "", area: "" } : recordedPath(points, now, lo, hi, 100);
+  const bins = network ? peakBuckets(points, now, WINDOW, 20) : [];
+  const historyHi = network ? Math.max(v ?? 0, model.stats?.max ?? 0) : hi;
   setPath(el.querySelector(".instrument-history .line"), p.d);
   setPath(el.querySelector(".instrument-history .area"), p.area);
-  el.querySelector(".history-empty").hidden = pts.some(Number.isFinite);
-  setHTML(el.querySelector(".history-range"), esc(`${fmtText(meta, lo)} – ${fmtText(meta, hi)}`));
+  setHTML(el.querySelector(".network-bins"), bins.map((peak, i) => {
+    if (!Number.isFinite(peak)) return "";
+    const geometry = Math.max(1, (peak - lo) / (historyHi - lo || 1) * 94);
+    return `<rect x="${i * 20 + 2}" y="${(97 - geometry).toFixed(2)}" width="16" height="${geometry.toFixed(2)}"/>`;
+  }).join(""));
+  el.querySelector(".history-empty").hidden = !!model.stats;
+  el.querySelector(".history-caption > span").textContent = network ? "30 s peaks · 10 min" : "10 min";
+  setHTML(el.querySelector(".history-range"), esc(`${fmtText(meta, lo)} – ${fmtText(meta, historyHi)}`));
   const stats = model.stats;
   setHTML(el.querySelector(".instrument-detail"), `${stats ? `<dl><div><dt>Low · 10 min</dt><dd>${esc(fmtText(meta, stats.min))}</dd></div><div><dt>Average</dt><dd>${esc(fmtText(meta, stats.mean))}</dd></div><div><dt>Peak</dt><dd>${esc(fmtText(meta, stats.max))}</dd></div></dl>` : ""}${limits ? `<p class="threshold-caption">Airglow warning ${esc(fmtText(meta, limits[0]))} · high ${esc(fmtText(meta, limits[1]))}</p>` : ""}`);
   const second = t.sensors[1], sm = R.meta[second];
   if (second) {
     const sv = value(second), [sl, sh] = range(second, sm);
     const shared = sm?.unit === meta?.unit;
-    const comparison = seriesPath(resample(R.series[second]), shared ? Math.min(lo, sl) : sl, shared ? Math.max(hi, sh) : sh, 400, 80, 3);
+    const comparison = recordedPath(R.series[second] || [], now, shared ? Math.min(lo, sl) : sl, shared ? Math.max(hi, sh) : sh, 80);
     setHTML(el.querySelector(".instrument-compare"), `<div><span>${esc(sm?.name || sensorName(second))}</span><b>${esc(fmtText(sm, sv))}</b></div><svg viewBox="0 0 400 80" preserveAspectRatio="none" aria-hidden="true"><path class="line" d="${comparison.d}"/></svg><small>10 min · ${esc(fmtText(sm, shared ? Math.min(lo, sl) : sl))} – ${esc(fmtText(sm, shared ? Math.max(hi, sh) : sh))}</small>`);
   } else setHTML(el.querySelector(".instrument-compare"), "");
   el.dataset.compare = String(!!second);
@@ -537,10 +592,10 @@ function wireLighting(el) {
   bri.addEventListener("input", () => {
     rangeFill(bri); bri._t = Date.now();
     clearTimeout(timer);
-    timer = setTimeout(() => post("/api/scene", { brightness: +bri.value }).then((r) => { S.state.scene = r.scene; }).catch(fail), 60);
+    timer = setTimeout(() => applyLightingScene({ brightness: +bri.value }).catch(fail), 60);
   });
   el.querySelector(".lt-on").addEventListener("change", async (e) => {
-    try { const r = await post("/api/scene", { on: e.target.checked }); S.state.scene = r.scene; emit("refresh"); }
+    try { await applyLightingScene({ on: e.target.checked }); emit("refresh"); }
     catch (err) { fail(err); }
   });
 }
@@ -653,6 +708,7 @@ function onPointerDown(e) {
   const el = e.target.closest(".tile:not(.tile-add)");
   if (!el || e.target.closest("button:not(.pcard), input, select, a.link")) return;
   const t = tileById(el.dataset.id);
+  stopMotion(el);
   const r = el.getBoundingClientRect();
   e.preventDefault();
   if (e.target.closest('[data-act="resize"]')) {
@@ -693,7 +749,7 @@ function onPointerMove(e) {
     const w = visibleW === d.w0 ? d.savedW0 : visibleW;
     const h = clamp(Math.round(d.h0 + (e.clientY - d.y0) / ((rh + rowGap) * scale)), 1, 3);
     if (w !== d.t.w || h !== d.t.h) {
-      flip(grid(), () => { d.t.w = w; d.t.h = h; sizeTile(d.el, d.t); });
+      flip(grid(), () => { d.t.w = w; d.t.h = h; sizeTile(d.el, d.t); }, { skip: d.el });
       update(d.el, d.t);
       showSnapGuide(d.el, d.t);
       d.changed = true;
@@ -720,7 +776,7 @@ function onPointerMove(e) {
     tiles.splice(from, 1);
     tiles.splice(to, 0, d.t);
     grid().insertBefore(d.el, from < to ? over.nextSibling : over);
-  }, { skip: d.el, duration: 300 });
+  }, { skip: d.el });
   d.natural = naturalRect(d.el);
   d.el.style.transform = `translate(${(e.clientX - d.ox - d.natural.left) / scale}px, ${(e.clientY - d.oy - d.natural.top) / scale}px)`;
   d.changed = true;
@@ -736,7 +792,7 @@ function onPointerUp() {
     const from = d.el.style.transform;
     d.el.style.transform = "";
     d.el.classList.remove("dragging");
-    if (!reduced()) d.el.animate([{ transform: from }, { transform: "none" }], { duration: 320, easing: SPRING });
+    animateMotion(d.el, [{ transform: from }, { transform: "none" }], 200);
   }
   if (d.changed) save();
   if (d.started || d.changed) O.justDragged = performance.now();
@@ -794,8 +850,6 @@ async function addTile(tile) {
   save();
   const el = O.els.get(tile.id);
   el?.scrollIntoView({ block: "nearest", behavior: reduced() ? "auto" : "smooth" });
-  el?.classList.add("just-added");
-  setTimeout(() => el?.classList.remove("just-added"), 1200);
 }
 
 // ------------------------------------------------------------ sheets: picker, add, tile settings
@@ -893,6 +947,13 @@ function wireAppearance(t, live) {
   $("#ts-accent-custom").addEventListener("change", ()=>O.history?.endGroup());
 }
 
+function comparisonSettings(t) {
+  const second = t.sensors[1], meta = R.meta[second];
+  return `<span class="ts-lab">Compare with</span>${second
+    ? `<div class="ts-val"><b>${esc(meta?.name || sensorName(second))}</b><small>${esc(source(meta) || meta?.group || "")}</small></div><div class="btn-row"><button type="button" class="btn" data-pick-slot="1">Change</button><button type="button" class="icon-btn" id="ts-drop2" title="Remove the second reading" aria-label="Remove the second reading"><svg><use href="#i-close"/></svg></button></div>`
+    : `<div class="ts-val"><span class="hint">Add a second reading. Instruments show the comparison when the tile is tall enough.</span></div><button type="button" class="btn" data-pick-slot="1">Add</button>`}`;
+}
+
 function tileSheet(id, mode = "main", slot = 0) {
   if (resetting) return;
   O.history?.endGroup(); // A reopened sheet starts a new edit, including after Escape.
@@ -920,30 +981,60 @@ function tileSheet(id, mode = "main", slot = 0) {
     return;
   }
   const pins = O.layout.pins;
-  const m0 = R.meta[t.sensors[0]], m1 = t.sensors[1] ? R.meta[t.sensors[1]] : null;
+  const m0 = R.meta[t.sensors[0]];
   const pinned = pins.includes(t.sensors[0]);
-  openSheet(`<form class="body" id="ts-form"><h2>Tile settings</h2>
+  const sheet = openSheet(`<form class="body" id="ts-form"><h2>Tile settings</h2>
     <div class="ts-row"><span class="ts-lab">Reading</span><div class="ts-val"><b>${esc(m0?.name || sensorName(t.sensors[0]))}</b><small>${esc(source(m0) || m0?.group || "")}</small></div><button type="button" class="btn" data-pick-slot="0">Change</button></div>
-    ${["auto", "graph"].includes(t.style) ? `<div class="ts-row"><span class="ts-lab">Compare with</span>${m1 || t.sensors[1]
-      ? `<div class="ts-val"><b>${esc(m1?.name || sensorName(t.sensors[1]))}</b><small>${esc(source(m1) || m1?.group || "")}</small></div><div class="btn-row"><button type="button" class="btn" data-pick-slot="1">Change</button><button type="button" class="icon-btn" id="ts-drop2" title="Remove the second reading"><svg><use href="#i-close"/></svg></button></div>`
-      : `<div class="ts-val"><span class="hint">Add a second reading. Instruments show the comparison when the tile is tall enough.</span></div><button type="button" class="btn" data-pick-slot="1">Add</button>`}</div>` : ""}
-    <div class="field"><span class="lab">Style</span><div class="styles" role="radiogroup">${STYLES.map((s) => `<button type="button" role="radio" class="style-btn" data-style="${s.id}" aria-checked="${t.style === s.id}">${STYLE_ICONS[s.id]}<span>${s.name}</span></button>`).join("")}</div></div>
+    <div class="ts-row" id="ts-compare"${["auto", "graph"].includes(t.style) ? "" : " hidden"}>${comparisonSettings(t)}</div>
+    <div class="field"><span class="lab" id="ts-style-label">Style</span><div class="styles" role="radiogroup" aria-labelledby="ts-style-label">${STYLES.map((s) => `<button type="button" role="radio" class="style-btn" data-style="${s.id}" tabindex="${t.style === s.id ? 0 : -1}" aria-checked="${t.style === s.id}"><span class="style-icon" aria-hidden="true">${STYLE_ICONS[s.id]}</span><span>${s.name}</span></button>`).join("")}</div></div>
     <label class="field"><span class="lab">Name</span><input class="text" id="ts-label" maxlength="40" value="${esc(t.label || "")}" placeholder="${esc(m0?.name || "")}" autocomplete="off"></label>
     ${appearanceMarkup(t)}
     <label class="ts-pin"><span class="switch"><input type="checkbox" id="ts-pin"${pinned ? " checked" : ""}${!pinned && pins.length >= 4 ? " disabled" : ""}><span></span></span>
       <span><b>Show in the top bar and tray</b><small>${!pinned && pins.length >= 4 ? "Up to four readings can be pinned. Unpin one first." : "Keeps this reading in view on every tab, and in the tray icon's tooltip."}</small></span></label>
     <div class="actions"><button type="button" class="btn danger" id="ts-remove">Remove tile</button><span class="spacer"></span><button class="btn primary">Done</button></div></form>`);
   const live = () => { renderOverview(); save(); };
+  const form = $("#ts-form", sheet), compare = $("#ts-compare", form), styles = $(".styles", form);
+  const radios = $$("[role=radio]", styles);
   wireAppearance(t, ()=>{renderOverview();save(`appearance-${id}`);});
-  $$("[data-pick-slot]").forEach((b) => b.addEventListener("click", () => tileSheet(id, "pick", +b.dataset.pickSlot)));
-  $("#ts-drop2")?.addEventListener("click", () => { t.sensors = t.sensors.slice(0, 1); live(); tileSheet(id); });
-  $$("[data-style]").forEach((b) => b.addEventListener("click", () => {
-    t.style = b.dataset.style;
-    if (!["auto", "graph"].includes(t.style)) t.sensors = t.sensors.slice(0, 1);
+  form.addEventListener("click", (event) => {
+    const picker = event.target.closest("[data-pick-slot]");
+    if (picker) tileSheet(id, "pick", Number(picker.dataset.pickSlot));
+    if (event.target.closest("#ts-drop2")) {
+      t.sensors = t.sensors.slice(0, 1);
+      compare.innerHTML = comparisonSettings(t);
+      $("[data-pick-slot]", compare).focus();
+      live();
+    }
+  });
+  const selectStyle = (button) => {
+    button.focus({ preventScroll: true });
+    if (t.style === button.dataset.style) return;
+    t.style = button.dataset.style;
+    for (const radio of radios) {
+      radio.tabIndex = radio === button ? 0 : -1;
+      radio.setAttribute("aria-checked", String(radio === button));
+    }
+    compare.hidden = !["auto", "graph"].includes(t.style);
     if (t.style === "graph" && t.w < 2) t.w = 2;
     flip(grid(), live);
-    tileSheet(id);
-  }));
+  };
+  styles.addEventListener("click", (event) => {
+    const button = event.target.closest("[role=radio]");
+    if (button) selectStyle(button);
+  });
+  styles.addEventListener("keydown", (event) => {
+    const current = radios.indexOf(event.target);
+    if (current < 0) return;
+    const offset = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
+    let index;
+    if (offset) index = (current + offset + radios.length) % radios.length;
+    else if (event.key === "Home") index = 0;
+    else if (event.key === "End") index = radios.length - 1;
+    else return;
+    event.preventDefault();
+    selectStyle(radios[index]);
+    radios[index].scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
   $("#ts-label").addEventListener("input", (e) => {
     const v = e.target.value.trim(), tile = tileById(id) || t;
     if (v) tile.label = v; else delete tile.label;
@@ -989,9 +1080,10 @@ export async function initOverview(layout) {
       const preset = S.presets.find((x) => x.id === p.dataset.preset);
       try {
         const r = await post(`/api/presets/${encodeURIComponent(preset.id)}/apply`);
+        if (r.scene_status?.status === "pending") r.scene_status = (await waitForLightingScene(r.scene_status.desired_revision, r.scene_status.session)).scene_status;
         const failed = r.steps.filter((s) => !s.ok);
         if (failed.length) toast(`${preset.name} is on, but ${failed[0].step} didn't apply: ${failed[0].error}`, true);
-        else toast(`${preset.name} is on`);
+        else toast(r.scene_status?.overridden ? `${preset.name} saved. An automation controls the lights.` : `${preset.name} is on`);
         emit("refresh");
       } catch (err) { fail(err); }
     }
@@ -1023,6 +1115,8 @@ export async function initOverview(layout) {
   on("frames:live", (frame) => { overviewFrames = frame.zones || {}; paintLightingTiles(); });
   document.addEventListener("appearancechange", () => {
     measureRev++;
+    accentSurfaces = null;
+    tileAccents.clear();
     if (visible() && !document.hidden) { renderOverview(); paintLightingTiles(); }
   });
   new MutationObserver(() => paintLightingTiles()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-rig"] });

@@ -406,9 +406,12 @@ class ClientTests(unittest.TestCase):
                 call()
 
     def test_connection_refused(self):
-        c = openrgb.OpenRGBClient(port=1, timeout=0.3)
-        with self.assertRaises(OSError):
-            c.connect()
+        from tests.isolation import refusing_port
+
+        with refusing_port() as port:
+            c = openrgb.OpenRGBClient(port=port, timeout=0.3)
+            with self.assertRaises(OSError):
+                c.connect()
         self.assertFalse(c.connected)
 
 

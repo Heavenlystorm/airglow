@@ -363,8 +363,6 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .tile-add { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px dashed var(--line); background: transparent; color: var(--ink-3); cursor: pointer; font-size: 13px; }
 .tile-add svg { width: 20px; height: 20px; }
 .tile-add:hover { color: var(--ink); border-color: var(--ink-3); background: var(--panel); }
-.tile.just-added { animation: arrive 1.2s var(--ease); }
-@keyframes arrive { 0% { border-color: var(--brass); box-shadow: 0 0 0 3px var(--brass-glow); } 100% { box-shadow: 0 0 0 3px transparent; } }
 
 /* sheets: reading picker and tile settings */
 .sheet:has(.wide) { width: min(640px, calc(100vw - 32px)); }

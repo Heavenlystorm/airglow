@@ -30,7 +30,36 @@ def main(argv):
 
     from .window import quiet_requests
     quiet_requests()                       # 30 frame POSTs a second: don't route each one through this process
-    win = webview.create_window("Airglow effects", url, hidden=True, width=320, height=200)
+    # WinForms can re-show a hidden form during startup. Keep even that first native show off-screen.
+    win = webview.create_window("Airglow effects", url, hidden=True, focus=False,
+                                x=-32000, y=-32000, width=320, height=200)
+
+    def keep_hidden():
+        import ctypes
+        from ctypes import wintypes
+        from System import Action
+
+        form = win.native
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]
+        hwnd = form.Handle.ToInt64()
+
+        def hide_from_switchers():
+            # ShowInTaskbar recreates the HWND and aborts WebView2 initialization; change only the native style.
+            style = user32.GetWindowLongW(hwnd, -20)
+            user32.SetWindowLongW(hwnd, -20, (style | 0x80 | 0x08000000) & ~0x40000)
+
+        def visible_changed(sender, event):
+            if form.Visible:
+                hide_from_switchers()
+                # Hide after the current native show finishes; hiding inside WM_SHOWWINDOW is overwritten.
+                form.BeginInvoke(Action(form.Hide))
+
+        hide_from_switchers()
+        form.VisibleChanged += visible_changed
+
+    win.events.before_show += keep_hidden
 
     def watch_parent():
         import psutil

@@ -4,8 +4,6 @@ import copy
 import json
 import os
 import socket
-import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -179,8 +177,10 @@ class FanSafetyAuditTests(unittest.TestCase):
 
 class CacheAndFileAuditTests(unittest.TestCase):
     def test_test_effect_library_is_cleaned_when_the_process_exits(self):
-        result = subprocess.run([sys.executable, "-c", "import tests; print(tests._effects.name)"],
-                                capture_output=True, text=True, check=True)
+        from tests.isolation import run_python
+
+        result = run_python("import tests; from airglow import fxlibrary; "
+                            "lib = fxlibrary.library(); lib._dir('mine'); print(lib.root)")
         self.assertFalse(Path(result.stdout.strip()).exists())
 
     def test_concurrent_catalog_requests_load_once_without_duplicates(self):

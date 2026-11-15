@@ -47,7 +47,7 @@ def main():
                AIRGLOW_FIXTURE="1", AIRGLOW_FIXTURE_DATA=str(fixture / "data"), PYTHONUNBUFFERED="1")
     # Browser imports need the caller's Playwright install, not the fixture's empty APPDATA.
     check_env = os.environ.copy()
-    check_env.update(AIRGLOW_VISUAL_OUTPUT=str(output / "screenshots"), AIRGLOW_ROADMAP_OUTPUT=str(output / "roadmap"),
+    check_env.update(AIRGLOW_FIXTURE_URL=BASE, AIRGLOW_VISUAL_OUTPUT=str(output / "screenshots"), AIRGLOW_ROADMAP_OUTPUT=str(output / "roadmap"),
                      AIRGLOW_RESPONSIVE_OUTPUT=str(output / "responsive"), AIRGLOW_TELEMETRY_OUTPUT=str(output / "telemetry"),
                      AIRGLOW_PERSONALIZATION_OUTPUT=str(output / "personalization"),
                      AIRGLOW_RIG3D_OUTPUT=str(output / "rig-3d"), AIRGLOW_CREATIVE_OUTPUT=str(output / "creative"))

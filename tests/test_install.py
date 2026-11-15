@@ -1,5 +1,4 @@
 import os
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -7,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from airglow import autostart, install
+from tests.isolation import popen_python
 
 
 class LegacyInstallTests(unittest.TestCase):
@@ -162,7 +162,7 @@ class StartAfterSetupTests(unittest.TestCase):
         self.assertFalse((self.data / "running").exists())
 
     def test_waits_for_setup_then_starts_unless_setup_did(self):
-        setup = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.5)"])
+        setup = popen_python("import time; time.sleep(0.5)")
         self.addCleanup(setup.wait)
         with mock.patch.object(install, "other_copies_running", return_value=False):
             self.assertTrue(install.wait_for_setup(setup.pid, timeout=10))
@@ -177,7 +177,7 @@ class StartAfterSetupTests(unittest.TestCase):
 
     def test_other_copies_are_found_by_exe_but_not_this_process(self):
         self.assertFalse(install.other_copies_running(sys.executable + ".nope"))
-        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+        other = popen_python("import time; time.sleep(5)")
         self.addCleanup(other.wait)
         self.addCleanup(other.kill)
         self.assertTrue(install.other_copies_running(sys.executable))

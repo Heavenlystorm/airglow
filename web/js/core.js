@@ -41,7 +41,7 @@ export const get = (p, timeout) => request("GET", p, undefined, timeout);
 const mutationTails = new Map(), mutations = new Map();
 let mutationId = 0;
 function mutationInfo(path, body) {
-  if (path === "/api/scene") return ["lighting", "Lighting", "lighting", true];
+  if (path === "/api/scene" || path === "/api/scene/undo") return ["lighting", "Lighting", "lighting", path === "/api/scene"];
   if (/^\/api\/presets\/[^/]+\/apply$/.test(path) || /^\/api\/profiles\/(try|discard|keep)$/.test(path))
     return ["lighting", "Profile application", "lighting", false];
   if (path === "/api/studio/use") return ["lighting", "Effect application", "studio", false];
@@ -59,6 +59,21 @@ function mutationInfo(path, body) {
 }
 
 export const mutationStates = () => [...mutations.values()].filter((s) => !s.silent).map(({ body, timeout, ...s }) => ({ ...s }));
+export function settleSceneMutation(status) {
+  const current = mutations.get("lighting");
+  if (!status || !current || current.sceneRevision == null) return;
+  if (status.session && current.sceneSession && status.session !== current.sceneSession) {
+    mutations.delete("lighting"); mutationChanged(); return;
+  }
+  if (status.desired_revision < current.sceneRevision) return;
+  if (status.desired_revision > current.sceneRevision) { mutations.delete("lighting"); mutationChanged(); return; }
+  current.status = status.status === "pending" ? "starting" : status.status === "failed" ? "failed" : "saved";
+  current.error = status.error || "";
+  if (current.status === "saved" && current.profileId) {
+    emit("profile:applied", current.profileId); delete current.profileId;
+  }
+  mutationChanged();
+}
 const mutationChanged = () => emit("mutations", mutationStates());
 export function dismissMutation(key, id) {
   if (mutations.get(key)?.id !== id || mutations.get(key)?.status !== "failed") return;
@@ -67,7 +82,25 @@ export function dismissMutation(key, id) {
 export function retryMutation(key, id) {
   const s = mutations.get(key);
   if (!s || s.id !== id || s.status !== "failed" || !s.retry) return Promise.resolve(false);
-  return post(s.path, s.body, s.timeout);
+  if (s.path !== "/api/scene" || s.sceneRevision == null) return post(s.path, s.body, s.timeout);
+  const status = S.state?.scene_status;
+  const { expected_effect, expected_session = s.sceneSession } = s.body;
+  if (status?.status !== "failed" || status.desired_revision !== s.sceneRevision || !expected_session ||
+      status.session !== expected_session || s.sceneSession !== expected_session ||
+      (expected_effect != null && S.state.scene?.effect !== expected_effect)) {
+    dismissMutation(key, id);
+    return Promise.resolve(false);
+  }
+
+  // The original compare-and-set revision was consumed by this accepted command.
+  const body = { ...s.body, expected_session, expected_revision: s.sceneRevision, retry: true };
+  return post(s.path, body, s.timeout).then(async (reply) => {
+    const status = reply.scene_status;
+    if (status?.status === "failed") throw new Error(status.error || "The lighting scene could not start");
+    if (status?.status !== "pending") return reply;
+    const { waitForLightingScene } = await import("./scene-commands.js");
+    return waitForLightingScene(status.desired_revision, status.session);
+  });
 }
 
 export function post(path, body, timeout) {
@@ -93,9 +126,16 @@ export function post(path, body, timeout) {
     update("saving");
     try {
       const result = await request("POST", path, snapshot, timeout);
-      update("saved");
       const applied = /^\/api\/presets\/([^/]+)\/apply$/.exec(path);
-      if (applied && result.ok === true) emit("profile:applied", decodeURIComponent(applied[1]));
+      const status = result.scene_status;
+      if (status && mutations.get(key)?.id === id) {
+        Object.assign(mutations.get(key), { sceneRevision: status.desired_revision, sceneSession: status.session,
+          profileId: applied && result.ok === true ? decodeURIComponent(applied[1]) : null });
+        settleSceneMutation(status);
+      } else {
+        update("saved");
+        if (applied && result.ok === true) emit("profile:applied", decodeURIComponent(applied[1]));
+      }
       return result;
     } catch (error) {
       update("failed", error.message || String(error));

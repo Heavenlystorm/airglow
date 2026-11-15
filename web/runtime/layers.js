@@ -136,7 +136,8 @@ self.AirglowLayers = (() => {
       const w = Math.max(0.02, p.width / 100);
       return {
         at(x, y, i, f, pt) {
-          const u = (localOf(pt, x) * bands + (p.reverse ? -1 : 1) * hz(p.speed, 0.05, 1.5) * f.time) % 1;
+          const phase = localOf(pt, x) * bands + (p.reverse ? -1 : 1) * hz(p.speed, 0.05, 1.5) * f.time;
+          const u = ((phase % 1) + 1) % 1;
           const k = Math.pow(clamp(1 - Math.abs(2 * u - 1) / w), 1.5);
           return [c[0], c[1], c[2], k];
         },
@@ -180,8 +181,8 @@ self.AirglowLayers = (() => {
         at(x, y, i, f) {
           const bands = f.audio?.bands;
           if (!bands) return [0, 0, 0, 0];
-          const s = Math.min(ax.norm(x, y), 0.999999);
-          const level = clamp(bands[Math.floor(s * bands.length)] * gain);
+          const s = clamp(ax.norm(x, y), 0, 0.999999);
+          const level = clamp(bands[Math.floor(s * bands.length + 1e-9)] * gain);
           const c = hsv(p.hue / 360 + 0.66 - s * 0.66, 1, 1);
           return [c[0], c[1], c[2], Math.pow(level, 1.4)];
         },
@@ -229,9 +230,10 @@ self.AirglowLayers = (() => {
   // defaults: layer type -> {setting: default}, so a half-edited layer in the Studio still draws.
   function effect(raw, defaults = {}) {
     const cfg = config(raw);
-    let built = [], master = { ...MASTER }, shared = null, env = 0, brightness = 1, reactGain = 1;
+    let built = [], master = { ...MASTER }, shared = null, env = 0, brightness = 1, reactGain = 1, previousTime = null;
 
     function build(params) {
+      const clocks = new Map(built.map(l => [l.key, l.time]));
       const m = cfg.master || {};
       const pal = (Array.isArray(params.m_palette) ? params.m_palette
         : (Array.isArray(m.palette) ? m.palette : MASTER.palette)).filter((h) => HEX.test(String(h))).map((h) => String(h).toLowerCase());
@@ -258,6 +260,7 @@ self.AirglowLayers = (() => {
         const react = layer.react || {};
         const amount = clamp((react.amount || 0) / 100);
         return {
+          key, time: clocks.get(key) ?? null,
           r: TYPES[layer.type](p), a: (layer.opacity ?? 100) / 100,
           blend: BLEND[layer.blend] || BLEND.normal,
           mask: layer.mask && layer.mask !== "all" ? layer.mask : null,
@@ -270,18 +273,20 @@ self.AirglowLayers = (() => {
 
     // One frame for the whole stack, plus a slightly different one for each layer that follows the music's speed.
     function prepare(f) {
-      const t = f.time * master.speed / 100, dt = f.dt * master.speed / 100;
+      const seek = previousTime === null || f.time < previousTime;
+      const elapsed = seek ? f.dt : Math.max(0, f.time - previousTime);
+      const t = f.time * master.speed / 100, dt = elapsed * master.speed / 100;
+      previousTime = f.time;
       const audio = scaledAudio(f.audio, reactGain);
       const base = { time: t, dt, audio };
       env = audio ? clamp(Math.max(audio.beat ? 1 : 0, audio.bass || 0)) : 0;
       shared = base;
       for (const l of built) {
         const mod = l.react.amount;
-        let frame = base;
-        if (l.react.what === "speed" && mod > 0) {
-          const k = 1 + mod * env;
-          frame = { time: t * k, dt: dt * k, audio };
-        }
+        const k = l.react.what === "speed" ? 1 + mod * env : 1;
+        // Integrate the rate: multiplying elapsed time by today's audio level jumps the animation's phase.
+        l.time = seek || l.time === null ? t : l.time + dt * k;
+        const frame = { time: l.time, dt: dt * k, audio };
         l.frame = frame;
         l.r.frame?.(frame);
         l.aNow = l.react.what === "strength" && mod > 0 ? Math.min(1, l.a * (1 + mod * env)) : l.a;

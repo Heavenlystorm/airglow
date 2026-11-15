@@ -4,6 +4,7 @@ import { openSheet } from "./sheet.js";
 
 const ROWS = [
   [`<kbd>Ctrl</kbd> + <kbd>1</kbd>…<kbd>7</kbd>`, "Switch between the seven sections"],
+  [`<kbd>Ctrl</kbd> + <kbd>K</kbd>`, "Search and switch effects, profiles, workspaces or sections"],
   [`<kbd>Ctrl</kbd> + <kbd>S</kbd>`, "Save the effect you are editing in the Studio"],
   [`<kbd>?</kbd> or <kbd>F1</kbd>`, "Open this list"],
   [`<kbd>Esc</kbd>`, "Close a dialog, or leave Arrange and Customize"],
@@ -15,7 +16,7 @@ const ROWS = [
 export function openShortcuts() {
   openSheet(`<div class="body"><h2>Keyboard shortcuts</h2>
     <table class="shortcuts"><tbody>${ROWS.map(([keys, what]) => `<tr><td>${keys}</td><td>${what}</td></tr>`).join("")}</tbody></table>
-    <p class="hint">Shortcuts work when focus is not inside a text field. Escape always closes a dialog first.</p>
+    <p class="hint">Ctrl+K also works inside text fields. Escape closes a dialog first.</p>
     <div class="actions"><span class="spacer"></span><button class="btn primary" data-close>Done</button></div></div>`);
 }
 

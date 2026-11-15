@@ -48,6 +48,7 @@ DEFAULT_CONFIG = {
     "openrgb_port": 6742,
     "lights_off_on_sleep": True,
     "lights_off_on_lock": False,
+    "lighting_transition_ms": 350,
     "dynamic_lighting_enabled": False,
     "online_checks": False,   # opt-in: look for updates (and later community effects) on a schedule
     "update_channel": "stable",
@@ -106,7 +107,7 @@ SCHEMA_VERSION = 1
 RESETTABLE_SETTINGS = ("lhm_url", "temp_source", "temp_unit", "fan_failsafe_duty", "fan_max_step", "fancontrol_exe",
                        "fancontrol_configs_dir", "openrgb_enabled", "openrgb_host", "openrgb_port",
                        "lights_off_on_sleep", "lights_off_on_lock", "dynamic_lighting_enabled", "online_checks",
-                       "update_channel", "design", "appearance", "energy_price")
+                       "update_channel", "design", "appearance", "energy_price", "lighting_transition_ms")
 
 
 # ---------------------------------------------------------------- validation
@@ -238,6 +239,8 @@ def validate_settings(patch):
             out[key] = _int_in(value, 30, 100, "Failsafe speed")
         elif key == "fan_max_step":
             out[key] = _int_in(value, 1, 25, "Ramp speed")
+        elif key == "lighting_transition_ms":
+            out[key] = _int_in(value, 0, 2000, "Lighting transition")
         elif key == "lhm_url":
             if not re.fullmatch(r"https?://[\w.\-]+(:\d{1,5})?/?", str(value)):
                 raise ValueError("sensor address must look like http://127.0.0.1:8085")
@@ -599,6 +602,8 @@ class Store:
     def __init__(self, directory=None):
         self.dir = Path(directory) if directory else paths.data_dir()
         self.dir.mkdir(parents=True, exist_ok=True)
+        from . import transactions
+        transactions.recover(self.dir)
         self._lock = threading.RLock()
         self._load_failed = False            # a file that exists but could not be read: never write over it
         self._protected_files = set()         # unread originals stay protected until a fresh Store loads them
@@ -662,40 +667,17 @@ class Store:
         fileio.atomic_write_text(self.dir / name, json.dumps(data, indent=2, ensure_ascii=False))
 
     def _commit_files(self, writes):
-        """Commit validated candidates under the store lock; restore exact originals on ordinary failures.
-
-        All originals must be readable before the first change. This is not a power-loss transaction across
-        files: each individual replacement is atomic, but a process or power failure can interrupt the group.
-        """
-        originals = {}
+        """Commit validated candidates with exact rollback and recovery after process or power interruption."""
+        from . import transactions
         for name, _ in writes:
             if name in self._protected_files:
                 raise ValueError(f"{name} could not be read at startup. Restart Airglow before saving changes; "
                                  "the original file has been kept.")
-            try:
-                originals[name] = (self.dir / name).read_bytes().decode("utf-8")
-            except FileNotFoundError:
-                originals[name] = None
-        written = []
         try:
-            for name, value in writes:
-                self._write(name, value)
-                written.append(name)
-        except Exception as error:
-            failures = []
-            for name in reversed(written):
-                try:
-                    if originals[name] is None:
-                        (self.dir / name).unlink(missing_ok=True)
-                    else:
-                        fileio.atomic_write_text(self.dir / name, originals[name])
-                except OSError:
-                    failures.append(name)
-                    log.exception("could not restore %s after a failed save", name)
-            if failures:
-                raise OSError(f"Save failed ({error}); could not restore {', '.join(failures)}. "
-                              "Live settings were kept. Check the data folder before restarting.") from error
-            raise
+            transactions.commit(self.dir, writes, self._write)
+        finally:
+            if (self.dir / transactions.JOURNAL).exists():
+                self._protected_files.update(transactions.NAMES)
 
     def _save_config(self, changes):
         """With the store lock held, persist a candidate before making it visible to readers."""
@@ -719,11 +701,10 @@ class Store:
             return
         log.info("updating saved settings from format %d to %d", self.schema, SCHEMA_VERSION)
         with self._lock:
-            self.schema = self.config["schema"] = SCHEMA_VERSION
-            self._write("config.json", self.config)
-            self._write("presets.json", self.presets)
-            self._write("state.json", self.state)
-            self._write("automations.json", self.rules)
+            candidate = {**self.config, "schema": SCHEMA_VERSION}
+            self._commit_files([("config.json", candidate), ("presets.json", self.presets),
+                                ("state.json", self.state), ("automations.json", self.rules)])
+            self.config, self.schema = candidate, SCHEMA_VERSION
 
     def _load_config(self):
         raw = self._read("config.json", {})

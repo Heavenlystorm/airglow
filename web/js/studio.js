@@ -5,6 +5,7 @@
 // controls, master settings), the code path, the checks, sharing and the in-app guide.
 
 import { $, $$, S, coalesce, emit, esc, fail, get, on, post, rangeFill, setHTML, toast } from "./core.js";
+import { adoptSceneState, waitForLightingScene } from "./scene-commands.js";
 import { fieldHTML, wireFields } from "./lighting.js";
 import { litZones, paintRig } from "./stage.js";
 import { ledPoints, runtimeAssets, sampleZones, testAudio, zoneFrames } from "./fxrun.js";
@@ -1716,9 +1717,12 @@ async function useIt() {
       await setLights(false);
       if (LIVE.state.error || E.doc !== doc) return;
     }
-    const r = await post("/api/studio/use", { fx_id: eff.fx_id, values: doc.values });
+    let r = await post("/api/studio/use", { fx_id: eff.fx_id, values: doc.values });
+    if (r.scene_status?.status === "pending") r = await waitForLightingScene(r.scene_status.desired_revision, r.scene_status.session);
+    if (r.scene_status?.status === "failed") throw new Error(r.scene_status.error);
+    r = adoptSceneState(r);
     S.state.scene = r.scene; S.state.effective = r.effective; S.state.trial = null; paintWorkflow();
-    toast(`${doc.name} is on your lights`); emit("refresh");
+    toast(r.scene_status?.overridden ? `${doc.name} saved. An automation controls the lights.` : `${doc.name} is on your lights`); emit("refresh");
   } catch (e) { fail(e); }
 }
 
@@ -1953,7 +1957,14 @@ async function onClick(e) {
   if (ds.edit) { const eff = lib.find((x) => x.fx_id === ds.edit); if (eff) openEditor(docFromEffect(eff)); return; }
   if (ds.remix) { const eff = lib.find((x) => x.fx_id === ds.remix); if (eff) openEditor(docFromEffect(eff, { remix: true })); return; }
   if (ds.use) {
-    try { const r = await post("/api/studio/use", { fx_id: ds.use }); S.state.scene = r.scene; S.state.effective = r.effective; toast("On your lights"); emit("refresh"); renderHome(); }
+    try {
+      let r = await post("/api/studio/use", { fx_id: ds.use });
+      if (r.scene_status?.status === "pending") r = await waitForLightingScene(r.scene_status.desired_revision, r.scene_status.session);
+      if (r.scene_status?.status === "failed") throw new Error(r.scene_status.error);
+      r = adoptSceneState(r);
+      S.state.scene = r.scene; S.state.effective = r.effective;
+      toast(r.scene_status?.overridden ? "Saved. An automation controls the lights." : "On your lights"); emit("refresh"); renderHome();
+    }
     catch (err) { fail(err); }
     return;
   }

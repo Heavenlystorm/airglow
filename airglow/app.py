@@ -11,12 +11,14 @@ import time
 import urllib.request
 import webbrowser
 
-from . import APP_NAME, __version__, api, autostart, install, paths, updates, webview2
-from .config import Store
+from . import APP_NAME, __version__, api, autostart, install, paths, system, updates, webview2
+from .config import DEFAULT_CONFIG, Store
 from .controller import Controller
+from .transactions import RecoveryError
 
 log = logging.getLogger("airglow")
 MUTEX_NAME = "Local\\AirglowSingleInstance"
+RESTART_WAIT = 60
 _mutex = None
 
 
@@ -33,21 +35,32 @@ def setup_logging():
 
 def single_instance():
     global _mutex
-    close_mutex()
+    if _mutex:
+        return True
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
     k32.CreateMutexW.restype = ctypes.c_void_p
-    _mutex = k32.CreateMutexW(None, False, MUTEX_NAME)
-    return ctypes.get_last_error() != 183          # ERROR_ALREADY_EXISTS
+    ctypes.set_last_error(0)
+    handle = k32.CreateMutexW(None, False, MUTEX_NAME)
+    error = ctypes.get_last_error()
+    if not handle:
+        raise ctypes.WinError(error)
+    if error == 183:                              # ERROR_ALREADY_EXISTS
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        k32.CloseHandle(handle)
+        return False
+    _mutex = handle
+    return True
 
 
 def close_mutex():
-    """Let go of the mutex before asking again: holding it ourselves would keep it alive after the owning copy quits."""
+    """Release the instance only once its resources have stopped."""
     global _mutex
-    if _mutex:
+    handle, _mutex = _mutex, None
+    if handle:
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         k32.CloseHandle.argtypes = [ctypes.c_void_p]
-        k32.CloseHandle(_mutex)
-        _mutex = None
+        k32.CloseHandle(handle)
 
 
 PORT_TRIES = 20               # if the saved port is taken by another program, try the next ones
@@ -103,12 +116,9 @@ def claim_single_instance(port, wait=5.0, background=False):
     takes over, instead of needing a second click."""
     if single_instance():
         return True
-    # The tray's "Restart Airglow" starts this copy while the old one is still quitting, and asking that one to show
-    # its window would just flash it on screen before it goes: wait for it instead (see Tray._menu).
-    handoff = bool(os.environ.get("AIRGLOW_RESTARTING"))
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
-        if not background and not handoff and ask_running_instance_to_show(port):
+        if not background and ask_running_instance_to_show(port):
             return False                   # it's alive and showed itself
         time.sleep(0.25)
         if single_instance():
@@ -130,6 +140,24 @@ def offer_webview2_download():
         APP_NAME, MB_YESNO | MB_ICONERROR)
     if answer == IDYES:
         webbrowser.open(webview2.DOWNLOAD_URL)
+
+
+def wait_for_restart(argv):
+    try:
+        pid, started = map(int, argv[1:3])
+        if not 0 < pid <= 0xFFFFFFFF or pid == os.getpid() or not 0 < started < 1 << 64:
+            raise ValueError("invalid process identity")
+        if system.wait_for_process_exit(pid, started, RESTART_WAIT):
+            return True
+    except (OSError, ValueError):
+        log.exception("could not check the previous Airglow process")
+        message_box("Airglow could not verify that the previous instance closed. "
+                    "Quit it from the tray if it is still running, then open Airglow again.")
+    else:
+        log.error("Airglow restart timed out waiting %d seconds for process %d", RESTART_WAIT, pid)
+        message_box(f"Airglow did not close within {RESTART_WAIT} seconds. "
+                    "Wait for it to close, then open Airglow again.")
+    return False
 
 
 def main(argv=None):
@@ -159,111 +187,136 @@ def main(argv=None):
         import faulthandler
         faulthandler.dump_traceback_later(int(os.environ["AIRGLOW_DEBUG_STACKS"]), exit=False,
                                           file=open(paths.log_dir() / "stacks.txt", "w", encoding="utf-8"))
-    background = "--background" in argv
-    store = Store()
-    port = store.config["port"]
-
-    if not claim_single_instance(running_port(port), wait=0.0 if background else 5.0, background=background):
-        return 0
-    updates.apply_pending(argv)     # an update downloaded last time: apply it and start again (doesn't return)
-
-    if not webview2.installed():
-        log.error("the Microsoft Edge WebView2 runtime isn't installed, so the window can't open")
-        if not background:
-            offer_webview2_download()
+    if argv and argv[0] == "--restart-from-pid":
+        if not wait_for_restart(argv):
             return 1
-        # started with Windows: carry on, the lights and fans don't need the window
+        argv = argv[3:]            # Velopack keeps normal launch arguments, including --background
 
+    background = "--background" in argv
     try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Airglow.App")
-    except (AttributeError, OSError):
-        pass
+        if not claim_single_instance(running_port(DEFAULT_CONFIG["port"]), wait=0.0 if background else 5.0,
+                                     background=background):
+            return 0
+        updates.apply_pending(argv)     # applies a pending update and starts again (doesn't return)
+        if not webview2.installed():
+            log.error("Install the Microsoft Edge WebView2 Evergreen Runtime from %s, then start Airglow again.",
+                      webview2.DOWNLOAD_URL)
+            if not background:
+                offer_webview2_download()
+            return 1
 
-    log.info("%s %s starting (data in %s)", APP_NAME, __version__, paths.data_dir())
-    if autostart.repair():
-        log.info("start-up entry updated to this install")
+        store = Store()
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Airglow.App")
+        except (AttributeError, OSError):
+            pass
+        log.info("%s %s starting (data in %s)", APP_NAME, __version__, paths.data_dir())
+        if autostart.repair():
+            log.info("start-up entry updated to this install")
+        return _run_app(store, store.config["port"], background)
+    except RecoveryError as exc:
+        log.error("%s", exc)
+        if not background:
+            message_box(str(exc))
+        return 1
+    except Exception:
+        log.exception("Airglow could not start or its window failed")
+        if not background:
+            message_box(f"Airglow could not start. Try opening it again. If the problem persists, see "
+                        f"{paths.log_dir() / 'airglow.log'} for details.")
+        return 1
+    finally:
+        close_mutex()
 
-    ctrl = Controller(store, start_power_events=True)
 
-    def crash_hook(exc_type, exc, tb):
-        log.critical("unhandled error", exc_info=(exc_type, exc, tb))
-        ctrl.failsafe()
+def _stop_resource(name, stop):
+    try:
+        stop()
+    except Exception:
+        log.exception("stopping %s failed", name)
 
-    sys.excepthook = crash_hook
-    threading.excepthook = lambda a: crash_hook(a.exc_type, a.exc_value, a.exc_traceback)
 
-    # imported here so the tests and a second instance don't load the GUI stack
+def _run_app(store, port, background):
+    # Import the GUI only after WebView2 is confirmed and this copy owns the instance.
+    from .lighting import studio
     from .tray import Tray
     from .window import Window
 
-    window = None
-    hooks = {"show_window": lambda: window and window.show(),
-             # show a saved diagnostics report in Explorer, selected
-             "reveal": lambda f: subprocess.Popen(["explorer", "/select,", str(f)]),
-             # the gallery's share page (only GitHub's new-file page for the profiles folder; api.py checks)
-             "open_url": lambda url: webbrowser.open(url),
-             # keep the native title bar with the interface design chosen in Settings
-             "design_changed": lambda design: window and window.apply_design(design)}
-    updater = updates.Updater(store)
-    server = start_server(port, ctrl, store, hooks, updater)
-    if server is None:
-        message_box(f"Ports {port} to {port + PORT_TRIES - 1} are all used by other programs, so Airglow can't "
-                    f"start.\n\nChange \"port\" in {paths.data_dir() / 'config.json'} and try again.")
-        return 1
-    port = server.server_address[1]
-    from .lighting import studio
-    studio.HOST.url = f"http://127.0.0.1:{port}"     # the effect host loads its page from here
+    ctrl = updater = server = api_thread = window = tray = None
+    marked_running = False
+    quit_lock = threading.Lock()
+    quitting = False
+    previous_hooks = sys.excepthook, threading.excepthook
 
-    ctrl.start()
-    threading.Thread(target=server.serve_forever, name="api", daemon=True).start()
-    updater.start()
+    def crash_hook(exc_type, exc, tb):
+        log.critical("unhandled error", exc_info=(exc_type, exc, tb))
+        if not quitting:
+            ctrl.failsafe()
 
-    tray = None
+    def show_window():
+        if window is not None and not quitting:
+            window.show()
 
     def quit_app():
-        log.info("quitting")
-        tray and tray.stop()
-        window.destroy()
-
-    window = Window(f"http://127.0.0.1:{port}/", start_hidden=background,
-                    on_first_hide=lambda: tray and tray.notify("Still running in the tray. Right-click the Airglow icon to quit."),
-                    design=store.settings()["design"])
-    updater.quit_app = quit_app
-    tray = Tray(ctrl, store, show_window=window.show, quit_app=quit_app, updater=updater)
-    tray.start()
-    install.mark_running()
+        nonlocal quitting
+        with quit_lock:
+            if not quitting:
+                quitting = True
+                log.info("quitting")
+        if window is not None:
+            _stop_resource("the window", window.destroy)
 
     try:
+        ctrl = Controller(store, start_power_events=True)
+        sys.excepthook = crash_hook
+        threading.excepthook = lambda a: crash_hook(a.exc_type, a.exc_value, a.exc_traceback)
+        hooks = {"show_window": show_window,
+                 # show a saved diagnostics report in Explorer, selected
+                 "reveal": lambda f: subprocess.Popen(["explorer", "/select,", str(f)]),
+                 # the gallery's share page (only GitHub's new-file page for the profiles folder; api.py checks)
+                 "open_url": lambda url: webbrowser.open(url),
+                 "design_changed": lambda design: window and not quitting and window.apply_design(design)}
+        updater = updates.Updater(store)
+        server = start_server(port, ctrl, store, hooks, updater)
+        if server is None:
+            message_box(f"Ports {port} to {min(port + PORT_TRIES - 1, 65535)} are all used by other programs, so "
+                        f"Airglow can't start.\n\nChange \"port\" in {paths.data_dir() / 'config.json'} and try again.")
+            return 1
+        origin = f"http://127.0.0.1:{server.server_address[1]}"
+        studio.HOST.url = origin
+        window = Window(f"{origin}/", start_hidden=background,
+                        on_first_hide=lambda: tray and tray.notify("Still running in the tray. Right-click the Airglow icon to quit."),
+                        design=store.settings()["design"])
+        updater.quit_app = quit_app
+        tray = Tray(ctrl, store, show_window=show_window, quit_app=quit_app, updater=updater)
+
+        ctrl.start()
+        api_thread = threading.Thread(target=server.serve_forever, name="api", daemon=True)
+        api_thread.start()
+        updater.start()
+        tray.start()
+        marked_running = True
+        install.mark_running()
         Window.run(None)            # blocks until the window is destroyed (Quit)
     finally:
-        # Stop taking requests first, so nothing can change settings or drive hardware while it is being torn down.
-        try:
-            server.shutdown()
-            server.server_close()
-        except Exception:
-            log.exception("stopping the API failed")
-        # Close the Studio host before anything else: the lighting thread keeps drawing a few more frames while it
-        # stops, and a spawn there used to leave a fresh effect host running for a moment after Airglow quit.
-        try:
-            studio.HOST.close()
-        except Exception:
-            log.exception("stopping the effect host failed")
-        try:
-            updater.stop()
-        except Exception:
-            log.exception("stopping the updater failed")
-        try:
-            ctrl.shutdown()
-        except Exception:
-            log.exception("stopping the controller failed")
-        try:
-            tray.stop()
-        except Exception:
-            log.exception("stopping the tray failed")
-        try:
-            install.clear_running()     # always: a leftover marker makes the next install think Setup killed us
-        except OSError:
-            log.exception("clearing the running marker failed")
+        if not quitting:
+            quit_app()
+        # Stop accepting work before tearing down the device controller. shutdown() blocks if serve_forever never ran.
+        if server is not None:
+            if api_thread is not None and api_thread.is_alive():
+                _stop_resource("the API", server.shutdown)
+            _stop_resource("the API listener", server.server_close)
+        if tray is not None:
+            _stop_resource("the tray", tray.stop)
+        if updater is not None:
+            _stop_resource("the updater", updater.stop)
+        if ctrl is not None:
+            # Prevent another frame from spawning a replacement effect host during controller shutdown.
+            _stop_resource("the effect host", studio.HOST.close)
+            _stop_resource("the controller", ctrl.shutdown)
+        if marked_running:
+            _stop_resource("the running marker", install.clear_running)
+        sys.excepthook, threading.excepthook = previous_hooks
         log.info("stopped")
     return 0
 

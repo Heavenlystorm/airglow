@@ -4,6 +4,7 @@ import re
 
 from . import gallery, lightsetup, profiles
 from .api import ApiError
+from .lighting import geometry
 
 
 def _preset(store, pid):
@@ -22,6 +23,19 @@ def _current_areas(ctrl, store):
             mine.setdefault(lightsetup.zone_spot(cfg), {"effect": cfg["override"]["effect"],
                                                         "params": cfg["override"]["params"]})
     return {**areas, **mine}
+
+
+def _preview_zones(ctrl, store):
+    settings = store.zones()
+    zones = {}
+    for dev in ctrl.manager.all().values():
+        if dev.online:
+            for zone in dev.zones:
+                key = f"{dev.id}/{zone.id}"
+                cfg = settings.get(key)
+                if cfg and cfg.get("enabled") and geometry.total_leds(cfg["layout"]):
+                    zones[key] = cfg
+    return zones
 
 
 def route(server, method, path, body, query=None):
@@ -84,12 +98,13 @@ def route(server, method, path, body, query=None):
                 {"id": retained_curve, "points": store.curves()[retained_curve]} if retained_curve else None}
     if path == "/api/preview":
         if body.get("profile"):
-            ctrl.engine.preview(profiles.scene_of(profiles.validate_shared(body["profile"])))
+            scene = profiles.scene_of(profiles.validate_shared(body["profile"]))
         elif body.get("preset"):
             p = _preset(store, body["preset"])
-            ctrl.engine.preview(profiles.scene_of(profiles.to_shared(p, store.get_rules(), curves=store.curves())))
+            scene = profiles.scene_of(profiles.to_shared(p, store.get_rules(), curves=store.curves()))
         else:
-            ctrl.engine.preview(None)
+            scene = None
+        server.previews.set_profile(scene, _preview_zones(ctrl, store) if scene else None)
         return {"ok": True}
     if path == "/api/profiles/try":
         shared = profiles.validate_shared(body.get("profile"))
@@ -141,6 +156,7 @@ def route(server, method, path, body, query=None):
         preset = next((p for p in store.get_presets() if p["id"] == m.group(1)), None)
         if not preset:
             raise ApiError(404, "That preset no longer exists.")
-        steps = ctrl.apply_preset(preset)
-        return {"ok": all(s["ok"] for s in steps), "steps": steps}
+        with ctrl._lock:
+            steps = ctrl.apply_preset(preset)
+            return {"ok": all(s["ok"] for s in steps), "steps": steps, "scene_status": ctrl.scene_status()}
     raise ApiError(404, "not found")

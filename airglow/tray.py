@@ -8,7 +8,7 @@ import threading
 
 import pystray
 
-from . import APP_NAME, automation, brand, sensors
+from . import APP_NAME, automation, brand, sensors, system
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +35,8 @@ class Tray:
         self._seen_rev = None
         self._icon_key = None
         self._stop = threading.Event()
+        self._action_lock = threading.Lock()
+        self._restart_pending = False
         self.icon = pystray.Icon("Airglow", self._image(), "Airglow", self._menu())
 
     def _current_rgb(self):
@@ -106,14 +108,6 @@ class Tray:
                                      checked=lambda item, eid=e["id"]: self.ctrl.base_scene.get("effect") == eid,
                                      radio=True) for e in found]
 
-        def restart(icon, item):
-            """Quit and start again: the quickest way back from a stuck lighting engine."""
-            from . import tools
-            exe, args = tools.self_command([])
-            env = {**os.environ, "AIRGLOW_RESTARTING": "1"}     # the new copy waits for this one to let go
-            subprocess.Popen([exe, *args], creationflags=0x08000000, env=env)
-            self.quit_app()
-
         def preset_items():
             presets = self.store.get_presets()
             if not presets:
@@ -159,9 +153,26 @@ class Tray:
             pystray.MenuItem(lambda item: "Automations paused" if self.ctrl.automations.paused else "Pause automations",
                              pause_menu, visible=lambda item: bool(self.store.get_rules())),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Restart Airglow", restart),
+            pystray.MenuItem("Restart Airglow", self._restart),
             pystray.MenuItem("Quit Airglow", lambda icon, item: self.quit_app()),
         )
+
+    def _restart(self, icon, item):
+        from . import tools
+
+        with self._action_lock:
+            if self._restart_pending or self._stop.is_set():
+                return
+            try:
+                started = system.current_process_started_at()
+                exe, args = tools.self_command(["--restart-from-pid", str(os.getpid()), str(started)])
+                subprocess.Popen([exe, *args], creationflags=tools.CREATE_NO_WINDOW)
+            except OSError:
+                log.exception("could not start the Airglow restart")
+                self.notify("Airglow could not restart. Try Restart Airglow again.")
+                return
+            self._restart_pending = True
+        self.quit_app()
 
     def held_off(self):
         """Lights are on by your choice, but an automation, sleep or the lock is keeping them dark."""
@@ -194,14 +205,44 @@ class Tray:
                 log.exception("tray refresh failed")
 
     def start(self):
+        ready = threading.Event()
+        error = None
+
         def setup(icon):
-            icon.visible = True
-            threading.Thread(target=self._loop, name="tray-refresh", daemon=True).start()
-        threading.Thread(target=lambda: self.icon.run(setup=setup), name="tray", daemon=True).start()
+            nonlocal error
+            try:
+                if not self._stop.is_set():
+                    icon.visible = True
+                if self._stop.is_set():
+                    icon.stop()        # startup timed out before pystray was ready to receive stop()
+            except Exception as exc:
+                error = exc
+            finally:
+                ready.set()
+
+        def run():
+            nonlocal error
+            try:
+                self.icon.run(setup=setup)
+            except Exception as exc:
+                error = exc
+                if ready.is_set():
+                    log.exception("tray event loop failed")
+            finally:
+                if not ready.is_set():
+                    error = error or RuntimeError("tray event loop exited before setup")
+                ready.set()
+
+        threading.Thread(target=run, name="tray", daemon=True).start()
+        if not ready.wait(10):
+            raise RuntimeError("the tray icon did not become ready")
+        if error is not None:
+            raise RuntimeError("the tray icon could not start") from error
+        threading.Thread(target=self._loop, name="tray-refresh", daemon=True).start()
 
     def stop(self):
-        self._stop.set()
-        try:
-            self.icon.stop()
-        except Exception:
-            pass
+        with self._action_lock:
+            if self._stop.is_set():
+                return
+            self._stop.set()
+        self.icon.stop()

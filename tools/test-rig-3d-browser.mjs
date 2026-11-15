@@ -30,7 +30,9 @@ async function pageFor(t, width = 1440, init = null) {
   const errors = [], posts = [], modules = [];
   page.on("pageerror", e => errors.push(e.message));
   page.on("request", r => {
-    if (r.method() === "POST") posts.push(r.url());
+    const path = new URL(r.url()).pathname;
+    // Deck stills use isolated preview messages, which do not mutate hardware or settings.
+    if (r.method() === "POST" && !/^\/api\/studio\/preview\/(load|tick|stop)$/.test(path)) posts.push(r.url());
     if (r.url().endsWith("/rig-3d.js")) modules.push(r.url());
   });
   await page.addInitScript(() => {

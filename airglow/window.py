@@ -2,6 +2,7 @@
 
 import ctypes
 import logging
+import threading
 
 import webview
 
@@ -36,6 +37,9 @@ class Window:
     def __init__(self, url, start_hidden=False, on_first_hide=None, design="graphite"):
         self.design = design if design in TITLEBAR else "graphite"
         self.quitting = False
+        self._native_shown = False
+        self._destroy_requested = False
+        self._destroy_lock = threading.Lock()
         self._on_first_hide = on_first_hide
         self._hidden_once = False
         self._hwnd = None
@@ -60,6 +64,10 @@ class Window:
 
     def _style_title_bar(self):
         """Style the title bar as soon as there is a handle; the design is re-applied when it changes."""
+        self._native_shown = True
+        if self.quitting:
+            self.destroy()
+            return
         try:
             self._hwnd = self.win.native.Handle.ToInt64()
         except Exception as e:  # cosmetic only
@@ -132,11 +140,18 @@ class Window:
             user32.SetForegroundWindow(hwnd)
 
     def destroy(self):
-        self.quitting = True
+        with self._destroy_lock:
+            self.quitting = True
+            # pywebview ignores destroy() until it creates its native window. The shown event retries it.
+            if not self._native_shown or self._destroy_requested or self.win.events.closed.is_set():
+                return
+            self._destroy_requested = True
         try:
             self.win.destroy()
         except Exception:
-            pass
+            with self._destroy_lock:
+                self._destroy_requested = False
+            log.exception("could not close the native window")
 
     @staticmethod
     def run(on_start):

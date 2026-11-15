@@ -3,7 +3,6 @@ import io
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 import time
@@ -11,11 +10,13 @@ import unittest
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from shutil import copyfile
 from types import SimpleNamespace
 from unittest import mock
 
 from airglow import config, sensors, tools
 from tests.fakes import FakeManager
+from tests.isolation import run_authenticode_probe
 
 
 def make_zip(path, entries):
@@ -51,7 +52,8 @@ class Commands:
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
         self.kwargs.append(kw)
-        return SimpleNamespace(returncode=self.code, stdout="", stderr="")
+        code = 0 if "/Query" in cmd and "/FO" in cmd else self.code
+        return SimpleNamespace(returncode=code, stdout="", stderr="")
 
     def named(self, *words):
         return [c for c in self.calls if all(w in c for w in words)]
@@ -193,7 +195,7 @@ class SignatureCheckTests(unittest.TestCase):
         results = []
 
         def run(cmd, **kw):                                 # the real thing, keeping what PowerShell said
-            results.append(subprocess.run(cmd, **kw))
+            results.append(run_authenticode_probe(cmd, **kw))
             return results[-1]
 
         def said():
@@ -206,9 +208,10 @@ class SignatureCheckTests(unittest.TestCase):
             unsigned = Path(d) / "not signed.exe"
             unsigned.write_bytes(b"MZ not really")
             self.assertFalse(tools._microsoft_signed(unsigned, run), said())
-        defender = Path(os.environ.get("ProgramFiles", "")) / "Windows Defender" / "MpCmdRun.exe"
-        if defender.exists():                               # a path with a space in it
-            self.assertTrue(tools._microsoft_signed(defender, run), said())
+        with tempfile.TemporaryDirectory(prefix="signature fixture ") as d:
+            copied = Path(d) / cmd_exe.name
+            copyfile(cmd_exe, copied)
+            self.assertTrue(tools._microsoft_signed(copied, run), said())
 
 
 class InstallTests(unittest.TestCase):
@@ -222,10 +225,13 @@ class InstallTests(unittest.TestCase):
         for tid, z in (("lhm", lhm), ("openrgb", orgb)):
             self.spec["tools"][tid]["size"], self.spec["tools"][tid]["sha256"] = checked(z)
         self.job = {"tools": ["lhm", "openrgb"], "files": {"lhm": str(lhm), "openrgb": str(orgb)},
-                    "user_sid": "S-1-5-21-7", "openrgb_port": 6750, "lhm_password_sha256": "cd" * 32}
+                    "user_sid": "S-1-5-21-7", "openrgb_port": 6750,
+                    "lhm_password_sha256": hashlib.sha256(b"fixture").hexdigest(),
+                    "lhm_authorization": "Basic YWlyZ2xvdzpmaXh0dXJl"}
         patches = [mock.patch.object(tools, "spec", return_value=self.spec),
                    mock.patch.object(tools, "_processes", return_value=[]),
                    mock.patch.object(tools, "pawnio_needed", return_value=False),
+                   mock.patch.object(tools, "_wait_for_helper"),
                    # install() only accepts files from the downloads folder (the job file is world-writable)
                    mock.patch.object(tools, "downloads_dir", return_value=self.dir)]
         for p in patches:
@@ -242,10 +248,10 @@ class InstallTests(unittest.TestCase):
         self.assertTrue((self.root / "LibreHardwareMonitor/LibreHardwareMonitor.exe").is_file())
         self.assertTrue((self.root / "OpenRGB/OpenRGB.exe").is_file())
         cfg = (self.root / "LibreHardwareMonitor/LibreHardwareMonitor.config").read_text(encoding="utf-8")
-        self.assertIn('value="' + "cd" * 32 + '"', cfg)
+        self.assertIn(f'value="{self.job["lhm_password_sha256"]}"', cfg)
         self.assertEqual(len(run.named("schtasks", "/Create")), 2)
         self.assertEqual(len(run.named("schtasks", "/Run")), 2)
-        self.assertFalse((self.root / ".staging").exists())
+        self.assertFalse(list(self.root.glob(".repair-*")))
 
     def test_openrgb_task_uses_the_configured_port(self):
         captured = {}
@@ -260,7 +266,7 @@ class InstallTests(unittest.TestCase):
         with self.assertRaisesRegex(tools.SetupError, "bytes|checksum"):
             tools.install(self.job, self.root, Commands())
         self.assertFalse((self.root / "OpenRGB").exists())
-        self.assertFalse((self.root / ".staging").exists())
+        self.assertFalse(list(self.root.glob(".repair-*")))
 
     def test_a_job_naming_a_file_outside_the_downloads_folder_is_refused(self):
         outside = Path(tempfile.mkdtemp()) / "chosen-by-someone-else.exe"
@@ -268,7 +274,7 @@ class InstallTests(unittest.TestCase):
         job = {"tools": [], "files": {}, "user_sid": "S-1-5-21-7", "vcredist": str(outside)}
         with self.assertRaisesRegex(tools.SetupError, "downloads folder"):
             tools.install(job, self.root, Commands())
-        self.assertFalse((self.root / ".staging").exists())
+        self.assertFalse(list(self.root.glob(".repair-*")))
 
     def test_failed_task_registration_is_reported(self):
         with self.assertRaisesRegex(tools.SetupError, "start at sign-in"):
@@ -482,6 +488,33 @@ class SetupFlowTests(unittest.TestCase):
         auth = json.loads(tools.auth_file().read_text(encoding="utf-8"))
         self.assertEqual(hashlib.sha256(auth["password"].encode()).hexdigest(), seen[0][0])
 
+    def test_confirmed_rollback_restores_detector_changes_and_discards_unneeded_credentials(self):
+        detector = "Our controller"
+        self.ctrl.manager.natives = {"hub": SimpleNamespace(lighting=True,
+                                                          product=SimpleNamespace(openrgb_detector=detector))}
+        path = self.data / "OpenRGB.json"
+        original = {"Detectors": {"detectors": {detector: True}}, "theme": "dark"}
+        path.write_text(json.dumps(original), encoding="utf-8")
+
+        def failed(args):
+            current = json.loads(path.read_text(encoding="utf-8"))
+            self.assertFalse(current["Detectors"]["detectors"][detector])
+            self.assertTrue(tools.auth_file().is_file())
+            current["theme"] = "light"
+            path.write_text(json.dumps(current), encoding="utf-8")
+            tools.result_file(Path(args[1]), args[0]).write_text(json.dumps({
+                "ok": False, "error": "OpenRGB startup failed", "rolled_back": True,
+            }), encoding="utf-8")
+            return 1
+
+        with mock.patch.object(tools, "run_elevated", side_effect=failed):
+            tools.start_setup(self.ctrl, self.store)
+            state = self.wait()
+        self.assertEqual(state["state"], "failed")
+        self.assertIn("OpenRGB startup failed", state["error"])
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {**original, "theme": "light"})
+        self.assertFalse(tools.auth_file().exists())
+
     def test_cancelled_repair_keeps_existing_credentials(self):
         original = json.dumps({"user": tools.LHM_USER, "password": "existing-password"})
         tools.auth_file().write_text(original, encoding="utf-8")
@@ -578,6 +611,14 @@ class SetupFlowTests(unittest.TestCase):
             snap = self.wait()
         self.assertEqual((snap["state"], snap["error"]), ("failed", "disk full"))
         self.assertTrue(tools.auth_file().exists())  # a partial install may already be using this credential
+
+    def test_exit_code_alone_cannot_claim_setup_succeeded(self):
+        with mock.patch.object(tools, "run_elevated", return_value=0):
+            tools.start_setup(self.ctrl, self.store)
+            snap = self.wait()
+        self.assertEqual(snap["state"], "failed")
+        self.assertIn("no verification result", snap["error"])
+        self.assertFalse((self.data / "downloads" / "setup-job.json").exists())
 
     def test_the_elevated_copy_only_writes_its_result_next_to_the_job_file(self):
         jobs = Path(self.tmp.name) / "jobs"

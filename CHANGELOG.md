@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.16.0
+- Scene changes wait for a valid rendered frame and a successful save, retain the previous
+  lighting on failure, and provide lighting-only Undo. Transitions fade smoothly and can be adjusted in Settings.
+- Audition effects on your rig before applying them. Lighting cards use the actual effect renderers; simulated
+  audio, temperature and screen inputs are labelled. Preview rendering has separate capacity from live lighting.
+- Ctrl+K opens Quick Switch for effects, profiles, workspaces and settings, with lighting and cooling actions labelled.
+- Restart waits for the exact previous process. Partial startup failures clean up resources, and missing WebView2
+  is reported before hardware starts. Effect rendering stays out of the taskbar and off screen.
+- Helper repair stages and validates downloads before replacing files, verifies startup, and restores previous
+  files and scheduled tasks when setup fails. Interrupted settings transactions recover before migration.
+- Managed fans use the configured failsafe immediately when temperature is unavailable. Higher existing duty and
+  firmware-owned outputs are preserved.
+- Reverse Chase, speed-reactive animation phase and Spectrum mapping are corrected. Instrument tiles distinguish
+  temperature, memory, load, power and network data; all five styles and twelve themes retain meaningful displays.
+- Narrow windows at enlarged interface scale now fill the viewport correctly. Keyboard tile controls retain focus,
+  presentation accents remain legible, and animations stop when hidden or reduced motion is selected.
+- Local packaging and release workflows share the Python, JavaScript, browser and native qualification checks.
+- Qualification limits: one automated silent upgrade required starting Airglow separately after setup. Clean-machine
+  installation and reboot/sleep checks remain unverified; see `docs/qualification-1.16.0.md` for the tested scope.
+
 ## 1.15.0
 - Overview becomes a Lighting Canvas with closely framed 2D and interactive 3D rig views. Select a zone to open
   its Lighting controls, with brightness and power still directly accessible on the tile.

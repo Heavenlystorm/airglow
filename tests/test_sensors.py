@@ -131,7 +131,10 @@ class ParseEdgeCaseTests(unittest.TestCase):
         self.assertIsNone(s["total_power"])
 
     def test_unreachable_server_is_offline(self):
-        s = sensors.read("http://127.0.0.1:1", timeout=0.3)
+        from tests.isolation import refusing_port
+
+        with refusing_port() as port:
+            s = sensors.read(f"http://127.0.0.1:{port}", timeout=0.3)
         self.assertFalse(s["online"])
         self.assertEqual(s["fans"], [])
 

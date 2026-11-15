@@ -51,7 +51,11 @@ async function fits(page){
 }
 test('showcase, presentation, undo and 3D persist without lighting writes',async t=>{
   const page=await pageFor(t),writes=[];
-  page.on('request',r=>{if(r.method()==='POST')writes.push(new URL(r.url()).pathname);});
+  page.on('request',r=>{
+    const path=new URL(r.url()).pathname;
+    // The Lighting deck may render stills with its isolated preview service.
+    if(r.method()==='POST'&&!/^\/api\/studio\/preview\/(load|tick|stop)$/.test(path))writes.push(path);
+  });
   await starter(page,'showcase','Canvas test');
   const saved=await api('/api/overview');
   assert.equal(saved.tiles.find(t=>t.type==='lighting').w,3);

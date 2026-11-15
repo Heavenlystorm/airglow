@@ -50,8 +50,8 @@ test("theme chooser cannot steal focus after the user moves to Done", async () =
   assert.equal(h.document.activeElement, h.done);
 });
 
-async function harness() {
-  const elements = new Map(), storage = new Map(), requests = [], timers = new Map();
+async function harness({ captureScenePolls = false } = {}) {
+  const elements = new Map(), storage = new Map(), requests = [], scenePolls = [], timers = new Map();
   let timer = 0, releaseStudio;
   const studioGate = new Promise((resolve) => { releaseStudio = resolve; });
   function element() {
@@ -84,6 +84,9 @@ async function harness() {
     fetch(path, options) {
       if (options.method === "GET") {
         if (path === "/api/effects") return Promise.resolve({ ok: true, json: async () => [] });
+        if (captureScenePolls && path === "/api/state") {
+          return new Promise(resolve => scenePolls.push(body => resolve({ ok: true, json: async () => body })));
+        }
         return new Promise(() => {}); // Boot's other network calls stay pending.
       }
       return new Promise((resolve, reject) => requests.push({
@@ -92,7 +95,7 @@ async function harness() {
       }));
     },
   });
-  const real = new Set(["core", "studio", "studio-start", "studio-document", "studio-preview", "studio-gallery", "studio-packs", "studio-variations", "fans", "main", "lighting"]);
+  const real = new Set(["core", "studio", "studio-start", "studio-document", "studio-preview", "studio-gallery", "studio-packs", "studio-variations", "fans", "main", "lighting", "scene-commands"]);
   const extra = {
     studio: "export { E, save, quietSave, newDoc, snapDoc, saveDraftNow, pending };",
     fans: "export { E, renderEditor, movePoint };",
@@ -139,7 +142,7 @@ async function harness() {
     next[1].fn();
     return true;
   }
-  return { load, core, context, node, requests, storage, releaseStudio, fireTimer };
+  return { load, core, context, node, requests, scenePolls, storage, releaseStudio, fireTimer };
 }
 
 test("conflicting mutations serialize snapshots while unrelated zones stay responsive", async () => {
@@ -180,6 +183,61 @@ test("failed saves stay recoverable but an obsolete failure cannot replay over a
   await second;
   assert.equal(await h.core.retryMutation("lighting", failed.id), false);
   assert.equal(h.requests.length, 2, "the old value must never be replayed after success");
+});
+
+async function failAcceptedScene(h) {
+  const body = { params: { speed: 25 }, expected_revision: 4, expected_session: "run-a", expected_effect: "cycle" };
+  const scene = { effect: "cycle", params: { speed: 10 } };
+  const pending = { session: "run-a", desired_revision: 5, active_revision: 4, status: "pending" };
+  const write = h.core.post("/api/scene", body);
+  h.requests[0].resolve({ scene, scene_status: pending });
+  await write;
+  const failed = { ...pending, status: "failed", error: "Renderer did not start" };
+  h.core.S.state = { scene, scene_status: failed };
+  h.core.settleSceneMutation(failed);
+  return { body, scene, failed, mutation: h.core.mutationStates().find(s => s.key === "lighting") };
+}
+
+test("global scene retry uses the accepted failed revision and waits for the replacement renderer", async () => {
+  const h = await harness({ captureScenePolls: true });
+  const { body, scene, failed, mutation } = await failAcceptedScene(h);
+  let finished = false;
+  const retry = h.core.retryMutation("lighting", mutation.id);
+  retry.then(() => { finished = true; }, () => {});
+  await flush();
+  assert.deepEqual(h.requests[1].body, { ...body, expected_revision: 5, retry: true });
+  const pending = { ...failed, desired_revision: 6, status: "pending", error: null };
+  h.requests[1].resolve({ scene, scene_status: pending });
+  await flush();
+  assert.equal(finished, false, "a pending reply cannot be reported as saved");
+  assert.equal(h.core.mutationStates().find(s => s.key === "lighting").status, "starting");
+  assert.equal(h.scenePolls.length, 1);
+  const ready = { ...pending, active_revision: 6, status: "ready" };
+  h.scenePolls[0]({ scene: { ...scene, params: body.params }, scene_status: ready });
+  assert.equal((await retry).scene_status.status, "ready");
+  assert.equal(h.core.mutationStates().find(s => s.key === "lighting").status, "saved");
+});
+
+test("global scene retry cannot take ownership from a newer revision, renderer effect or server session", async () => {
+  for (const changed of [{ desired_revision: 6 }, { session: "run-b" }, { effect: "solid" }]) {
+    const h = await harness();
+    const { scene, failed, mutation } = await failAcceptedScene(h);
+    const { effect, ...status } = changed;
+    h.core.S.state = { scene: { ...scene, effect: effect || scene.effect }, scene_status: { ...failed, ...status } };
+    const retry = h.core.retryMutation("lighting", mutation.id);
+    await flush();
+    assert.equal(h.requests.length, 1, `obsolete retry posted a request after ${JSON.stringify(changed)}`);
+    assert.equal(await retry, false);
+  }
+});
+
+test("a new server session clears a failed retry even when its revision counter was reset", async () => {
+  const h = await harness();
+  const { scene, failed, mutation } = await failAcceptedScene(h);
+  const newStatus = { ...failed, session: "run-b", desired_revision: 0, active_revision: 0, status: "ready" };
+  h.core.S.state = { scene, scene_status: newStatus };
+  h.core.settleSceneMutation(newStatus);
+  assert.equal(h.core.mutationStates().some(s => s.id === mutation.id), false);
 });
 
 test("recovery retries idempotent saves but never uncertain profile creation", async () => {

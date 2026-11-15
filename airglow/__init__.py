@@ -1,4 +1,4 @@
 """Airglow: free lighting, fan and sensor control for Windows PCs."""
 
-__version__ = "1.15.0"
+__version__ = "1.16.0"
 APP_NAME = "Airglow"

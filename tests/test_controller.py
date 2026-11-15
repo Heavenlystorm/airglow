@@ -256,25 +256,31 @@ class ControllerTests(unittest.TestCase):
 
     def test_sensor_loss_goes_to_failsafe_speed(self):
         self.ctrl.tick()
+        safe = max(self.ctrl.fan_duty, self.store.settings()["fan_failsafe_duty"])
         self.temps = {"online": False, "cpu_temp": None, "gpu_temp": None}
         for _ in range(40):
             self.ctrl.tick()
-        self.assertEqual(self.ctrl.fan_duty, self.store.settings()["fan_failsafe_duty"])
+        self.assertEqual(self.ctrl.fan_duty, safe)
 
-    def test_start_without_temperatures_runs_fans_quietly(self):
-        # LibreHardwareMonitor not answering yet at sign-in: bottom of the curve, not the failsafe speed
+    def test_start_without_temperatures_uses_configured_failsafe_immediately(self):
         self.ctrl.set_fan_curve("silent")
         self.temps = {"online": False, "cpu_temp": None, "gpu_temp": None}
         self.ctrl.tick()
-        lowest = self.store.curves()["silent"][0][1]
-        self.assertEqual(self.ctrl.fan_duty, lowest)
-        self.assertLess(lowest, self.store.settings()["fan_failsafe_duty"])
-        self.assertEqual(set(self.nzxt.hub.duties[-1].values()), {lowest})
+        failsafe = self.store.settings()["fan_failsafe_duty"]
+        self.assertEqual(self.ctrl.fan_duty, failsafe)
+        self.assertEqual(set(self.nzxt.hub.duties[-1].values()), {failsafe})
+        self.assertTrue(self.ctrl.snapshot()["fans"]["failsafe"])
+
+    def test_missing_temperature_never_reduces_previously_higher_cooling(self):
+        self.ctrl.fan_duty = 85
+        self.temps = {"online": False, "cpu_temp": None, "gpu_temp": None}
+        self.ctrl.tick()
+        self.assertEqual(self.ctrl.fan_duty, 85)
 
     def test_start_goes_to_failsafe_if_temperatures_never_come(self):
         self.temps = {"online": False, "cpu_temp": None, "gpu_temp": None}
         self.ctrl.tick()
-        self.ctrl._started -= Controller.STARTUP_GRACE
+        self.ctrl._started -= 60
         for _ in range(40):
             self.ctrl.tick()
         self.assertEqual(self.ctrl.fan_duty, self.store.settings()["fan_failsafe_duty"])

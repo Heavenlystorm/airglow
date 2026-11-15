@@ -3,7 +3,7 @@ export function sensorFamily(meta, id = '') {
   if (meta?.unit === '°C') return 'thermal';
   if (['GB', 'MB'].includes(meta?.unit) || /ram|memory|vram|storage|disk.*load/i.test(`${id} ${meta?.name || ''}`) && meta?.unit === '%') return 'capacity';
   if (meta?.unit === '%') return 'load';
-  if (meta?.unit === 'B/s') return 'network';
+  if (meta?.unit === 'B/s') return /disk/i.test(id) || meta.hw === 'storage' ? 'signal' : 'network';
   if (meta?.unit === 'W' || meta?.unit === '€/h') return 'power';
   return 'signal';
 }
@@ -17,4 +17,15 @@ export function instrumentModel({ value, lo = 0, hi = 100, samples = [], thresho
     critical: Number.isFinite(thresholds?.[1]) ? fraction(thresholds[1]) : null,
     stats: values.length ? { min: Math.min(...values), max: Math.max(...values), mean: values.reduce((a,b) => a+b,0)/values.length, count: values.length } : null,
   };
+}
+
+export function peakBuckets(points, now, window, count) {
+  const start = now - window;
+  const peaks = Array(count).fill(null);
+  for (const [time, value] of points) {
+    if (!Number.isFinite(value) || time < start || time > now) continue;
+    const bucket = Math.min(count - 1, Math.floor((time - start) / window * count));
+    peaks[bucket] = Math.max(peaks[bucket] ?? value, value);
+  }
+  return peaks;
 }

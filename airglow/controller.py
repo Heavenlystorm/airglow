@@ -6,7 +6,9 @@ and fan curve are recomputed whenever any of those change.
 """
 
 import collections
+import copy
 import logging
+import secrets
 import threading
 import time
 from urllib.parse import quote
@@ -26,10 +28,6 @@ log = logging.getLogger(__name__)
 class Controller:
     TICK = 1.0                 # automations; sensors and fans run every other tick
     HISTORY = 300              # samples kept (10 minutes at 2 s)
-    # At sign-in Airglow often starts before LibreHardwareMonitor answers. Until the first temperature arrives (for at
-    # most this long) the fans run at the bottom of the curve, which is where a freshly started PC sits, instead of
-    # jumping to the failsafe speed and ramping back down over the next half minute.
-    STARTUP_GRACE = 45.0
 
     def __init__(self, store, manager=None, read_sensors=None, signals=None, start_power_events=False,
                  async_writes=True, read_flat=None, lhm_fans=None):
@@ -73,6 +71,11 @@ class Controller:
         self._failsafe_at = 0.0            # shutdown, quitting and a failing tick can all ask within a moment
         self.history = collections.deque(maxlen=self.HISTORY)
         self.rev = 0
+        self._scene_revision = self._active_scene_revision = 0
+        self._scene_session = secrets.token_hex(8)
+        self._scene_pending = None
+        self._scene_error = None
+        self._scene_undo = None
         self._ticks = 0
         self._engine_stall_logged = False
         self._last_tick = None
@@ -88,32 +91,205 @@ class Controller:
         self.apply()
 
     # ------------------------------------------------------------ manual commands
-    def set_scene(self, patch):
+    def set_scene(self, patch, *, end_trial_kind=None):
         with self._lock:
-            merged = {**self.base_scene, **{k: v for k, v in patch.items() if k in ("effect", "params", "brightness", "on")}}
-            if "effect" in patch and patch["effect"] != self.base_scene["effect"] and "params" not in patch:
-                merged["params"] = {}                     # new effect starts from its defaults
-            scene = validate_scene(merged)
+            off = patch.get("on") is False and not {"effect", "params", "brightness"}.intersection(patch)
+            if not off:
+                self._refresh_scene()
+                if "expected_revision" in patch and (type(patch["expected_revision"]) is not int or patch["expected_revision"] < 0):
+                    raise ValueError("expected_revision must be a non-negative integer")
+                if patch.get("expected_session", self._scene_session) != self._scene_session:
+                    raise ValueError("Airglow restarted. Refresh before editing the lights.")
+                if patch.get("expected_revision", self._scene_revision) != self._scene_revision:
+                    raise ValueError("The lighting scene changed. Refresh before editing it again.")
+                if patch.get("expected_effect", self.base_scene["effect"]) != self.base_scene["effect"]:
+                    raise ValueError("Those parameters belong to a different effect. Refresh before editing.")
+                if patch.get("retry"):
+                    from .lighting import studio
+                    studio.HOST.retry()
+            end_trial = bool(self.trial and end_trial_kind and self.trial.get("kind") == end_trial_kind)
+            base = self.trial["before"]["scene"] if end_trial else self.base_scene
+            curve = self.trial["before"]["curve"] if end_trial else self.base_curve
+            if off:
+                if self._scene_pending:
+                    base = self._scene_pending["before"][0]
+                scene = {**base, "on": False}
+            else:
+                merged = {**base, **{k: v for k, v in patch.items() if k in ("effect", "params", "brightness", "on")}}
+                if "effect" in patch and patch["effect"] != base["effect"] and "params" not in patch:
+                    merged["params"] = {}                 # new effect starts from its defaults
+                scene = validate_scene(merged)
             preset = self.active_preset
             if any(k in patch for k in ("effect", "params", "brightness")):
                 preset = None
-            self._commit_base(scene, self.base_curve, preset)
+            self._commit_base(scene, curve, preset, end_trial=end_trial, force=not off and bool(patch.get("retry")))
 
     def set_fan_curve(self, name):
         if name not in self.store.curves():
             raise ValueError(f"unknown fan curve '{name}'")
         with self._lock:
-            self._commit_base(self.base_scene, name, None)
+            if self.trial is None:
+                self.store.save_state(fan_curve=name, active_preset=None)
+            self.base_curve, self.active_preset, self._scene_undo = name, None, None
+            if self._scene_pending:
+                pending = self._scene_pending
+                pending["curve"], pending["preset"], pending["allow_undo"] = name, None, False
+                pending["before"] = (pending["before"][0], name, None)
+                pending.pop("fan_profile", None)
+            self.apply()
 
-    def _commit_base(self, scene, curve, preset, *, end_trial=False):
+    def _commit_base(self, scene, curve, preset, *, end_trial=False, force=False):
         """Persist a candidate before publishing it to loops, snapshots or the lighting engine."""
+        self.engine.validate_scene_requirements(scene, trial_zones=() if end_trial else None)
+        self._scene_revision += 1
+        self._scene_error, self._scene_undo = None, None
+        previous_pending = self._scene_pending
+        before = previous_pending["before"] if previous_pending else (self.base_scene, self.base_curve, self.active_preset)
+        self._scene_pending = None
+        overridden = self._scene_overridden()
+        if (force or scene != before[0]) and scene.get("on", True) and not overridden and (self.trial is None or end_trial):
+            before_zones = previous_pending["before_zones"] if previous_pending else self.engine._trial_zones
+            if end_trial:
+                self.engine.set_trial_zones(())
+            self.engine.set_scene(scene, revision=self._scene_revision,
+                                  transition_ms=self.store.settings().get("lighting_transition_ms", 350), commit_required=True)
+            self.base_scene, self.effective_scene = scene, scene
+            self._scene_pending = {"revision": self._scene_revision, "before": before, "scene": scene,
+                                   "curve": curve, "preset": preset, "end_trial": end_trial,
+                                   "before_zones": before_zones, "config": copy.deepcopy(self.store.config),
+                                   "rules": copy.deepcopy(self.store.rules)}
+            self.engine.prepare_scene()
+            self._refresh_scene(raise_save_error=True)
+            self.rev += 1
+            return
+        # Off is a safety action: cancel the renderer even if its preference cannot be saved.
+        if not scene.get("on", True) and not overridden:
+            self.engine.set_scene(scene, revision=self._scene_revision)
+            self.effective_scene = scene
         if self.trial is None or end_trial:
-            self.store.save_state(scene=scene, fan_curve=curve, active_preset=preset)
+            try:
+                self.store.save_state(scene=scene, fan_curve=curve, active_preset=preset)
+            except Exception as exc:
+                self._scene_error = f"Could not save the scene: {exc}"
+                self.base_scene, self.base_curve, self.active_preset = before
+                if not scene.get("on", True) and not overridden:
+                    self.base_scene = scene
+                    self._scene_error = f"Lights are off, but that preference could not be saved: {exc}"
+                elif previous_pending:
+                    self.engine.set_trial_zones(previous_pending["before_zones"])
+                    self.engine.set_scene(before[0], revision=self._active_scene_revision,
+                                          transition_ms=self.store.settings().get("lighting_transition_ms", 350))
+                    self.engine.prepare_scene()
+                    self.effective_scene = before[0]
+                self.rev += 1
+                raise
         if end_trial and self.trial is not None:
             self.trial = None
             self.engine.set_trial_zones(())
         self.base_scene, self.base_curve, self.active_preset = scene, curve, preset
+        if not overridden:
+            self._active_scene_revision = self._scene_revision
         self.apply()
+
+    def _scene_overridden(self):
+        return bool(self.automations.light_rule or self._power_holds_lights_off())
+
+    def _power_holds_lights_off(self):
+        return self.sleeping or self.shutting_down or (self.locked and self.store.settings()["lights_off_on_lock"])
+
+    def _refresh_scene(self, raise_save_error=False):
+        """Only the owning command may persist or roll back its prepared candidate."""
+        with self._lock:
+            pending = self._scene_pending
+            if not pending or pending["revision"] != self._scene_revision:
+                return
+            if self._power_holds_lights_off():
+                self.apply()
+                return
+            if self.engine.scene_revision != pending["revision"]:
+                self._scene_pending = None
+                return
+            if self.engine.scene_state == "pending":
+                return
+            error, save_error = self.engine.scene_error, None
+            if self.engine.scene_state == "ready":
+                try:
+                    self.store.save_state(scene=pending["scene"], fan_curve=pending["curve"], active_preset=pending["preset"])
+                except Exception as exc:
+                    error = f"Could not save the scene: {exc}"
+                    save_error = exc
+                else:
+                    self.base_scene, self.base_curve, self.active_preset = pending["scene"], pending["curve"], pending["preset"]
+                    if pending["end_trial"]:
+                        self.trial = None
+                        self.engine.set_trial_zones(())
+                    self._active_scene_revision = self._scene_revision
+                    self.engine.commit_scene(self._scene_revision)
+                    self._scene_undo = {"scene": pending["before"][0], "revision": self._scene_revision,
+                                        "curve": self.base_curve, "zones": self.store.zones_rev,
+                                        "config": copy.deepcopy(self.store.config), "rules": copy.deepcopy(self.store.rules)}
+                    if pending.get("allow_undo") is False or pending["config"] != self.store.config or pending["rules"] != self.store.rules:
+                        self._scene_undo = None
+                    self._scene_pending = None
+                    self.apply()
+                    if pending.get("fan_profile"):
+                        try:
+                            fancontrol.apply_profile(self.store.settings(), pending["fan_profile"])
+                            self.mark_preset(pending["profile_id"])
+                        except Exception as exc:
+                            self._scene_error = f"Lighting applied, but FanControl failed: {exc}"
+                    return
+            self._scene_pending = None
+            self._scene_error = error or "The scene could not start"
+            self.base_scene, self.base_curve, self.active_preset = pending["before"]
+            self.effective_scene = dict(self.base_scene)
+            self.engine.set_trial_zones(pending["before_zones"])
+            self.engine.set_scene(self.base_scene, revision=self._active_scene_revision,
+                                  transition_ms=self.store.settings().get("lighting_transition_ms", 350))
+            self.engine.prepare_scene()
+            self.rev += 1
+            if save_error is not None and raise_save_error:
+                raise save_error
+
+    def scene_status(self):
+        self._refresh_scene()
+        undo = self._scene_undo
+        error = self._scene_error
+        if error and self.engine.scene_state == "failed":
+            error += "; the previous scene also could not start. Last valid lights are held. Retry when ready."
+        overridden = self._scene_overridden()
+        waiting = self._scene_pending or (self.engine.scene_state == "pending" and not overridden)
+        if not error and self.engine.scene_state == "failed" and not overridden:
+            error = self.engine.scene_error
+        if not error:
+            error = self.engine.scene_capacity_error
+        if not waiting and not error and not overridden:
+            self._active_scene_revision = self._scene_revision
+        return {"session": self._scene_session, "desired_revision": self._scene_revision, "active_revision": self._active_scene_revision,
+                "renderer_revision": self.engine.scene_generation,
+                "status": "failed" if error else "pending" if waiting else "ready",
+                "error": error, "overridden": overridden,
+                "undo_available": bool(undo and undo["revision"] == self._scene_revision and
+                                       undo["curve"] == self.base_curve and undo["zones"] == self.store.zones_rev and
+                                       undo["config"] == self.store.config and undo["rules"] == self.store.rules and
+                                       not self._scene_overridden() and not self.trial)}
+
+    def undo_scene(self, expected_revision=None, expected_session=None):
+        with self._lock:
+            if expected_session is not None and expected_session != self._scene_session:
+                raise ValueError("Airglow restarted. This lighting change can no longer be undone")
+            if expected_revision is not None and (type(expected_revision) is not int or expected_revision != self._scene_revision):
+                raise ValueError("A newer lighting change replaced this one. It cannot be undone here")
+            if not self.scene_status()["undo_available"]:
+                raise ValueError("This lighting change can no longer be undone")
+            scene = self._scene_undo["scene"]
+            self._commit_base(scene, self.base_curve, None)
+
+    def scene_response(self):
+        with self._lock:
+            status = self.scene_status()
+            return {"scene": copy.deepcopy(self.base_scene), "effective": copy.deepcopy(self.effective_scene),
+                    "scene_status": status}
 
     def apply_preset(self, preset):
         steps = []
@@ -134,13 +310,18 @@ class Controller:
             # An external FanControl action is reported separately; do not claim its success in advance.
             selected = None if preset.get("fan_profile") else preset["id"]
             self._commit_base(scene, curve, selected, end_trial=True)
-            steps.append({"step": "lighting", "ok": True})
+            pending = self._scene_pending
+            steps.append({"step": "lighting", "ok": not bool(self._scene_error), "pending": bool(pending)})
             if self.preset_curve(preset):
-                steps.append({"step": "fans", "ok": True})
+                steps.append({"step": "fans", "ok": True, "pending": bool(pending)})
             if preset.get("fan_profile"):
-                step("FanControl", lambda: fancontrol.apply_profile(self.store.settings(), preset["fan_profile"]))
-                if all(s["ok"] for s in steps):
-                    self.mark_preset(preset["id"])
+                if pending:
+                    pending.update(fan_profile=preset["fan_profile"], profile_id=preset["id"])
+                    steps.append({"step": "FanControl", "ok": True, "pending": True})
+                else:
+                    step("FanControl", lambda: fancontrol.apply_profile(self.store.settings(), preset["fan_profile"]))
+                    if all(s["ok"] for s in steps):
+                        self.mark_preset(preset["id"])
         return steps
 
     # ------------------------------------------------------------ fan curves, including a profile's own
@@ -168,6 +349,11 @@ class Controller:
         clear_zones: zones whose own effect would hide the profile's per-area effects; ignored only while trying.
         kind "studio": the Studio playing the effect being edited ("Also on my lights")."""
         with self._lock:
+            if self._scene_pending:
+                self.base_scene, self.base_curve, self.active_preset = self._scene_pending["before"]
+                self._scene_pending = None
+            self._scene_revision += 1
+            self._scene_undo, self._scene_error = None, None
             if self.trial is None:
                 self.trial = {"before": {"scene": dict(self.base_scene), "curve": self.base_curve,
                                          "preset": self.active_preset}, "clear_zones": {}}
@@ -239,6 +425,7 @@ class Controller:
         with self._lock:
             self.store.save_state(active_preset=preset_id)
             self.active_preset = preset_id
+            self._scene_undo = None
 
     def presets_changed(self):
         """Presets were edited or removed: rules and the effective scene may point at them."""
@@ -256,6 +443,30 @@ class Controller:
     def apply(self):
         """Recompute the effective scene and fan curve from base + automations + sleep/lock."""
         with self._lock:
+            safety_off = self._power_holds_lights_off()
+            overridden = safety_off or bool(self.automations.light_rule)
+            if overridden or self.automations.fan_rule:
+                self._scene_undo = None
+            pending = self._scene_pending if overridden else None
+            if pending:
+                self._scene_pending = None
+                if safety_off:
+                    # Safety cancels renderer preparation, including its unsaved settings.
+                    self.base_scene, self.base_curve, self.active_preset = pending["before"]
+                    self.engine.set_trial_zones(pending["before_zones"])
+                    self._scene_revision += 1
+                else:
+                    try:
+                        self.store.save_state(scene=pending["scene"], fan_curve=pending["curve"], active_preset=pending["preset"])
+                    except Exception as exc:
+                        self.base_scene, self.base_curve, self.active_preset = pending["before"]
+                        self.engine.set_trial_zones(pending["before_zones"])
+                        self._scene_error = f"Could not save the inactive lighting selection: {exc}"
+                    else:
+                        self.base_curve, self.active_preset = pending["curve"], pending["preset"]
+                        if pending["end_trial"]:
+                            self.trial = None
+                            self.engine.set_trial_zones(())
             scene, curve = dict(self.base_scene), self.base_curve
             presets = {p["id"]: p for p in self.store.get_presets()}
             lr, fr = self.automations.light_rule, self.automations.fan_rule
@@ -276,17 +487,16 @@ class Controller:
                     curve = t["curve"]
                 elif t["type"] == "preset" and t["preset"] in presets and self.preset_curve(presets[t["preset"]]):
                     curve = self.preset_curve(presets[t["preset"]])
-            settings = self.store.settings()
-            if self.sleeping or self.shutting_down or (self.locked and settings["lights_off_on_lock"]):
+            if safety_off:
                 scene["on"] = False
             if not self.curve_points(curve):
                 curve = "balanced"
-            if scene != self.effective_scene:
+            if scene != self.effective_scene or pending:
+                # The override owns its frames even when its output is identical to the pending scene.
+                self.engine.set_scene(scene, transition_ms=self.store.settings().get("lighting_transition_ms", 350))
                 self.effective_scene = scene
-                self.engine.set_scene(scene)
             self.effective_curve = curve
-            owner = ("System power / lock" if self.sleeping or self.shutting_down or
-                     (self.locked and settings["lights_off_on_lock"]) else
+            owner = ("System power / lock" if safety_off else
                      f"Automation: {lr.get('name', lr['id'])}" if lr else
                      "Live draft / trial" if self.trial else "Manual settings")
             self.control.observe("lighting", "Lighting frames", kind="component", owner=owner, stale_after=5.0)
@@ -297,8 +507,10 @@ class Controller:
         log.info("system is going to sleep")
         if self.store.settings()["lights_off_on_sleep"]:
             self.sleeping = True
-            self.apply()
-            self.engine.blackout()
+            try:
+                self.apply()
+            finally:
+                self.engine.blackout()
 
     def _on_resume(self):
         log.info("system woke up")
@@ -310,12 +522,16 @@ class Controller:
 
     def _on_shutdown(self):
         log.info("Windows is shutting down")
-        if self.store.settings()["lights_off_on_sleep"]:
-            # keep them dark: the engine runs until the process ends, and its next frame would light them again
-            self.shutting_down = True
-            self.apply()
-            self.engine.blackout()
-        self.failsafe()
+        try:
+            if self.store.settings()["lights_off_on_sleep"]:
+                # keep them dark: the engine runs until the process ends, and its next frame would light them again
+                self.shutting_down = True
+                try:
+                    self.apply()
+                finally:
+                    self.engine.blackout()
+        finally:
+            self.failsafe()
 
     def _on_shutdown_cancelled(self):
         log.info("Windows isn't shutting down after all")
@@ -369,21 +585,16 @@ class Controller:
         if temp is not None and not self._temp_seen:
             self._temp_seen = True
             log.info("first temperature %.0f °C, %.0f s after start; fans follow the curve", temp, waited)
-        if temp is None and not self._temp_seen and waited < self.STARTUP_GRACE:
-            if self.fan_duty is None:
-                log.info("no temperatures yet (LibreHardwareMonitor starting?); fans at the curve's lowest speed "
-                         "for up to %.0f s", self.STARTUP_GRACE)
-            target = fans.lowest_duty(curve)
-            why = "lowest speed, no reading yet"
-        else:
-            target = fans.target_duty(curve, temp, cfg["fan_failsafe_duty"])
-            why = "the curve" if temp is not None else f"failsafe {cfg['fan_failsafe_duty']}%, no reading"
+        target = fans.target_duty(curve, temp, cfg["fan_failsafe_duty"])
+        if temp is None:
+            target = max(target, self.fan_duty or 0)  # a warm restart or missing sample cannot prove it is safe to slow down
+        why = "the curve" if temp is not None else f"failsafe {target}%, no reading"
         # "full speed at 90 °C" holds for the hottest part, not only the one the curve follows (the coolant stays
         # cool while a processor whose pump has stopped overheats)
         if hottest is not None and hottest >= SAFETY_TEMP:
             target = 100
             why = f"full speed, {hottest:.0f} °C on the hottest part"
-        duty = fans.step_toward(self.fan_duty, target, cfg["fan_max_step"])
+        duty = round(target) if temp is None else fans.step_toward(self.fan_duty, target, cfg["fan_max_step"])
         self._fan_reason(duty, why, temp)
         self.fan_temp, self.fan_target, self.fan_duty = temp, round(target), duty
         for dev, hub in self._fan_devices():
@@ -413,10 +624,9 @@ class Controller:
                     log.warning("%s: %s", dev.name, e)
                     dev.error = str(e)
                     dev.close()
-        self._run_lhm_fans(duty, temp, cfg["fan_failsafe_duty"], grace=temp is None and not self._temp_seen
-                           and time.monotonic() - self._started < self.STARTUP_GRACE, hottest=hottest)
+        self._run_lhm_fans(duty, temp, cfg["fan_failsafe_duty"], hottest=hottest)
 
-    def _run_lhm_fans(self, duty, temp, failsafe, grace=False, hottest=None):
+    def _run_lhm_fans(self, duty, temp, failsafe, hottest=None):
         """Motherboard headers, pumps and cooler fans through LibreHardwareMonitor: the ones you chose follow the
         curve's speed or hold their own. While LHM isn't answering nothing is sent (each try would stall this
         loop), and everything is sent again once it's back."""
@@ -438,9 +648,7 @@ class Controller:
             if c["mode"] == "curve":
                 targets[ch["id"]] = duty
             else:
-                # Startup grace waives the missing-reading floor, never the full-speed thermal override.
-                minimum = c["duty"] if grace else failsafe
-                targets[ch["id"]] = fans.steady_duty(c["duty"], temp, minimum, hottest)
+                targets[ch["id"]] = fans.steady_duty(c["duty"], temp, failsafe, hottest)
         if self._flat:
             before = dict(getattr(self.lhm_fans, "sent", {}))
             started = time.monotonic()
@@ -634,6 +842,7 @@ class Controller:
 
     def tick(self):
         started = time.monotonic()
+        self._refresh_scene()
         try:
             self._tick()
         except Exception as e:
@@ -737,28 +946,42 @@ class Controller:
             return
         self._stop.set()
         self._sensor_ready.set()
-        try:
-            self.end_trial()
-        except Exception:
-            log.exception("ending the trial failed")
-        if self._thread:
-            self._thread.join(timeout=self.TICK + 1)
-        self.lhm.stop()
-        if self.cooling.active_summary():
+        steps = []
+        if self._power:
+            steps.append(("stopping power events", self._power.stop))
+        steps.append(("ending the trial", self.end_trial))
+        thread = self._thread
+        if thread and thread.ident is not None and thread is not threading.current_thread():
+            steps.append(("joining the controller loop", lambda: thread.join(timeout=self.TICK + 1)))
+        steps.extend((
+            ("stopping the sensor poller", self.lhm.stop),
+            ("saving the interrupted recording", self._stop_recording),
+            ("stopping the lighting engine", self.engine.stop),
+            ("applying fan failsafe", self.failsafe),
+            ("releasing fans", self.release_fans),
+            ("closing devices", self.manager.close),
+            ("waiting for the cooling recording", self._wait_for_recording),
+        ))
+        for description, stop in steps:
             try:
-                self.cooling.stop(reason="interrupted")
+                stop()
             except Exception:
-                log.exception("saving the interrupted recording failed; shutdown continues")
-        self.engine.stop()
-        self.failsafe()
-        self.release_fans()
-        self.manager.close()
+                log.exception("%s failed during shutdown", description)
+        log.info("controller stopped")
+
+    def _stop_recording(self):
+        if self.cooling.active_summary():
+            self.cooling.stop(reason="interrupted")
+
+    def _wait_for_recording(self):
         if not self.cooling.wait_for_save(1.0):
             log.warning("cooling save is still pending after shutdown; the interrupted marker is retained")
-        log.info("controller stopped")
 
     # ------------------------------------------------------------ views
     def snapshot(self, devs=None):
+        with self._lock:
+            scene_status = self.scene_status()
+            scene, effective, active_preset = self.base_scene, self.effective_scene, self.active_preset
         fan_devs = self._fan_devices()
         a = self.automations
         rules = {r["id"]: r for r in self.store.get_rules()}
@@ -767,9 +990,10 @@ class Controller:
             devs = [d.info() for d in self.manager.all().values()]
         trial = self.trial                        # read once: the API thread can end the trial meanwhile
         return {
-            "scene": self.base_scene,
-            "effective": self.effective_scene,
-            "active_preset": self.active_preset,
+            "scene": scene,
+            "scene_status": scene_status,
+            "effective": effective,
+            "active_preset": active_preset,
             "trial": {"name": trial.get("name", ""), "fans": bool(trial.get("fan_points")),
                       "kind": trial.get("kind", "profile")} if trial else None,
             "override": {
@@ -781,8 +1005,7 @@ class Controller:
             },
             "fans": {"curve": self.effective_curve, "base_curve": self.base_curve, "temp": self.fan_temp,
                      "target": self.fan_target, "duty": self.fan_duty,
-                     # no reading at all after the start-up grace: these are the failsafe speeds, not the curve's
-                     "failsafe": self.fan_temp is None and time.monotonic() - self._started >= self.STARTUP_GRACE,
+                     "failsafe": self.fan_temp is None,
                      "ports": [{"port": i + 1, "device": d.name, **h.fans[i]}
                                for d, h in fan_devs for i in h.connected_fans()],
                      "hub_online": bool(fan_devs),

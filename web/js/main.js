@@ -1,6 +1,8 @@
 // Boot, routing, the 2-second state poll, and the top bar.
 
 import { $, $$, S, curveLabel, dismissMutation, emit, esc, fail, get, mutationStates, on, post, refreshZones, retryMutation, setHTML, toast } from "./core.js";
+import { adoptSceneState, applyLightingScene } from "./scene-commands.js";
+import { settleSceneMutation } from "./core.js";
 import { initStage } from "./stage.js";
 import { initAutomations, renderAutomations, pauseAutomations, sentence } from "./automations.js";
 import { openOnlineQuestion, openWelcome } from "./onboarding.js";
@@ -12,6 +14,7 @@ import { initShortcuts } from "./help.js";
 import { startLive, sync as syncLive } from "./live.js";
 import { applyDesign } from "./design.js";
 import { applyAppearance } from "./appearance.js";
+import { initQuickSwitcher } from "./quick-switcher.js";
 
 const TABS = ["overview", "lighting", "studio", "fans", "automations", "devices", "settings"];
 const views = {};                 // loaded on first use: Overview should not wait for Studio, Fans, Settings or Devices
@@ -25,6 +28,8 @@ let bootFailed = false;          // "Couldn't reach Airglow" is said once, not o
 let lastStateAt = 0;             // when the last state arrived: a stream can die without ever reporting an error
 let probing = false;             // one watchdog fetch at a time
 let failsafeSeen = false;        // the fans' failsafe speed is mentioned once while readings are missing
+let quickReady = false;
+const refreshQuickSwitcher = initQuickSwitcher(TABS, () => quickReady ? "ready" : bootFailed ? "unavailable" : "loading");
 
 // ------------------------------------------------------------ routing
 let routeSeq = 0;
@@ -82,12 +87,12 @@ function paintMutations() {
   const box = $("#mutation-status");
   if (!box) return;
   const states = mutationStates(), failed = states.filter((s) => s.status === "failed");
-  const busy = states.filter((s) => s.status === "saving" || s.status === "queued");
+  const busy = states.filter((s) => s.status === "saving" || s.status === "queued" || s.status === "starting");
   box.hidden = !failed.length && !busy.length;
   if (box.hidden) return;
   setHTML(box, failed.map((s) => `<div class="mutation-line" data-error="true"><span><b>${esc(s.label)} failed.</b> ${esc(s.error)}${s.retry ? "" : " Check the current state before repeating this action."}</span>
     <div class="btn-row"><a class="text-link" href="#${esc(s.view)}">Open controls</a>${s.retry ? `<button class="btn quiet" data-retry-mutation="${esc(s.key)}" data-id="${s.id}">Retry save</button>` : ""}<button class="icon-btn" data-dismiss-mutation="${esc(s.key)}" data-id="${s.id}" aria-label="Dismiss ${esc(s.label)} error"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div></div>`).join("")
-    + (busy.length ? `<div class="mutation-line"><span>Saving ${busy.map((s) => esc(s.label.toLowerCase())).join(", ")}…</span></div>` : ""));
+    + (busy.length ? `<div class="mutation-line"><span>${busy.map((s) => `${s.status === "starting" ? "Starting" : "Saving"} ${esc(s.label.toLowerCase())}`).join(", ")}…</span></div>` : ""));
 }
 on("mutations", paintMutations);
 $("#mutation-status")?.addEventListener("click", async (e) => {
@@ -286,7 +291,7 @@ $("#power").addEventListener("click", async () => {
     return;
   }
   const on = !S.state.scene.on;
-  try { const r = await post("/api/scene", { on }); S.state.scene = r.scene; renderBar(); emit("state"); }
+  try { await applyLightingScene({ on }); renderBar(); emit("state"); }
   catch (e) { fail(e); }
 });
 
@@ -300,7 +305,8 @@ function pushSample() {
 
 // A state update, from the live stream or an explicit refresh after a change.
 async function applyState(state) {
-  S.state = state;
+  S.state = adoptSceneState(state);
+  settleSceneMutation(S.state.scene_status);
   lastStateAt = Date.now();
   if (!connected) { connected = true; toast("Reconnected"); }
   const fs = !!S.state.fans?.failsafe;
@@ -355,10 +361,13 @@ async function boot() {
   } catch (e) {
     if (!bootFailed) toast(`Couldn't reach Airglow: ${e.message}. Retrying.`, true);
     bootFailed = true;
+    refreshQuickSwitcher();
     setTimeout(boot, 3000);
     return;
   }
   await initOverview(S.overview);
+  quickReady = true;
+  refreshQuickSwitcher();
   initStage();
   initAutomations();
   renderBar();

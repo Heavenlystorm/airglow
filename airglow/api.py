@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import (__version__, autostart, conflicts, coolers, diagnostics, fancontrol, gallery, lightsetup, paths,
                system, tools, updates)
 from .automation import validate_rule, whole_number
-from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP
+from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP, validate_zone
 from .lighting import effects, geometry, studio
 
 log = logging.getLogger(__name__)
@@ -63,9 +63,11 @@ class Server(ThreadingHTTPServer):
         self.previews = PreviewHost(f"http://127.0.0.1:{bound}")
 
     def server_close(self):
-        if hasattr(self, "previews"):
-            self.previews.close()
-        super().server_close()
+        try:
+            if hasattr(self, "previews"):
+                self.previews.close()
+        finally:
+            super().server_close()
 
     def handle_error(self, request, client_address):
         """A client that drops a keep-alive connection is normal; don't print a traceback for it."""
@@ -101,8 +103,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(key, value)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", csp)
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionError, TimeoutError):
+            # Preview cancellation/navigation can close the socket after its action succeeded.
+            # No response can reach that client; never report or attempt a second 500 response.
+            self.close_connection = True
 
     def _body(self):
         try:
@@ -240,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
     def _host_frames(self, host=studio.HOST):
         """The effect host's colours for one frame, packed (web/js/fxhost.js): 30 of these a second, so no JSON."""
         n = int(self.headers.get("Content-Length") or 0)
-        if n > MAX_BODY or n < 0:
+        if n > studio.PACKED_BODY_LIMIT or n < 0:
             raise ApiError(413, "request too large")
         body = self.rfile.read(n)
         if not host.check_token(self.headers.get("X-Airglow-Token")):
@@ -420,8 +427,7 @@ def route(server, method, path, body, query=None):
             except RuntimeError as e:
                 raise ApiError(502, str(e)) from None
         if path == "/api/preview/frames":
-            ctrl.engine.mark_preview_read()       # only render the preview while someone is looking at it
-            return {"zones": ctrl.engine.preview_frames}
+            return server.previews.profile_frames()
         if path == "/api/setup":
             return {"pending": _setup_pending(ctrl, store), "catalog": _catalog(), "spots": lightsetup.spots(),
                     "coolers": _coolers()}
@@ -429,8 +435,13 @@ def route(server, method, path, body, query=None):
 
     # ---------------------------------------------------------------- POST
     if path == "/api/scene":
-        ctrl.set_scene(body)
-        return {"scene": ctrl.base_scene}
+        with ctrl._lock:
+            ctrl.set_scene(body)
+            return ctrl.scene_response()
+    if path == "/api/scene/undo":
+        with ctrl._lock:
+            ctrl.undo_scene(body.get("expected_revision"), body.get("expected_session"))
+            return ctrl.scene_response()
     if path == "/api/overview":
         return store.set_overview(body)
     if path == "/api/overview/reset":
@@ -457,8 +468,11 @@ def route(server, method, path, body, query=None):
         if m.group(2):
             ctrl.engine.identify(key)
             return {"ok": True}
-        cfg = store.set_zone(key, body, zone.max_leds)
-        ctrl.engine.invalidate(key)
+        with ctrl._lock:
+            candidate = validate_zone(body, zone.max_leds)
+            ctrl.engine.validate_zone_changes({key: candidate})
+            cfg = store.set_zone(key, candidate, zone.max_leds)
+            ctrl.engine.invalidate(key)
         return {"config": cfg}
     if path == "/api/setup/probe":
         key = str(body.get("zone") or "")
@@ -476,9 +490,12 @@ def route(server, method, path, body, query=None):
         dev, zone = _find_zone(ctrl, key)
         if not zone.resizable:
             raise ApiError(400, "This zone's LEDs are built in; only where it sits can change.")
-        cfg = store.set_zone(key, lightsetup.plan_header(store, key, zone, body, _catalog()), zone.max_leds)
-        ctrl.engine.probe(key, "off")
-        ctrl.engine.invalidate(key)
+        with ctrl._lock:
+            candidate = lightsetup.plan_header(store, key, zone, body, _catalog())
+            ctrl.engine.validate_zone_changes({key: validate_zone(candidate, zone.max_leds)})
+            cfg = store.set_zone(key, candidate, zone.max_leds)
+            ctrl.engine.probe(key, "off")
+            ctrl.engine.invalidate(key)
         return {"config": cfg}
     if path == "/api/setup/place":
         dev = ctrl.manager.get(str(body.get("device") or ""))
@@ -487,10 +504,13 @@ def route(server, method, path, body, query=None):
         if body.get("spot") not in lightsetup.SPOTS:
             raise ApiError(400, "pick where it sits")
         out = {}
-        for key, cfg in lightsetup.plan_fixed(store, dev, body["spot"]).items():
-            zone = next(z for z in dev.zones if f"{dev.id}/{z.id}" == key)
-            out[key] = store.set_zone(key, cfg, zone.max_leds)
-            ctrl.engine.invalidate(key)
+        with ctrl._lock:
+            candidates = lightsetup.plan_fixed(store, dev, body["spot"])
+            ctrl.engine.validate_zone_changes(candidates)
+            for key, cfg in candidates.items():
+                zone = next(z for z in dev.zones if f"{dev.id}/{z.id}" == key)
+                out[key] = store.set_zone(key, cfg, zone.max_leds)
+                ctrl.engine.invalidate(key)
         return {"configs": out}
     m = re.fullmatch(r"/api/devices/([^/]+)/params", path)
     if m:

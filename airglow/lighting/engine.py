@@ -140,6 +140,15 @@ class Engine:
         self._moving = False             # set by render_zone when an animated effect was drawn this frame
         self._changed_at = 0.0           # when a zone's colours last changed (an animated effect can be still too)
         self._kick = threading.Event()   # a command arrived: render the next frame now
+        self.scene_revision = 0
+        self.scene_generation = 0
+        self.scene_state = "ready"
+        self.scene_error = None
+        self.scene_capacity_error = None
+        self._studio_groups = []
+        self._studio_zones = set()
+        self._transition = None
+        self._prepared = {}
 
     @property
     def frames(self):
@@ -157,7 +166,7 @@ class Engine:
         self._frames = ({}, dict(value))
 
     # ------------------------------------------------------------ commands
-    def set_scene(self, scene):
+    def set_scene(self, scene, *, revision=None, transition_ms=0, commit_required=False):
         scene = dict(scene)
         try:                                         # never render with missing or bad parameters
             scene["params"] = effects.clean_params(scene.get("effect"), scene.get("params"))
@@ -165,9 +174,180 @@ class Engine:
             log.warning("bad scene (%s); falling back to solid", e)
             scene.update(effect="solid", params=effects.clean_params("solid", {}))
         with self._lock:
+            self.scene_revision = self.scene_revision + 1 if revision is None else revision
+            self.scene_generation += 1
+            self.scene_state, self.scene_error = "pending", None
+            self.scene_capacity_error = None
+            self._transition = {"from": {k: v.copy() for k, v in self._frames[0].items()},
+                                "started": time.monotonic(), "ready_at": None,
+                                "duration": transition_ms / 1000, "committed": not commit_required}
+            if not scene.get("on", True):
+                self._transition = None
+                self.scene_state = "ready"
+                studio.HOST.reconcile([])
+                self._studio_groups = []
+                self._studio_zones.clear()
+                self._identify.clear()
+                self._probe.clear()
+                self._dev_sent.clear()
             self.scene = scene
             self._last.clear()                       # force a full re-send
         self._kick.set()
+
+    def _requirements(self, scene, strict=False, zones=None, trial_zones=None, active=None, resolve_points=True):
+        out = []
+        if not scene.get("on", True):
+            return out
+        if active is None:
+            active = {f"{dev.id}/{zone.id}" for dev in self.manager.all().values() if dev.online for zone in dev.zones}
+        for key, cfg in (self.store.zones() if zones is None else zones).items():
+            if key not in active or not cfg.get("enabled") or not geometry.total_leds(cfg["layout"]):
+                continue
+            z = self._geometry(key, cfg["layout"], cfg) if resolve_points else None
+            spot = z.spot if z is not None else lightsetup.zone_spot(cfg)
+            chosen = scene
+            suppressed = self._trial_zones if trial_zones is None else trial_zones
+            if key not in suppressed and cfg.get("override"):
+                chosen = cfg["override"]
+            elif scene.get("areas", {}).get(spot):
+                chosen = scene["areas"][spot]
+            eff = effects.EFFECTS.get(chosen["effect"])
+            if eff is None:
+                if strict:
+                    raise ValueError(f"Effect {chosen['effect']} is no longer available")
+                eff, params = effects.EFFECTS["solid"], self._solid
+            else:
+                params = effects.clean_params(chosen["effect"], chosen.get("params"))
+            out.append((key, cfg, eff, params, z))
+        return out
+
+    @staticmethod
+    def _effect_groups(requirements):
+        groups = []
+        for key, cfg, eff, params, z in requirements:
+            if not isinstance(eff, studio.JsEffect):
+                continue
+            signature = (eff.fx_id, eff.sha256, params)
+            zones = next((zones for ident, zones in groups if ident == signature), None)
+            if zones is None:
+                zones = []
+                groups.append((signature, zones))
+            zones.append((key, z.n if z is not None else geometry.total_leds(cfg["layout"])))
+        return groups
+
+    def validate_scene_requirements(self, scene, strict=True, zones=None, trial_zones=None):
+        with self._lock:
+            requirements = self._requirements(scene, strict=strict, zones=zones, trial_zones=trial_zones, resolve_points=False)
+            groups = self._effect_groups(requirements)
+            if len(groups) > studio.MAX_INSTANCES:
+                raise ValueError(f"Only {studio.MAX_INSTANCES} distinct Studio effects can run at once")
+            if any(sum(count for _, count in members) > studio.MAX_INSTANCE_LEDS for _, members in groups):
+                raise ValueError(f"One Studio effect can drive at most {studio.MAX_INSTANCE_LEDS:,} LEDs")
+
+    def _admit_studio_zones(self, groups):
+        # A reconnect can add a requirement after validation. Keep working effect groups and zones first.
+        capacity_error = None
+        if len(groups) > studio.MAX_INSTANCES:
+            groups = sorted(groups, key=lambda group: group[0] not in self._studio_groups)[:studio.MAX_INSTANCES]
+            capacity_error = ("Only four distinct Studio effects can run at once. "
+                              "Extra zones stay dark until a Studio effect slot is free.")
+        accepted = set()
+        for _, members in groups:
+            if sum(count for _, count in members) <= studio.MAX_INSTANCE_LEDS:
+                accepted.update(key for key, _ in members)
+                continue
+            remaining = studio.MAX_INSTANCE_LEDS
+            for key, count in sorted(members, key=lambda item: item[0] not in self._studio_zones):
+                if count <= remaining:
+                    accepted.add(key)
+                    remaining -= count
+            if not capacity_error:
+                capacity_error = (f"One Studio effect can drive at most {studio.MAX_INSTANCE_LEDS:,} LEDs. "
+                                  "Extra zones stay dark until its LED count is reduced.")
+        if capacity_error != self.scene_capacity_error:
+            self.scene_generation += 1
+        self.scene_capacity_error = capacity_error
+        self._studio_groups = [signature for signature, _ in groups]
+        self._studio_zones = accepted
+        return accepted
+
+    def validate_zone_changes(self, changes):
+        with self._lock:
+            zones = {**self.store.zones(), **changes}
+            self.validate_scene_requirements(self.scene, strict=False, zones=zones)
+
+    def prepare_scene(self):
+        with self._lock:
+            now = time.monotonic()
+            self._prepare_scene_frame(self.store.zones(), now, now - self._t0)
+
+    def commit_scene(self, revision):
+        with self._lock:
+            if revision == self.scene_revision and self._transition:
+                self._transition["committed"] = True
+                self._transition["ready_at"] = None
+        self._kick.set()
+
+    def hold_scene_failure(self, message):
+        with self._lock:
+            self.scene_state, self.scene_error = "failed", message
+            if self._transition:
+                self._transition["from"] = {k: v.copy() for k, v in self._frames[0].items()}
+
+    def _prepare_scene_frame(self, zones, now, t, active=None):
+        """Prepare all renderers before any device receives the candidate frame."""
+        if self.scene_state == "failed" and self._transition:
+            self._prepared = self._transition["from"]
+            return
+        requirements = self._requirements(self.scene, zones=zones, active=active)
+        accepted = self._admit_studio_zones(self._effect_groups(requirements))
+        required = studio.HOST.reconcile([(e, p, z) for key, _, e, p, z in requirements if key in accepted])
+        candidate, error = {}, None
+        for key, cfg, eff, params, z in requirements:
+            if isinstance(eff, studio.JsEffect) and key not in accepted:
+                candidate[key] = np.zeros((z.n, 3), dtype=np.uint8)
+                continue
+            rgb, bri = self.render_zone(key, cfg, now, t)
+            if np.asarray(rgb).shape != (z.n, 3) or not np.isfinite(rgb).all() or eff.id in self._failing:
+                error = f"{eff.name} did not produce a valid frame"
+                continue
+            candidate[key] = self._to_bytes(rgb, bri)
+            if isinstance(eff, studio.JsEffect) and eff.fx_id in studio.HOST.problems:
+                error = studio.HOST.problems[eff.fx_id]["text"]
+        ready, problems = studio.HOST.readiness(required)
+        if problems:
+            error = problems[0]["text"]
+        transition = self._transition
+        if transition and not transition["committed"] and self.scene_capacity_error:
+            error = self.scene_capacity_error
+        if error and transition is None:
+            transition = self._transition = {"from": {k: v.copy() for k, v in self._frames[0].items()},
+                                            "started": now, "ready_at": None, "duration": 0, "committed": True}
+        if transition:
+            if error or (not ready and now - transition["started"] >= studio.START_GRACE):
+                self.scene_state, self.scene_error = "failed", error or "The effect did not supply its first frame in time"
+                studio.HOST.reconcile([])
+            if self.scene_state == "failed" or not ready:
+                if self.scene_state != "failed":
+                    self.scene_state = "pending"
+                self._prepared = {k: transition["from"].get(k, np.zeros((z.n, 3), dtype=np.uint8))
+                                  for k, _, _, _, z in requirements}
+                return
+            if transition["ready_at"] is None:
+                self.scene_state = "ready"
+                if not transition["committed"]:
+                    self._prepared = {k: transition["from"].get(k, np.zeros_like(v)) for k, v in candidate.items()}
+                    return
+                transition["ready_at"] = now
+            duration = transition["duration"]
+            alpha = min(1.0, (now - transition["ready_at"]) / duration) if duration else 1.0
+            for key, value in candidate.items():
+                old = transition["from"].get(key)
+                if old is not None and old.shape == value.shape:
+                    candidate[key] = np.floor(old * (1 - alpha) + value * alpha + .5).astype(np.uint8)
+            if alpha >= 1:
+                self._transition = None
+        self._prepared = candidate
 
     def identify(self, zone_key):
         self._identify[zone_key] = time.monotonic() + self.IDENTIFY_SECONDS
@@ -231,28 +411,37 @@ class Engine:
 
     def invalidate(self, zone_key=None):
         with self._lock:
+            if self._transition and not self._transition["committed"] and self.scene_state == "ready":
+                self.scene_state = "pending"
             if zone_key:
                 self._geom.pop(zone_key, None)
                 self._last.pop(zone_key, None)
+                if self._transition:
+                    self._transition["from"].pop(zone_key, None)
             else:
                 self._geom.clear()
                 self._last.clear()
+                if self._transition:
+                    self._transition["from"].clear()
         self._kick.set()                             # a zone's settings changed (an override, its layout)
 
     def set_trial_zones(self, keys):
         with self._lock:
+            if self._trial_zones == frozenset(keys):
+                return
             self._trial_zones = frozenset(keys)
             self.invalidate()
 
     # ------------------------------------------------------------ rendering
     def _geometry(self, key, layout, zcfg=None):
         cached = self._geom.get(key)
-        if cached and cached[0] == layout:
+        spot = lightsetup.zone_spot(zcfg) if zcfg else None
+        if cached and cached[0] == layout and cached[1].spot == spot:
             return cached[1]
         pos, local, fan = geometry.positions(layout)
         # key and spot: Studio effects draw for these LEDs, and their layers can be limited to an area
         z = SimpleNamespace(pos=geometry.normalised(pos), canvas=pos, local=local, fan=fan, n=len(pos), key=key,
-                            spot=lightsetup.zone_spot(zcfg) if zcfg else None)
+                            spot=spot)
         self._geom[key] = (dict(layout), z)
         return z
 
@@ -284,12 +473,12 @@ class Engine:
         the effects you gave single zones (the gallery's preview)."""
         layout = zcfg["layout"]
         z = self._geometry(key, layout, zcfg)
-        deadline = self._identify.get(key) if own else None
-        if deadline and deadline > now:
-            return self._identify_colors(z, deadline, now), 100
         scene = scene or self.scene
         if not scene.get("on", True):
             return np.zeros((z.n, 3)), 0
+        deadline = self._identify.get(key) if own else None
+        if deadline and deadline > now:
+            return self._identify_colors(z, deadline, now), 100
         eff_id, params = scene["effect"], scene["params"]
         if own and key not in self._trial_zones and zcfg.get("override"):
             eff_id, params = zcfg["override"]["effect"], zcfg["override"]["params"]
@@ -334,6 +523,11 @@ class Engine:
         return int(np.abs(a - b).max(initial=0)) <= limit and not np.any((b == 0) & (a != 0))
 
     def tick(self):
+        # A command cannot replace the prepared scene halfway through publishing its zone batch.
+        with self._lock:
+            self._tick_frame()
+
+    def _tick_frame(self):
         now = time.monotonic()
         wall = time.time()
         if self._last_tick is not None and wall - self._last_tick > self.RESUME_GAP:
@@ -350,6 +544,9 @@ class Engine:
         self._moving = False
         seen = set()
         current = self.manager.all()
+        online_ids = {dev.id for dev in current.values() if dev.online}
+        active = {f"{dev.id}/{zone.id}" for dev in current.values() if dev.id in online_ids for zone in dev.zones}
+        self._prepare_scene_frame(zones, now, t, active)
         for key, writer in list(self._writers.items()):
             if current.get(key) is not writer.dev or not writer.dev.online:
                 writer.stop()
@@ -364,7 +561,7 @@ class Engine:
                 self._last.pop(zone_key, None)
                 self._geom.pop(zone_key, None)
         for dev in list(current.values()):
-            online = dev.online
+            online = dev.id in online_ids
             status_key = "light:" + dev.id
             enabled = any((zones.get(f"{dev.id}/{z.id}") or {}).get("enabled") for z in dev.zones)
             self.control.observe(status_key, dev.name, kind="lighting", owner="Airglow" if enabled else "Device",
@@ -412,7 +609,11 @@ class Engine:
                         try:
                             if geometry.total_leds(zcfg["layout"]) == 0:
                                 continue
-                            rgb, bri = self.render_zone(key, zcfg, now, t)
+                            prepared = self._prepared.get(key)
+                            if prepared is not None:
+                                rgb, bri = prepared / 255.0, 100
+                            else:
+                                rgb, bri = self.render_zone(key, zcfg, now, t)
                         except Exception:
                             # one unusable zone must not stop every other zone's frame (and the whole loop)
                             if key not in self._bad_zones:
@@ -492,7 +693,7 @@ class Engine:
         self.control.succeeded("lighting", duration=self.last_frame - now)
         self._identify = {k: d for k, d in self._identify.items() if d > now}
         with self._lock:
-            busy = self._probe or self._probe_done or self._preview
+            busy = self._probe or self._probe_done or self._preview or self._transition
         # An animated effect only needs full rate while it's actually changing: "Temperature" is animated but still
         # whenever the PC's temperature is, so it drops to IDLE_FPS like a static colour does.
         moving = self._moving and now - self._changed_at < self.STILL_AFTER
@@ -565,7 +766,7 @@ class Engine:
 
     def stop(self):
         self._stop.set()
-        if self._thread:
+        if self._thread and self._thread.ident is not None:
             self._thread.join(timeout=2)
         for w in self._writers.values():
             w.wait_idle(1.0)

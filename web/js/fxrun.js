@@ -3,6 +3,7 @@
 // only ever receives LED colours (and, for the Studio, a picture of the canvas).
 
 const W = 320, H = 200, UNIT = 200;          // stage canvas units (1.6 x 1.0) -> effect canvas pixels
+const HELLO_ATTEMPTS = 2, HELLO_ATTEMPT_MS = 4000; // same 8 s bootstrap budget; no effect code runs yet
 let assets = null;
 
 // worker.js, layers.js and the layer defaults, fetched once and handed to each frame (it can't fetch anything)
@@ -106,13 +107,18 @@ export class EffectRunner {
     this.h = handlers;
     this.ready = false;
     this.busy = 0;                    // when the frame being drawn was asked for
+    this._newFrame();
+    this._onMessage = (e) => this._message(e);
+    window.addEventListener("message", this._onMessage);
+  }
+
+  _newFrame() {
+    this.frame?.remove();
     this.frame = document.createElement("iframe");
     this.frame.setAttribute("sandbox", "allow-scripts");
     this.frame.setAttribute("aria-hidden", "true");
     this.frame.tabIndex = -1;
     this.frame.style.cssText = "position:absolute;width:0;height:0;border:0;visibility:hidden";
-    this._onMessage = (e) => this._message(e);
-    window.addEventListener("message", this._onMessage);
     this._hello = new Promise((res) => { this._helloRes = res; });
   }
 
@@ -124,14 +130,22 @@ export class EffectRunner {
     try {
       const a = await runtimeAssets();
       if (this._destroyed) return;
-      this.frame.src = "/runtime/frame.html";
-      document.body.appendChild(this.frame);
-      // A frame that never says hello (a broken page, a WebView out of memory) would otherwise leave the preview
-      // silently empty for ever, with the runner waiting on a promise that never settles.
-      await Promise.race([this._hello, new Promise((_, reject) => {
-        this._helloTimer = setTimeout(() => reject(new Error("The effect's page didn't start")), 8000);
-      })]);
-      if (this._destroyed) return;
+      // Recover one failed local navigation with a new sandbox. Its WindowProxy is different, so an old
+      // frame's delayed hello cannot authorize this one. The retry ends before any effect code is sent.
+      for (let attempt = 0; attempt < HELLO_ATTEMPTS; attempt++) {
+        if (attempt) this._newFrame();
+        this.frame.src = "/runtime/frame.html";
+        document.body.appendChild(this.frame);
+        const greeted = await Promise.race([this._hello.then(() => true), new Promise(resolve => {
+          this._helloTimer = setTimeout(() => resolve(false), HELLO_ATTEMPT_MS);
+        })]);
+        clearTimeout(this._helloTimer);
+        this._helloTimer = null;
+        if (this._destroyed) return;
+        if (greeted) break;
+        if (attempt === HELLO_ATTEMPTS - 1)
+          throw new Error("The effect's sandbox page didn't start after two attempts");
+      }
       const early = this._early;
       this._early = null;
       this._post({ type: "load", runtime: a.runtime, layersLib: a.layersLib, defaults: a.defaults, kind: effect.kind,

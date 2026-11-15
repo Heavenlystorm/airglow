@@ -1,6 +1,8 @@
 // Lighting screen: effect deck, inspector (scene or a selected zone), profiles.
 
 import { $, $$, QUICK, S, coalesce, curveLabel, effectName, emit, esc, fail, fmtTemp, get, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
+import { applyLightingScene, undoLightingScene, waitForLightingScene } from "./scene-commands.js";
+import { mountScenePreviews, openSceneAudition } from "./scene-audition.js";
 import { select } from "./stage.js";
 import { openSheet, closeSheet } from "./sheet.js";
 import { editProfilesSheet, openGallery, saveProfileSheet } from "./profiles.js";
@@ -116,25 +118,24 @@ function fitNames() {
 
 function renderDeck() {
   const scene = S.state.scene;
-  const c = sceneColor(scene);
   const deck = $("#deck"), before = deck._html;
   setHTML(deck, S.effects.map((e) => {
-    const extra = e.id === "spectrum" ? Array.from({ length: 7 }, (_, i) => `<i style="--i:${i}"></i>`).join("") : "";
-    const tint = ["solid", "breathing", "pulse"].includes(e.id) ? ` style="--c:${scene.effect === e.id ? c : { solid: "#009bde", breathing: "#ff5a1f", pulse: "#8a3dff" }[e.id]}"` : "";
-    const thumb = e.studio ? `t-studio${e.studio.permissions.includes("audio") ? " t-music" : ""}` : `t-${e.id}`;
-    return `<button class="fx" role="radio" aria-checked="${scene.effect === e.id}" data-effect="${esc(e.id)}" title="${esc(e.description || "Made in the Studio")}">
-      <span class="thumb ${thumb}"${tint}>${extra}</span><span class="name">${esc(e.name)}</span></button>`;
+    return `<div class="effect-card"><button class="fx" role="radio" aria-checked="${scene.effect === e.id}" data-effect="${esc(e.id)}" title="${esc(e.description || "Made in the Studio")}">
+      <span class="thumb"><canvas data-preview-effect="${esc(e.id)}" aria-hidden="true"></canvas></span><span class="name">${esc(e.name)}</span></button>
+      <button class="effect-preview" data-audition="${esc(e.id)}" aria-label="Preview ${esc(e.name)}">Preview</button></div>`;
   }).join("") + `<a class="fx fx-new" href="#studio/new" title="Make your own effect in the Studio"><span class="thumb t-new" aria-hidden="true">+</span><span class="name">Create your own</span></a>`);
   if (deck._html !== before) fitNames();
+  mountScenePreviews(deck);
 }
 
 $("#deck").addEventListener("click", async (e) => {
+  const preview = e.target.closest("[data-audition]");
+  if (preview) { await openSceneAudition(preview.dataset.audition); return; }
   const b = e.target.closest("[data-effect]");
   if (!b) return;
   if (selectedZone) { selectedZone = null; select(null); }
   try {
-    const r = await post("/api/scene", { effect: b.dataset.effect });
-    S.state.scene = r.scene;
+    const r = await applyLightingScene({ effect: b.dataset.effect });
     S.state.active_preset = null;
     renderDeck(); renderInspector(true);
   } catch (err) { fail(err); }
@@ -142,8 +143,7 @@ $("#deck").addEventListener("click", async (e) => {
 
 // ------------------------------------------------------------ inspector: scene
 const sendScene = coalesce(async (patch) => {
-  const r = await post("/api/scene", patch);
-  S.state.scene = r.scene;
+  const r = await applyLightingScene(patch);
 });
 
 function overrideBanner() {
@@ -154,6 +154,14 @@ function overrideBanner() {
   const rule = S.rules.find((r) => r.id === o.lighting);
   return `<div class="banner"><span>The automation <b>${esc(rule ? describeShort(rule) : "rule")}</b> is controlling the lights right now. Your changes here take over again when it stops.</span>
     <div><button class="btn" data-pause="60">Pause automations for an hour</button></div></div>`;
+}
+
+function readinessBanner() {
+  const status = S.state.scene_status;
+  if (!status) return "";
+  if (status.status === "pending") return '<div class="banner" role="status">Starting the effect. Your current lights stay on until its first frame is ready.</div>';
+  if (status.status === "failed") return `<div class="banner" role="alert">${esc(status.error)} <button class="btn" data-scene-retry>Retry current scene</button></div>`;
+  return status.undo_available ? '<div class="banner"><span>Lighting applied.</span><button class="btn" data-scene-undo>Undo lighting</button></div>' : "";
 }
 
 export function describeShort(rule) {
@@ -184,7 +192,7 @@ function renderSceneInspector() {
   const scene = S.state.scene;
   const eff = S.effects.find((e) => e.id === scene.effect) || S.effects[0];
   const ins = $("#inspector");
-  ins.innerHTML = `${overrideBanner()}${presetsHTML()}<div class="rule-line"></div>
+  ins.innerHTML = `${readinessBanner()}${overrideBanner()}${presetsHTML()}<div class="rule-line"></div>
     <div class="ins-block"><div class="ins-title"><h2>${esc(eff.name)}</h2></div>
       <div class="zone-line"><label for="zone-pick">Lighting for</label><select class="select zone-pick" id="zone-pick" aria-label="Choose a lighting zone">
       <option value="">Whole rig</option>${(S.zones?.zones || []).filter((z) => z.device.online).map((z) => `<option value="${esc(z.key)}">${esc(z.config.name)} · ${esc(z.device.name)}</option>`).join("")}
@@ -197,7 +205,8 @@ function renderSceneInspector() {
     </div>`;
   wireFields($("#scene-fields"), eff, scene.params, (params, live) => {
     S.state.scene.params = params;
-    if (live) sendScene({ params }); else post("/api/scene", { params }).then((r) => { S.state.scene = r.scene; renderSceneInspector(); renderDeck(); }).catch(fail);
+    const patch = { params, expected_effect: eff.id };
+    if (live) sendScene(patch); else applyLightingScene(patch).then(() => { renderSceneInspector(); renderDeck(); }).catch(fail);
     S.state.active_preset = null;
     $$(".preset[data-preset]").forEach((b) => b.setAttribute("aria-pressed", "false"));
   });
@@ -215,14 +224,23 @@ function renderSceneInspector() {
 }
 
 $("#inspector").addEventListener("click", async (e) => {
+  if (e.target.closest("[data-scene-undo]")) {
+    try { await undoLightingScene(); renderInspector(true); renderDeck(); } catch (err) { fail(err); }
+    return;
+  }
+  if (e.target.closest("[data-scene-retry]")) {
+    try { await applyLightingScene({ ...S.state.scene, retry: true }, { wait: true }); renderInspector(true); } catch (err) { fail(err); }
+    return;
+  }
   const p = e.target.closest("[data-preset]");
   if (p) {
     const preset = S.presets.find((x) => x.id === p.dataset.preset);
     try {
       const r = await post(`/api/presets/${encodeURIComponent(preset.id)}/apply`);
+      if (r.scene_status?.status === "pending") r.scene_status = (await waitForLightingScene(r.scene_status.desired_revision, r.scene_status.session)).scene_status;
       const failed = r.steps.filter((s) => !s.ok);
       if (failed.length) toast(`${preset.name} is on, but ${failed[0].step} didn't apply: ${failed[0].error}`, true);
-      else toast(`${preset.name} is on`);
+      else toast(r.scene_status?.overridden ? `${preset.name} saved. An automation controls the lights.` : `${preset.name} is on`);
       emit("refresh");
     } catch (err) { fail(err); }
     return;
@@ -298,7 +316,7 @@ export function renderLighting() {
   if (!S.state) return;
   renderDeck();
   // rebuild the inspector only when something it shows actually changed
-  const key = JSON.stringify([S.state.scene, S.state.active_preset, S.state.override, S.presets.map((p) => p.id + p.name), selectedZone]);
+  const key = JSON.stringify([S.state.scene, S.state.scene_status, S.state.active_preset, S.state.override, S.presets.map((p) => p.id + p.name), selectedZone]);
   if (key !== lastKey) { lastKey = key; renderInspector(); }
 }
 
@@ -307,4 +325,5 @@ export function initLighting() {
   document.fonts?.ready.then(fitNames);
   on("select-zone", (key) => { selectedZone = key; lastKey = ""; renderInspector(true); });
   on("state", renderLighting);
+  on("scene:status", renderLighting);
 }

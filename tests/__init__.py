@@ -1,9 +1,5 @@
-# Tests never read or write the real Studio effect library in %APPDATA%\Airglow\effects
-import tempfile
-import atexit
+"""Isolate the unit-test process before any Airglow module is imported."""
 
-from airglow import fxlibrary
+from .isolation import isolate
 
-_effects = tempfile.TemporaryDirectory(prefix="airglow-test-effects-")
-atexit.register(_effects.cleanup)
-fxlibrary.LIBRARY = fxlibrary.Library(_effects.name)
+isolate()

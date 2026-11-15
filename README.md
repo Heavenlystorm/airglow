@@ -223,12 +223,15 @@ repository, and you can also build Airglow yourself using the instructions below
 ## Building from source
 ```
 pip install -r requirements-dev.txt
-python -m unittest discover -s tests -t .     # no hardware needed
+npm install --no-save --package-lock=false playwright@1.58.2
+python -B tools/qualify.py source              # Python, JavaScript and isolated browser checks
 python run.py                                 # run it from source
 python tools\dev_server.py --demo             # the UI on http://127.0.0.1:8790 with a pretend PC
-.\build.ps1                                   # tests, then dist\Airglow\ and the installer in dist\releases\
+.\build.ps1                                    # qualifies source and builds into dist\
+python -B tools/qualify.py package             # verify the built artifacts and run the native effect-host smoke test
 ```
-The installer is made with Velopack's `vpk` (`dotnet tool install -g vpk --version 1.2.161`). Releases are built when
+Local browser checks use Microsoft Edge by default and require Node.js 22 or newer. The installer is made with
+Velopack's `vpk` (`dotnet tool install -g vpk --version 1.2.161`). Releases are built when
 a version tag is pushed; [docs/RELEASING.md](docs/RELEASING.md) has the steps.
 
 ## How it's put together

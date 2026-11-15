@@ -208,8 +208,8 @@ function writePreview(body, gen) {
   const run = previewWrites.then(() => {
     if (gen !== undefined && !previewVisible(gen)) return;
     return post("/api/preview", body);
-  }).catch(() => {});
-  previewWrites = run;
+  });
+  previewWrites = run.catch(() => {});
   return run;
 }
 
@@ -217,7 +217,7 @@ function pausePreview() {
   G.gen++;
   clearTimeout(G.timer); G.timer = null;
   clearTimeout(G.keep); G.keep = null;
-  writePreview({});                 // serialized after a pending start, so closing cannot leave it running
+  writePreview({}).catch(() => {}); // serialized after a pending start, so closing cannot leave it running
 }
 
 function stopPreview() {
@@ -229,10 +229,20 @@ async function startPreview(profile) {
   pausePreview();
   G.preview = profile;
   const gen = G.gen;
+  const showProblem = (problem) => {
+    if (!previewVisible(gen)) return;
+    const label = $("#gl-preview-status"), retry = $("#gl-preview-retry");
+    if (label) label.textContent = problem.message || problem.text || String(problem);
+    if (retry) retry.hidden = false;
+    pausePreview();
+  };
+  const label = $("#gl-preview-status"), retry = $("#gl-preview-retry");
+  if (label) label.textContent = "Starting preview…";
+  if (retry) retry.hidden = true;
   const send = () => writePreview({ profile }, gen);
   const keep = async () => {
     if (!previewVisible(gen)) return;
-    await send();
+    try { await send(); } catch (error) { showProblem(error); return; }
     if (previewVisible(gen)) G.keep = setTimeout(keep, 5000);
   };
   const frame = async () => {
@@ -244,11 +254,16 @@ async function startPreview(profile) {
     try {
       const result = await pending;
       const c = previewVisible(gen);
-      if (c) paintMini(c, result.zones);
-    } catch { /* next frame */ }
+      if (c && result.problem) { showProblem(result.problem); return; }
+      if (c) {
+        paintMini(c, result.zones);
+        const label = $("#gl-preview-status");
+        if (label) label.textContent = Object.keys(result.zones || {}).length ? "Preview only · real lights unchanged" : "Waiting for preview frames…";
+      }
+    } catch (error) { showProblem(error); return; }
     if (previewVisible(gen)) G.timer = setTimeout(frame, 90);
   };
-  await send();
+  try { await send(); } catch (error) { showProblem(error); return; }
   if (!previewVisible(gen)) return;
   G.keep = setTimeout(keep, 5000);
   G.timer = setTimeout(frame, 90);
@@ -310,7 +325,11 @@ function detailHTML() {
   const p = G.profile;
   if (!p) return `<div class="gl-stage-wrap"><canvas id="gl-stage"></canvas></div><p class="hint">${G.picked ? "Loading…" : "Pick a profile to see it on your own layout."}</p>`;
   const rules = p.automations || [];
-  return `<div class="gl-stage-wrap"><canvas id="gl-stage" aria-label="Preview of ${esc(p.name)} on your layout"></canvas><span class="gl-live">Preview on your layout</span></div>
+  const chosen = [p.lighting?.effect, ...Object.values(p.areas || {}).map(a => a.effect)];
+  const needs = new Set(chosen.flatMap(id => S.effects.find(e => e.id === id)?.needs || []));
+  const samples = [needs.has("audio") && "simulated 120 BPM audio", chosen.includes("temperature") && "60°C temperatures", needs.has("screen") && "sample screen colors"].filter(Boolean);
+  return `<div class="gl-stage-wrap"><canvas id="gl-stage" aria-label="Preview of ${esc(p.name)} on your layout"></canvas><span class="gl-live" id="gl-preview-status" role="status">Preview only · real lights unchanged</span></div>
+    ${samples.length ? `<p class="hint">Uses ${esc(samples.join(", "))}.</p>` : ""}<button class="btn" id="gl-preview-retry" hidden>Retry preview</button>
     <div><h2>${esc(p.name)}</h2><p class="gl-by">by ${esc(p.author || "someone")}</p></div>
     ${p.description ? `<p class="ins-desc" style="margin:0">${esc(p.description)}</p>` : ""}
     <p class="hint" style="margin:0">${esc(lookLine(p))}</p>
@@ -321,6 +340,7 @@ function detailHTML() {
 
 function wireDetail() {
   $("#gl-try")?.addEventListener("click", () => tryProfile(G.profile));
+  $("#gl-preview-retry")?.addEventListener("click", () => startPreview(G.profile));
 }
 
 async function pick(id) {

@@ -211,9 +211,12 @@ class AudioSpectrum(Effect):
         if ctx.audio is None:
             return np.zeros((len(z.pos), 3))
         bands = ctx.audio.bands
-        x = along(z.pos, p["angle"])
-        x = np.where(x >= 1.0, 1.0 - 1e-9, x) % 1.0          # the right edge is treble, not wrapped round to bass
-        i = np.clip((x * len(bands)).astype(int), 0, len(bands) - 1)
+        a = math.radians(p["angle"])
+        c, s = math.cos(a), math.sin(a)
+        corners = (0, c, s, c + s)
+        x = np.clip((along(z.pos, p["angle"]) - min(corners)) / (max(corners) - min(corners)), 0, .999999)
+        # Match the Studio's normalized direction and keep roundoff from selecting the preceding band.
+        i = np.clip((x * len(bands) + 1e-9).astype(int), 0, len(bands) - 1)
         level = np.clip(bands[i] * (0.4 + 1.6 * p["sensitivity"] / 100), 0, 1)
         h = (p["hue"] / 360 + 0.66 - x * 0.66) % 1.0                # blue bass, red treble
         return hsv(h, 1.0, level ** 1.4)
