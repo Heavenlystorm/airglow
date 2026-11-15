@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.16.1
+- Restore the original artwork and hover animations on Lighting effect tiles and remove the added Preview buttons.
+  Effect selection retains the readiness checks, transitions and lighting-only Undo introduced in 1.16.0.
+
 ## 1.16.0
 - Scene changes wait for a valid rendered frame and a successful save, retain the previous
   lighting on failure, and provide lighting-only Undo. Transitions fade smoothly and can be adjusted in Settings.

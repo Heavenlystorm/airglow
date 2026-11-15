@@ -2,7 +2,6 @@
 
 import { $, $$, QUICK, S, coalesce, curveLabel, effectName, emit, esc, fail, fmtTemp, get, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
 import { applyLightingScene, undoLightingScene, waitForLightingScene } from "./scene-commands.js";
-import { mountScenePreviews, openSceneAudition } from "./scene-audition.js";
 import { select } from "./stage.js";
 import { openSheet, closeSheet } from "./sheet.js";
 import { editProfilesSheet, openGallery, saveProfileSheet } from "./profiles.js";
@@ -118,19 +117,19 @@ function fitNames() {
 
 function renderDeck() {
   const scene = S.state.scene;
+  const c = sceneColor(scene);
   const deck = $("#deck"), before = deck._html;
   setHTML(deck, S.effects.map((e) => {
-    return `<div class="effect-card"><button class="fx" role="radio" aria-checked="${scene.effect === e.id}" data-effect="${esc(e.id)}" title="${esc(e.description || "Made in the Studio")}">
-      <span class="thumb"><canvas data-preview-effect="${esc(e.id)}" aria-hidden="true"></canvas></span><span class="name">${esc(e.name)}</span></button>
-      <button class="effect-preview" data-audition="${esc(e.id)}" aria-label="Preview ${esc(e.name)}">Preview</button></div>`;
+    const extra = e.id === "spectrum" ? Array.from({ length: 7 }, (_, i) => `<i style="--i:${i}"></i>`).join("") : "";
+    const tint = ["solid", "breathing", "pulse"].includes(e.id) ? ` style="--c:${scene.effect === e.id ? c : { solid: "#009bde", breathing: "#ff5a1f", pulse: "#8a3dff" }[e.id]}"` : "";
+    const thumb = e.studio ? `t-studio${e.studio.permissions?.includes("audio") ? " t-music" : ""}` : `t-${e.id}`;
+    return `<button class="fx" role="radio" aria-checked="${scene.effect === e.id}" data-effect="${esc(e.id)}" title="${esc(e.description || "Made in the Studio")}">
+      <span class="thumb ${thumb}"${tint}>${extra}</span><span class="name">${esc(e.name)}</span></button>`;
   }).join("") + `<a class="fx fx-new" href="#studio/new" title="Make your own effect in the Studio"><span class="thumb t-new" aria-hidden="true">+</span><span class="name">Create your own</span></a>`);
   if (deck._html !== before) fitNames();
-  mountScenePreviews(deck);
 }
 
 $("#deck").addEventListener("click", async (e) => {
-  const preview = e.target.closest("[data-audition]");
-  if (preview) { await openSceneAudition(preview.dataset.audition); return; }
   const b = e.target.closest("[data-effect]");
   if (!b) return;
   if (selectedZone) { selectedZone = null; select(null); }
