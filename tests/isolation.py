@@ -112,7 +112,7 @@ def _deny(operation):
 def isolate():
     profile = tempfile.TemporaryDirectory(prefix="airglow-tests-")
     atexit.register(profile.cleanup)
-    home = Path(profile.name)
+    home = Path(profile.name).resolve()  # Windows runner TEMP can use an 8.3 alias such as RUNNER~1.
     os.environ.update({
         "HOME": str(home),
         "USERPROFILE": str(home),

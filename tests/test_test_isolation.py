@@ -28,7 +28,7 @@ class TestIsolationTests(unittest.TestCase):
 
     def test_running_marker_is_created_and_cleared_inside_the_isolated_profile(self):
         marker = install.running_marker()
-        self.assertTrue(marker.is_relative_to(Path(tempfile.gettempdir())))
+        self.assertTrue(marker.resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()))
         install.mark_running()
         self.addCleanup(install.clear_running)
         self.assertEqual(marker.read_text(encoding="ascii"), str(os.getpid()))

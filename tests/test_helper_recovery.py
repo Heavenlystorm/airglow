@@ -264,7 +264,7 @@ class HelperProofTests(unittest.TestCase):
             def install(job, *, download_root):
                 self.assertEqual(job["lhm_authorization"], credentials)
                 self.assertFalse(request.exists())
-                self.assertEqual(download_root, downloads)
+                self.assertEqual(download_root, downloads.resolve())
                 return ["lhm"]
 
             logger = tools.logging.getLogger()
