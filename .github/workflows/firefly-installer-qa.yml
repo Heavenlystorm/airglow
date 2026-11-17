@@ -31,13 +31,26 @@ jobs:
       - name: Prepare WinGet on Windows Server
         if: matrix.scenario == 'clean'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
           $version = if ($cmd) { (& $cmd.Source --version).Trim().TrimStart('v') } else { '0.0' }
           Write-Host "Runner WinGet $version"
           if ([version]$version -lt [version]'1.29.380') {
-            Install-Module Microsoft.WinGet.Client -Repository PSGallery -Scope CurrentUser -Force
-            Repair-WinGetPackageManager -Version 1.29.380 -AllUsers
+            $dir = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP 'winget-1.29.380')
+            $bundleName = 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
+            $depsName = 'DesktopAppInstaller_Dependencies.zip'
+            gh release download v1.29.380 -R microsoft/winget-cli -p $bundleName -p $depsName --dir $dir.FullName
+            if ($LASTEXITCODE -ne 0) { throw 'WinGet release download failed.' }
+            $bundle = Join-Path $dir.FullName $bundleName
+            $zip = Join-Path $dir.FullName $depsName
+            if ((Get-FileHash $bundle).Hash -ne '65DEA9C01CE08EE7B763366B27C0E651F97DB857C11CA9B9C301826C10092F2E' -or
+                (Get-FileHash $zip).Hash -ne 'BA875AFE9D190F61218985AC0292A99D1DB710BF93E13C68944CA9D89F0D82D1') { throw 'WinGet asset hash mismatch.' }
+            Expand-Archive $zip -DestinationPath $dir.FullName
+            $deps = @(Get-ChildItem (Join-Path $dir.FullName x64) -File -Recurse | Where-Object Extension -in '.msix','.appx')
+            if (-not $deps) { throw 'No x64 dependencies in the WinGet release.' }
+            Add-AppxPackage -Path $bundle -DependencyPath $deps.FullName -ForceApplicationShutdown
           }
       - name: Download and verify published packages
         if: matrix.scenario != 'clean'
