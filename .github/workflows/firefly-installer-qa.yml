@@ -42,15 +42,21 @@ jobs:
             $dir = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP 'winget-1.29.380')
             $bundleName = 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
             $depsName = 'DesktopAppInstaller_Dependencies.zip'
-            gh release download v1.29.380 -R microsoft/winget-cli -p $bundleName -p $depsName --dir $dir.FullName
+            $licenseName = 'e53e159d00e04f729cc2180cffd1c02e_License1.xml'
+            gh release download v1.29.380 -R microsoft/winget-cli -p $bundleName -p $depsName -p $licenseName --dir $dir.FullName
             if ($LASTEXITCODE -ne 0) { throw 'WinGet release download failed.' }
             $bundle = Join-Path $dir.FullName $bundleName
             $zip = Join-Path $dir.FullName $depsName
+            $license = Join-Path $dir.FullName $licenseName
             if ((Get-FileHash $bundle).Hash -ne '65DEA9C01CE08EE7B763366B27C0E651F97DB857C11CA9B9C301826C10092F2E' -or
-                (Get-FileHash $zip).Hash -ne 'BA875AFE9D190F61218985AC0292A99D1DB710BF93E13C68944CA9D89F0D82D1') { throw 'WinGet asset hash mismatch.' }
+                (Get-FileHash $zip).Hash -ne 'BA875AFE9D190F61218985AC0292A99D1DB710BF93E13C68944CA9D89F0D82D1' -or
+                (Get-FileHash $license).Hash -ne 'BCB15118EC47DF24E3E6013A7006147C3A15B3A8104ED660FE87C8B4ED01F485') { throw 'WinGet asset hash mismatch.' }
             Expand-Archive $zip -DestinationPath $dir.FullName
             $deps = @(Get-ChildItem (Join-Path $dir.FullName x64) -File -Recurse | Where-Object Extension -in '.msix','.appx')
             if (-not $deps) { throw 'No x64 dependencies in the WinGet release.' }
+            if ($env:ImageOS -like 'win22*') {
+              Add-AppxProvisionedPackage -Online -PackagePath $bundle -DependencyPackagePath ([string[]]$deps.FullName) -LicensePath $license
+            }
             Add-AppxPackage -Path $bundle -DependencyPath ([string[]]$deps.FullName) -ForceApplicationShutdown
             $appInstaller = Get-AppxPackage Microsoft.DesktopAppInstaller
             if ($appInstaller) { Add-Content -LiteralPath $env:GITHUB_PATH -Value $appInstaller.InstallLocation }
