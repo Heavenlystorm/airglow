@@ -587,6 +587,9 @@
   --focus-color: #dab673;
 }
 [data-design="paper"] .st-codeglyph { background: var(--well); color: var(--ink-3); box-shadow: inset 0 1px 3px rgba(70, 60, 40, .16); }
+[data-design="paper"] .hint.warn > b { color: var(--notice-ink); }
+[data-design="paper"] .su-row.new .su-row-text span { color: var(--ink-2); }
+[data-design="paper"] .su-row.new .tag.new { color: var(--primary-edge); }
 [data-design="paper"] .switch span::after { box-shadow: 0 1px 2px rgba(70, 60, 40, .35), 0 0 0 1px var(--control-ring); }
 
 /* ------------------------------------------------------------------ Amber CRT

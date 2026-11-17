@@ -7,7 +7,10 @@
 [data-design="spore"] .overview-view { --overview-data: #e89f92; }
 [data-design="kiln"] .overview-view .tile[data-level="warm"] { --instrument-ink: var(--heat-4); }
 [data-design="kiln"] .overview-view .tile[data-level="hot"] { --instrument-ink: var(--heat-6); }
-.overview-view .tile[data-emphasis="focus"] { border-color: var(--tile-accent, var(--brass)); box-shadow: inset 0 3px 0 var(--tile-accent, var(--brass)); }
+.overview-view .tile[data-emphasis="focus"] {
+  border-color: var(--tile-accent, var(--brass));
+  box-shadow: inset 0 0 0 1px var(--tile-accent, var(--brass));
+}
 .overview-view .tile[data-emphasis="quiet"] { background: var(--well); box-shadow: none; }
 .overview-view .tile[data-emphasis="quiet"] .tile-head { color: var(--ink-2); }
 .overview-view .tile[data-level="warm"] { --instrument-ink: var(--warm); }
