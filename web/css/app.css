@@ -168,6 +168,10 @@ h1 { font: 600 27px/1.1 var(--display); font-variation-settings: "wdth" var(--wd
 .notice { flex: none; display: flex; align-items: center; gap: 14px; padding: 9px 20px; background: var(--notice-bg); border-bottom: 1px solid var(--notice-edge); color: var(--notice-ink); font-size: 13px; }
 .notice .btn { padding: 4px 11px; font-size: 13px; }
 .notice .spacer { flex: 1; }
+.fan-alert { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 20px; background: var(--notice-bg); color: var(--notice-ink); border-bottom: 1px solid var(--notice-edge); font-size: 13px; }
+.fan-alert strong { font-weight: 650; }
+.fan-alert .text-link { flex-shrink: 0; padding-block: 4px; color: inherit; text-decoration: underline; text-underline-offset: .2em; }
+@media (max-width: 600px) { .fan-alert { padding-inline: 14px; } }
 
 /* why the lights or fans are not behaving like the last thing you set */
 .why { flex: none; display: flex; align-items: center; gap: 10px; padding: 7px 20px; background: var(--why-bg); border-bottom: 1px solid var(--line-soft); color: var(--ink-2); font-size: 13px; }
@@ -411,7 +415,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .stage .zone .hit { fill: transparent; stroke: transparent; }
 .stage .zone .ring { fill: none; stroke: rgba(255, 255, 255, .05); }
 .stage .zone .hub-dot { fill: #111112; stroke: rgba(255, 255, 255, .06); }
-.stage .zone .label { fill: #77746b; font: 400 22px var(--text); font-variation-settings: "wdth" var(--wdth-condensed); letter-spacing: .02em; pointer-events: none; }
+.stage .zone .label { fill: #77746b; font: 400 var(--stage-label-size, 22px) var(--text); font-variation-settings: "wdth" var(--wdth-condensed); letter-spacing: .02em; pointer-events: none; }
 .stage .zone.off .label { fill: #4a4841; }
 .stage .zone .label.clash { visibility: hidden; }
 .stage .zone:hover .label.clash, .stage .zone.selected .label.clash { visibility: visible; }
@@ -728,7 +732,7 @@ code { font: 12px var(--mono); font-stretch: var(--mono-stretch); background: va
 .su-group h3 { font: 600 12.5px var(--text); font-variation-settings: "wdth" var(--wdth-condensed); letter-spacing: .02em; color: var(--ink-3); text-shadow: var(--engrave); padding: 0 2px 6px; }
 .su-row { display: flex; align-items: center; gap: 12px; padding: 9px 10px 9px 12px; border-radius: var(--r-ctl); background: var(--well); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .45); }
 .su-row + .su-row { margin-top: 4px; }
-.su-row.new { box-shadow: inset 0 1px 2px rgba(0, 0, 0, .45), inset 2px 0 0 var(--brass); }
+.su-row.new { background: color-mix(in srgb, var(--brass) 8%, var(--well)); }
 .su-row-text { flex: 1; min-width: 0; display: grid; }
 .su-row-text strong { font-weight: 600; }
 .su-row.off .su-row-text strong { color: var(--ink-3); font-weight: 500; }
@@ -826,7 +830,7 @@ code { font: 12px var(--mono); font-stretch: var(--mono-stretch); background: va
 }
 
 .tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 2px; border: 1px solid var(--line); color: var(--ink-2); font-size: 11px; font-weight: 500; vertical-align: 1px; }
-.hint.warn { border-left: 2px solid var(--warm); padding-left: 10px; }
+.hint.warn > b { color: var(--warm); }
 
 /* ------------------------------------------------------------ display numerals
    Live values are the only numbers in the display: no unlit ghost digits behind them. */

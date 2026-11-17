@@ -89,7 +89,7 @@ class RigMigrationTests(unittest.TestCase):
         result = self.preview(self.mapping)
         self.assertTrue(result["ready"])
         self.assertEqual(result["skipped"], ["source/top"])
-        self.assertIn({"key": "design", "before": "graphite", "after": "paper"}, result["changes"]["settings"])
+        self.assertIn({"key": "design", "before": config.DEFAULT_CONFIG["design"], "after": "paper"}, result["changes"]["settings"])
         result = self.apply(result)
         self.assertTrue(result["applied"])
         again = config.Store(self.target.store.dir)

@@ -94,6 +94,50 @@ test("interface zoom keeps the viewport and its scroll area aligned", async (t) 
   }
 });
 
+test("Studio templates have a bundled sample still before playback and keep it through a preview error", async (t) => {
+  const posts = [];
+  const page = await staticPage(t, async (route, url) => {
+    if (url.pathname === "/api/studio/effects") {
+      await route.fulfill({ json: { effects: [] } });
+      return true;
+    }
+    if (route.request().method() === "POST") {
+      posts.push(url.pathname);
+      await route.fulfill({ status: 503, json: { error: "Preview temporarily unavailable" } });
+      return true;
+    }
+    return false;
+  });
+  await page.evaluate(async () => {
+    const { initStudio, renderStudio } = await import("/js/studio.js");
+    document.querySelector(".studio-view").hidden = false;
+    initStudio();
+    await renderStudio();
+    await Promise.all([...document.querySelectorAll(".st-poster")].map(img => img.decode()));
+  });
+  const posters = page.locator(".st-tpl .st-poster");
+  const templates = await page.evaluate(async () => {
+    const { LAYER_TEMPLATES, CODE_TEMPLATES } = await import("/js/studio-start.js");
+    return LAYER_TEMPLATES.length + CODE_TEMPLATES.length;
+  });
+  assert.ok(templates > 0);
+  assert.equal(await posters.count(), templates);
+  assert.equal(await posters.evaluateAll(images => images.every(img => img.naturalWidth > 0 && img.naturalHeight > 0)), true);
+  assert.deepEqual(posts, []);
+  const play = page.locator('[data-card="aurora"] [data-preview]');
+  assert.equal(await play.isDisabled(), true);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await play.click();
+  await page.getByText("Couldn't play this preview.", { exact: false }).waitFor();
+  assert.deepEqual(posts, ["/api/studio/preview/load"]);
+  assert.equal(await play.getAttribute("aria-pressed"), "false");
+  assert.equal(await page.locator('[data-card="aurora"] .has-frame').count(), 0);
+  const retry = page.waitForResponse(response => response.url() === BASE + "/api/studio/preview/load");
+  await page.locator('[data-tpl="aurora"]').focus();
+  await retry;
+  assert.deepEqual(posts, ["/api/studio/preview/load", "/api/studio/preview/load"]);
+});
+
 test("style radios keep one tab stop and retain focus and comparison across arrow keys", async (t) => {
   const initial = tile(sensors[0], "auto", 0);
   initial.sensors.push(sensors[1].id);
@@ -145,14 +189,14 @@ test("instrument families show scales and actual history in distinct forms", asy
   assert.equal(await network.locator(".history-empty").isVisible(), false);
 });
 
-test("presentation accents remain legible in all 12 themes and all five styles across supported widths and zooms", async (t) => {
+test("presentation accents remain legible in every theme and all five styles across supported widths and zooms", async (t) => {
   const tiles = [...sensors.map((sensor, index) => tile(sensor, "auto", index)),
     ...styles.slice(1).map(style => tile(sensors[0], style, 0)),
     { ...tile(sensors[0], "auto", 5), appearance: { emphasis: "quiet", accent: "#eeeeee" } },
     { ...tile(sensors[0], "spark", 6), appearance: { emphasis: "standard", accent: null } }];
   const page = await overview(t, tiles);
   const themes = await page.evaluate(async () => (await import("/js/design.js")).DESIGNS.map(({ id }) => id));
-  assert.equal(themes.length, 12);
+  assert.ok(themes.includes("firefly"));
   for (const theme of themes) {
     await page.evaluate(async theme => (await import("/js/design.js")).applyDesign(theme, { persist: false }), theme);
     if (theme === "neon" || theme === "midnight" || theme === "spore") {
@@ -350,16 +394,17 @@ test("Ctrl+K opens the search, arrows change only selection, and Escape restores
   await shortcutOrigin.click();
   await page.keyboard.press("Control+k");
   const dialog = page.getByRole("dialog", { name: "Quick switch" });
-  const input = dialog.getByRole("combobox");
+  const input = dialog.getByRole("combobox", { name: "Search actions" });
+  const list = dialog.getByRole("listbox", { name: "Matching actions" });
   assert.equal(await input.evaluate(el => el === document.activeElement), true);
   await input.fill("  EfFecT  ");
-  assert.equal(await dialog.getByRole("option").count(), 2);
-  await dialog.getByRole("option").last().hover();
+  assert.equal(await list.getByRole("option").count(), 2);
+  await list.getByRole("option").last().hover();
   await page.keyboard.press("ArrowDown");
-  assert.equal(await dialog.getByRole("option", { selected: true }).textContent().then(text => text.includes("Music Spectrum")), true);
+  assert.equal(await list.getByRole("option", { selected: true }).textContent().then(text => text.includes("Music Spectrum")), true);
   assert.deepEqual(requests, []);
   await input.fill("ProFiLe night");
-  assert.match(await dialog.getByRole("option", { selected: true }).textContent(), /Apply profile.*cooling/i);
+  assert.match(await list.getByRole("option", { selected: true }).textContent(), /Apply profile.*cooling/i);
   if (OUTPUT) await page.screenshot({ path: join(OUTPUT, "quick-switch-390-120.png") });
   await input.fill("LongName");
   assert.equal(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
@@ -383,7 +428,7 @@ test("quick switch routes navigation and saves an explicitly selected workspace"
   const dialog = page.getByRole("dialog", { name: "Quick switch" });
   const input = dialog.getByRole("combobox", { name: "Search actions" });
   await input.fill("Settings");
-  assert.match(await dialog.getByRole("option", { selected: true }).textContent(), /Open settings/i);
+  assert.match(await dialog.getByRole("option", { selected: true }).textContent(), /Settings\s*Open section/i);
   await page.keyboard.press("Enter");
   await page.waitForURL("**/#settings");
   assert.deepEqual(mutations, []);
@@ -396,6 +441,87 @@ test("quick switch routes navigation and saves an explicitly selected workspace"
   assert.equal(await page.locator("#ov-workspace").inputValue(), "media");
   await saved;
   assert.deepEqual(mutations, ["/api/overview"]);
+});
+
+test("Quick switch opens from the header, filters actions and recovers from an empty search", async (t) => {
+  const page = await switcher(t);
+  const launch = page.getByRole("button", { name: "Quick switch", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Quick switch" });
+  const input = dialog.getByRole("combobox", { name: "Search actions" });
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.evaluate(async () => (await import("/js/appearance.js")).applyAppearance({ scale: 120 }, { persist: false }));
+  await launch.click();
+  const filter = dialog.getByRole("combobox", { name: "Search in" });
+  const results = dialog.getByRole("listbox", { name: "Matching actions" });
+  await filter.selectOption("profile");
+  assert.equal(await results.getByRole("option").count(), 3);
+  await input.fill("Solid");
+  assert.equal(await results.getByRole("option").count(), 0);
+  await dialog.getByRole("button", { name: "Show all actions" }).click();
+  assert.equal(await input.inputValue(), "");
+  assert.equal(await filter.inputValue(), "all");
+  assert.equal(await input.evaluate(el => el === document.activeElement), true);
+  await filter.selectOption("workspace");
+  assert.match(await results.getByRole("option").last().textContent(), /Media Wall/);
+  assert.equal(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
+  await page.keyboard.press("Escape");
+  assert.equal(await launch.evaluate(el => el === document.activeElement), true);
+});
+
+test("header search, navigation, pinned readings and power remain disjoint across window sizes", async (t) => {
+  const page = await switcher(t);
+  await page.locator("#ambient").evaluate(el => {
+    el.innerHTML = ["CPU", "GPU", "CPU load", "Memory"].map(name => `<span class="pin">${name} <b>64</b><i>%</i></span>`).join("");
+  });
+  const clipped = [];
+  for (const width of [390, 540, 640, 701, 800, 980, 1024, 1180, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const scale of [100, 120]) {
+      const collisions = await page.evaluate(async scale => {
+        (await import("/js/appearance.js")).applyAppearance({ scale }, { persist: false });
+        const controls = () => [...document.querySelectorAll(".wordmark, .tabs a, #nav-select, #ambient, #power, #quick-open")]
+          .filter(el => el.getClientRects().length).map(el => ({ id: el.id || el.textContent.trim(), rect: el.getBoundingClientRect() }));
+        const problems = [];
+        for (const theme of ["firefly", "graphite", "ascii"]) {
+          document.documentElement.dataset.design = theme;
+          await document.fonts.ready;
+          const boxes = controls();
+          for (const [index, control] of boxes.entries()) {
+            const a = control.rect;
+            if (a.right > innerWidth + 1 || a.left < 0) problems.push(`${theme}: ${control.id}`);
+            for (const other of boxes.slice(index + 1)) {
+              const b = other.rect;
+              if (a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1)
+                problems.push(`${theme}: ${control.id} / ${other.id}`);
+            }
+          }
+        }
+        return problems;
+      }, scale);
+      if (collisions.length) clipped.push({ width, scale, collisions });
+    }
+  }
+  assert.deepEqual(clipped, []);
+});
+
+test("an updated catalog retains the highlighted command and a removed result cannot run", async (t) => {
+  const page = await switcher(t);
+  const mutations = [];
+  page.on("request", request => { if (request.method() === "POST") mutations.push(request.url()); });
+  await page.keyboard.press("Control+k");
+  const dialog = page.getByRole("dialog", { name: "Quick switch" });
+  await dialog.getByRole("button", { name: "Effects", exact: true }).click();
+  await page.keyboard.press("ArrowDown");
+  await page.evaluate(async () => {
+    const { S, emit } = await import("/js/core.js");
+    S.effects.reverse();
+    emit("state");
+  });
+  assert.match(await dialog.getByRole("option", { selected: true }).textContent(), /Music Spectrum/);
+  await page.evaluate(async () => { (await import("/js/core.js")).S.effects.shift(); });
+  await page.keyboard.press("Enter");
+  await dialog.getByRole("status").getByText(/no longer available/).waitFor();
+  assert.deepEqual(mutations, []);
 });
 
 test("execution waits for renderer readiness and reports partial cooling application", async (t) => {

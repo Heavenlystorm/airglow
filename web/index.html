@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-design="graphite">
+<html lang="en" data-design="firefly">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -29,27 +29,33 @@
 <body>
 
 <header class="appbar">
-  <a class="wordmark" href="#overview"><svg aria-hidden="true"><use href="#i-mark"/></svg><span>Airglow<span class="brand-caption">Light. Air. In harmony.</span></span></a>
-  <nav class="tabs" aria-label="Sections">
-    <span class="tab-ink" aria-hidden="true"></span>
-    <a href="#overview" data-tab="overview" aria-keyshortcuts="Control+1">Overview</a>
-    <a href="#lighting" data-tab="lighting" aria-keyshortcuts="Control+2">Lighting</a>
-    <a href="#studio" data-tab="studio" aria-keyshortcuts="Control+3">Studio</a>
-    <a href="#fans" data-tab="fans" aria-keyshortcuts="Control+4">Fans</a>
-    <a href="#automations" data-tab="automations" aria-keyshortcuts="Control+5">Automations</a>
-    <a href="#devices" data-tab="devices" aria-keyshortcuts="Control+6">Devices</a>
-    <a href="#settings" data-tab="settings" aria-keyshortcuts="Control+7">Settings</a>
-  </nav>
-  <label class="compact-nav"><span class="sr">Section</span><select id="nav-select" class="select" aria-label="Section">
-    <option value="overview">Overview</option><option value="lighting">Lighting</option><option value="studio">Studio</option>
-    <option value="fans">Fans</option><option value="automations">Automations</option><option value="devices">Devices</option><option value="settings">Settings</option>
-  </select></label>
+  <a class="wordmark" href="#overview" aria-label="Airglow Overview"><svg aria-hidden="true"><use href="#i-mark"/></svg><span>Airglow</span></a>
+  <div class="nav-space">
+    <nav class="tabs" aria-label="Sections">
+      <span class="tab-ink" aria-hidden="true"></span>
+      <a href="#overview" data-tab="overview" aria-keyshortcuts="Control+1">Overview</a>
+      <a href="#lighting" data-tab="lighting" aria-keyshortcuts="Control+2">Lighting</a>
+      <a href="#studio" data-tab="studio" aria-keyshortcuts="Control+3">Studio</a>
+      <a href="#fans" data-tab="fans" aria-keyshortcuts="Control+4">Fans</a>
+      <a href="#automations" data-tab="automations" aria-keyshortcuts="Control+5">Automations</a>
+      <a href="#devices" data-tab="devices" aria-keyshortcuts="Control+6">Devices</a>
+      <a href="#settings" data-tab="settings" aria-keyshortcuts="Control+7">Settings</a>
+    </nav>
+    <label class="compact-nav"><span class="sr">Section</span><select id="nav-select" class="select" aria-label="Section">
+      <option value="overview">Overview</option><option value="lighting">Lighting</option><option value="studio">Studio</option>
+      <option value="fans">Fans</option><option value="automations">Automations</option><option value="devices">Devices</option><option value="settings">Settings</option>
+    </select></label>
+  </div>
   <div class="bar-right">
+    <button type="button" class="quick-launch" id="quick-open" aria-label="Quick switch" aria-keyshortcuts="Control+K" aria-haspopup="dialog" title="Quick switch (Ctrl+K)">
+      <svg aria-hidden="true"><use href="#i-search"/></svg><kbd aria-hidden="true">Ctrl K</kbd>
+    </button>
     <a class="ambient" id="ambient" href="#overview" title="Pinned readings. Pin others from a tile's settings on the Overview."></a>
     <button class="power" id="power" aria-pressed="true" title="Lights on or off"><svg aria-hidden="true"><use href="#i-power"/></svg><span class="sr">Lights</span></button>
   </div>
 </header>
 
+<div class="fan-alert" id="fan-alert" role="alert" aria-atomic="true" hidden></div>
 <div class="why" id="why" role="status" aria-live="polite" hidden></div>
 <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
 <div class="mutation-status" id="mutation-status" aria-live="polite" aria-label="Changes" hidden></div>
@@ -66,6 +72,11 @@
       <div class="btn-row"><button class="chip-btn" data-control-center>Control center</button><button class="chip-btn" id="ov-edit" aria-pressed="false"><svg aria-hidden="true"><use href="#i-move"/></svg>Customize</button></div>
     </div>
     <div class="ov-grid" id="ov-grid"></div>
+    <div class="overview-empty" id="ov-empty" hidden>
+      <h2>Your workspace is empty</h2>
+      <p>Add lighting controls, a fan curve or a sensor reading.</p>
+      <button class="btn primary" id="ov-first-tile"><svg aria-hidden="true"><use href="#i-plus"/></svg>Add a tile</button>
+    </div>
   </section>
 
   <!-- ============================================================ Lighting -->
@@ -79,8 +90,8 @@
         </div>
         <div class="stage-hint" id="stage-hint"></div>
         <div class="stage-empty" id="stage-empty" hidden>
-          <h2>No lighting found yet</h2>
-          <p>Airglow talks to NZXT hubs and ASUS boards directly, and to everything else through OpenRGB.</p>
+          <h2 id="stage-empty-title">No lighting found yet</h2>
+          <p id="stage-empty-detail">Connect a supported device or use OpenRGB to add your lights.</p>
           <div class="btn-row"><button class="btn primary" data-open-setup>Set up lights</button><a class="btn" href="#devices">Check devices</a></div>
         </div>
       </div>
@@ -154,7 +165,6 @@
   <section class="view settings-view" data-view="settings" aria-label="Settings" hidden>
     <div class="settings-head">
       <h1>Settings</h1>
-      <p class="lede">A workspace that feels like yours.</p>
     </div>
     <div class="settings-layout">
       <nav class="settings-nav" id="settings-nav" aria-label="Settings sections">
@@ -172,6 +182,10 @@
 <svg width="0" height="0" class="sprite" aria-hidden="true">
   <symbol id="i-mark" viewBox="0 0 64 64"><g fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"><path d="M7.85 37.53A25 25 0 0 1 56.15 37.53" class="mark-glow"/><path d="M6 44H58"/></g><path d="M18 44a14 14 0 0 1 28 0z" fill="currentColor"/></symbol>
   <symbol id="i-sliders" viewBox="0 0 16 16"><path d="M3 4.5h6M12 4.5h1M3 11.5h1M7 11.5h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/><circle cx="10.5" cy="4.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="5.5" cy="11.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 20 20"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="8.4" cy="8.4" r="5.1"/><path d="m12.2 12.2 4.5 4.5"/></g></symbol>
+  <symbol id="i-section" viewBox="0 0 20 20"><g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M7.5 4v12"/></g></symbol>
+  <symbol id="i-effect" viewBox="0 0 20 20"><path d="M9 3.2c.8 3.9 2.2 5.4 5.8 6.3-3.6.9-5 2.4-5.8 6.3-.9-3.9-2.2-5.4-5.8-6.3C6.8 8.6 8.1 7.1 9 3.2zM15.8 2.7v3M14.3 4.2h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+  <symbol id="i-workspace" viewBox="0 0 20 20"><g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="3" width="6" height="14" rx="1.5"/><rect x="11.5" y="3" width="6" height="5" rx="1.3"/><rect x="11.5" y="10.5" width="6" height="6.5" rx="1.3"/></g></symbol>
   <symbol id="i-check" viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
   <symbol id="i-close" viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></symbol>
   <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>

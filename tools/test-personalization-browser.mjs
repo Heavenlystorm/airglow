@@ -4,6 +4,7 @@ import { after, before, test } from "node:test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { installBrowserPreviewBridge } from "./browser-preview-bridge.mjs";
 
 const BASE = "http://127.0.0.1:8790";
 const OUTPUT = process.env.AIRGLOW_PERSONALIZATION_OUTPUT || "output/living-rig-implementation/browser/personalization";
@@ -130,7 +131,7 @@ test("appearance scales fit narrow windows and all designs", async t => {
     await page.screenshot({ path: join(OUTPUT, `appearance-narrow-${scale}.png`) });
   }
   await page.locator("#ap-scale").selectOption("100");
-  for (const design of ["graphite", "ascii", "paper", "amber", "contrast", "neon", "kiln", "lumen", "midnight", "spore", "rim", "darkroom"]) {
+  for (const design of await page.locator("#ap-design option").evaluateAll(options => options.map(o => o.value))) {
     await page.locator("#ap-design").selectOption(design);
     await fits(page);
   }
@@ -207,6 +208,8 @@ test("Studio variations hold controls, blend and undo without enabling hardware 
 
 test("scene playback is explicit, keyboard accessible and stops for reduced motion", async t => {
   const page = await pageFor(t, "studio");
+  const previews = await installBrowserPreviewBridge(page, BASE);
+  t.after(() => previews.close());
   const play = page.locator("[data-preview]").first();
   await play.waitFor();
   assert.equal(await play.isDisabled(), true, "OS reduced motion keeps still previews");
@@ -215,11 +218,13 @@ test("scene playback is explicit, keyboard accessible and stops for reduced moti
   await play.focus();
   await play.press("Enter");
   await eventually(() => page.locator(".st-card.is-playing").count(), x => x === 1, "Only one scene plays");
+  await eventually(() => page.locator(".st-card.is-playing .st-live.has-frame").count(), x => x === 1, "Explicit playback renders a frame");
   await page.screenshot({ path: join(OUTPUT, "scene-collection.png") });
   await page.keyboard.press("Escape");
   assert.equal(await page.locator(".st-card.is-playing").count(), 0);
   await page.locator("[data-tpl]").first().focus();
   await eventually(() => page.locator(".st-card.is-playing").count(), x => x === 1, "Keyboard focus previews a scene");
+  await eventually(() => page.locator(".st-card.is-playing .st-live.has-frame").count(), x => x === 1, "Keyboard focus renders a new frame");
   await page.evaluate(async () => {
     const { applyAppearance } = await import("/js/appearance.js");
     applyAppearance({ motion: "reduced" }, { persist: false });

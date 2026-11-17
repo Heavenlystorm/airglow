@@ -113,5 +113,6 @@ export function workflowStatus(state, doc) {
   const overridden = state?.trial?.kind === "studio" || (doc?.fx_id && state?.scene?.effect === doc.fx_id);
   return { kind: "preview", label: "Preview only", detail: overridden
     ? "The draft or saved effect is selected, but current lighting is off or controlled by an override. Stop preview to restore your scene."
-    : "Edits appear in this preview. Save the effect, then apply it when you are ready." };
+    : doc ? "Edits appear in this preview. Save the effect, then apply it when you are ready."
+      : "Templates show a sample rig. Open one to edit, then save and apply it to your lights." };
 }

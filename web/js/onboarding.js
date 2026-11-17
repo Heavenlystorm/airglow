@@ -30,8 +30,8 @@ function welcomeList(st) {
 }
 
 const welcomeHint = (pending) => pending
-  ? "Next, tell Airglow what's plugged in where. Each light blinks while you set it up, and it takes about a minute."
-  : "The Overview is yours to arrange: Customize moves and resizes tiles, and any tile can show a different reading.";
+  ? "During setup, each light blinks so you can match it to its place in your PC."
+  : "Choose Customize on the Overview to move tiles or add a reading.";
 
 function renderWelcomeStatus() {
   const status = $("#onb-status");
@@ -45,10 +45,10 @@ function renderWelcomeStatus() {
     if (retained && retained !== button) button.replaceWith(retained);
     if (retained === focused) retained.focus();
   }
-  $("#onb-step").textContent = pending ? "Step 1 of 2" : "What I found";
+  $("#onb-step").textContent = pending ? "Step 1 of 2" : "";
   $("#onb-hint").textContent = welcomeHint(pending);
   $("#onb-skip").textContent = pending ? "Later" : "Check devices";
-  $("#onb-start").textContent = pending ? "Set up lights" : "Start";
+  $("#onb-start").textContent = pending ? "Set up lights" : "Open Overview";
 }
 on("state", renderWelcomeStatus);
 
@@ -56,16 +56,16 @@ let clearWelcomeListeners = () => {};
 export function openWelcome() {
   clearWelcomeListeners();
   const st = S.state;
-  openSheet(`<div class="body"><div class="sheet-head"><h2>Welcome to Airglow</h2>
-      <div class="sheet-head-side"><span class="sheet-step" id="onb-step">${st.setup_pending ? "Step 1 of 2" : "What I found"}</span>
+  openSheet(`<div class="body welcome-sheet"><div class="sheet-head"><div class="welcome-heading"><h2>Welcome to Airglow</h2>
+      <p>Lighting and cooling for this PC. No account needed.</p></div>
+      <div class="sheet-head-side"><span class="sheet-step" id="onb-step">${st.setup_pending ? "Step 1 of 2" : ""}</span>
       <button class="icon-btn" id="onb-close" aria-label="Close"><svg><use href="#i-close"/></svg></button></div></div>
-    <p class="lede" style="margin:0">Here's what it found on this PC. Everything stays on this computer: no account, no cloud.</p>
     <div class="onb-list" id="onb-status">${welcomeList(st)}</div>
     <div class="tools-box" data-tools></div>
     ${onlineItem()}
     <p class="hint" id="onb-hint">${welcomeHint(st.setup_pending)}</p>
     <div class="actions"><button class="btn quiet" id="onb-skip">${st.setup_pending ? "Later" : "Check devices"}</button><span class="spacer"></span>
-      <button class="btn primary" id="onb-start">${st.setup_pending ? "Set up lights" : "Start"}</button></div></div>`);
+      <button class="btn primary" id="onb-start">${st.setup_pending ? "Set up lights" : "Open Overview"}</button></div></div>`);
   refreshTools();
   const sheet = $("#sheet");
   const root = $("#onb-status");
@@ -104,7 +104,7 @@ export function openWelcome() {
   $("#onb-start").addEventListener("click", async () => {
     if (!await done()) return;
     if (S.state.setup_pending) import("./setup.js").then((m) => m.openSetup({ start: true })).catch(fail);
-    else closeSheet();
+    else { closeSheet(); location.hash = "#overview"; }
   });
   $("#onb-skip").addEventListener("click", async () => {
     if (!await done()) return;

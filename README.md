@@ -12,10 +12,11 @@ account or telemetry.
 [![Tests](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml/badge.svg)](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml)
 [![MIT licence](https://img.shields.io/github/license/Heavenlystorm/airglow)](LICENSE)
 
-## Firefly development preview
+## The Firefly workspace
 
-Firefly gives the workspace a lantern-carrying companion and a softer palette. This preview shows four simulated
-devices. The 1.16.1 stable installer defaults to [Graphite](docs/screenshots/overview.png).
+Firefly is the default design for new installations in 1.17.0. It pairs a lantern-carrying companion with a plum,
+apricot, and mint workspace. Upgrading keeps your saved design. You can switch among thirteen designs in Settings.
+The screenshot below shows four simulated devices.
 
 ![Firefly workspace with a lighting canvas, saved profiles, fan speeds and CPU and GPU readings](docs/screenshots/firefly-preview.png)
 

@@ -31,7 +31,7 @@ before(async () => {
   browser = await chromium.launch({ channel: process.env.AIRGLOW_BROWSER || "msedge" });
 });
 after(async () => { await browser?.close(); if (original) await api("/api/overview", original); });
-async function pageFor(t, view) {
+async function pageFor(t, view, beforeNavigation = () => {}) {
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, reducedMotion: "reduce" });
   await page.addInitScript(() => {
     const Native = window.EventSource;
@@ -41,10 +41,92 @@ async function pageFor(t, view) {
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
   t.after(async () => { await page.close(); assert.deepEqual(errors, []); });
+  await beforeNavigation(page);
   await page.goto(`${BASE}/#${view}`);
   return page;
 }
 async function frames(page) { await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))); }
+
+test("fan failsafe stays visible across tabs without obscuring controls and links to Sensors", async (t) => {
+  const state = await api("/api/state");
+  state.fans.failsafe = true;
+  state.sensors.online = true;
+  state.scene.on = true;
+  state.effective.on = false;
+  state.override.locked = true;
+  state.override.lighting = null;
+  const page = await pageFor(t, "fans", async (p) => {
+    await p.route("**/api/state", route => route.fulfill({ json: state }));
+    await p.route("**/api/stream?*", route => route.fulfill({ contentType: "text/event-stream", body: ": simulated stream\n\n" }));
+  });
+  const alert = page.getByRole("alert").filter({ hasText: /fan failsafe/i });
+  await alert.waitFor({ timeout: 2500 });
+  assert.match(await page.locator("#why").textContent(), /PC is locked/);
+  await alert.getByRole("link", { name: "Check sensors" }).click();
+  await page.waitForFunction(() => document.activeElement.matches("#set-sensors h2"));
+  const help = page.locator("#s-lhm-status");
+  await help.getByRole("link", { name: "Fan settings" }).click();
+  await page.waitForFunction(() => document.activeElement.matches("#set-fans h2"));
+  await alert.getByRole("link", { name: "Check sensors" }).click();
+  await page.waitForFunction(() => document.activeElement.matches("#set-sensors h2"));
+
+  async function refresh(failsafe) {
+    state.fans.failsafe = failsafe;
+    await page.evaluate(async () => (await import("/js/core.js")).emit("refresh"));
+  }
+  await refresh(false);
+  await alert.waitFor({ state: "hidden" });
+  assert.doesNotMatch(await help.textContent(), /missing|waiting/i);
+  await refresh(true);
+  await alert.waitFor();
+  assert.doesNotMatch(await page.locator("#toast").textContent(), /failsafe|temperature reading/i);
+});
+
+test("Lighting fits sparse zones, aligns canvas and hit targets, and restores the full Arrange workspace", async (t) => {
+  const page = await pageFor(t, "lighting");
+  await page.locator("#deck [data-effect]").first().waitFor();
+  const result = await page.evaluate(async () => {
+    const { S, emit } = await import("/js/core.js");
+    const { renderOverlay } = await import("/js/stage.js");
+    const { showZone } = await import("/js/lighting.js");
+    const svg = document.getElementById("stage-svg"), canvas = document.getElementById("stage-canvas");
+    const box = () => svg.getAttribute("viewBox");
+    const sample = structuredClone(S.zones.zones.find(z => z.device.online));
+    sample.config.enabled = true;
+    sample.config.name = "Corner LED";
+    sample.config.layout = { shape: "strip", x: 1.48, y: .81, angle: 0, length: .6, leds: 1 };
+    sample.positions = [[1.48, .81]];
+    const off = structuredClone(sample);
+    off.key = "test/other"; off.config.enabled = false; off.config.layout.x = .12; off.positions = [[.12, .81]];
+    S.zones = { zones: [sample, off] };
+    renderOverlay();
+    const fit = box(), point = new DOMPoint(1480, 810).matrixTransform(svg.getScreenCTM());
+    const rect = canvas.getBoundingClientRect(), ctx = canvas.getContext("2d"), dpr = canvas.width / rect.width;
+    emit("frames:live", { zones: { [sample.key]: "ff0000" } });
+    const color = Array.from(ctx.getImageData(Math.round((point.x - rect.x) * dpr), Math.round((point.y - rect.y) * dpr), 1, 1).data);
+    const centered = Math.abs(point.x - rect.x - rect.width / 2) < 2 && Math.abs(point.y - rect.y - rect.height / 2) < 2;
+    const hit = document.elementFromPoint(point.x, point.y)?.closest(".zone")?.dataset.key === sample.key;
+    const label = svg.querySelector("text.label").getBoundingClientRect();
+    const labelFits = label.left >= rect.left && label.right <= rect.right && label.top >= rect.top && label.bottom <= rect.bottom;
+    document.getElementById("arrange").click(); const arrange = box(), arrangeZones = svg.querySelectorAll(".zone").length;
+    document.getElementById("arrange").click(); const restored = box();
+    location.hash = "#lighting/" + encodeURIComponent(off.key);
+    await new Promise(resolve => window.addEventListener("hashchange", resolve, { once: true }));
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const selectedOff = svg.querySelector(".zone.selected")?.dataset.key;
+    showZone(null); sample.config.enabled = false; renderOverlay(); const allOff = box();
+    S.zones.zones = []; renderOverlay(); const empty = box();
+    return { fit, centered, hit, labelFits, color, arrange, arrangeZones, restored, selectedOff, allOff, empty };
+  });
+  assert.ok(result.centered && result.hit && result.labelFits && result.color[0] > 180, JSON.stringify(result));
+  assert.notEqual(result.fit, result.arrange);
+  assert.equal(result.arrange, "-48 -48 1696 1096");
+  assert.equal(result.arrangeZones, 2);
+  assert.equal(result.restored, result.fit);
+  assert.equal(result.selectedOff, "test/other");
+  assert.equal(result.allOff, result.arrange);
+  assert.equal(result.empty, result.arrange);
+});
 
 test("Studio shares one left edge at wide and narrow sizes in every theme", async (t) => {
   const page = await pageFor(t, "studio");

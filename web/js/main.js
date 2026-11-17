@@ -27,7 +27,6 @@ let updateDismissed = null;      // "Later" on the update notice, for that versi
 let bootFailed = false;          // "Couldn't reach Airglow" is said once, not on every retry
 let lastStateAt = 0;             // when the last state arrived: a stream can die without ever reporting an error
 let probing = false;             // one watchdog fetch at a time
-let failsafeSeen = false;        // the fans' failsafe speed is mentioned once while readings are missing
 let quickReady = false;
 const refreshQuickSwitcher = initQuickSwitcher(TABS, () => quickReady ? "ready" : bootFailed ? "unavailable" : "loading");
 
@@ -71,7 +70,10 @@ async function route() {
   if (seq !== routeSeq) return;
   if (view === "fans") { m.renderFans(); if (arg) m.showFan?.(decodeURIComponent(arg)); }
   else if (view === "devices") { if (arg) m.showZone(decodeURIComponent(arg)); m.renderDevices(); }
-  else if (view === "settings") m.loadSettings();
+  else if (view === "settings") {
+    await m.loadSettings();
+    if (arg && seq === routeSeq) m.focusSettingsSection(arg);
+  }
   else if (view === "lighting") { if (arg) m.showZone(decodeURIComponent(arg)); m.renderLighting(); }
   else if (view === "studio") await m.renderStudio(arg);
 }
@@ -80,6 +82,11 @@ on("studio:open", (req) => { loadView("studio").then((m) => m.openStudio(req)).c
 $("#nav-select")?.addEventListener("change", (e) => { location.hash = "#" + e.target.value; });
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-control-center]")) import("./control-center.js").then((m) => m.openControlCenter()).catch(fail);
+  const link = e.target.closest('a[href^="#settings/"]');
+  if (link && link.hash === location.hash && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    views.settings?.focusSettingsSection(link.hash.slice("#settings/".length));
+  }
 });
 
 // Keep failed operations visible until resolved or explicitly dismissed, including after changing views.
@@ -180,9 +187,6 @@ function renderWhy() {
     action = held.rule
       ? `<button class="btn" data-why-pause>Pause all for an hour</button>`
       : `<a class="btn quiet" href="#settings">Settings</a>`;
-  } else if (s.fans?.failsafe) {
-    text = "Fans are at the failsafe speed because no temperature readings are coming through.";
-    action = `<a class="btn quiet" href="#settings">Check sensors</a>`;
   } else if (o.paused_until) {
     const until = new Date(o.paused_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     text = `Automations are paused until ${until}.`;
@@ -218,6 +222,10 @@ function renderBar() {
   const u = S.state.update;
   renderPins();
   renderTrial();
+  const fanAlert = $("#fan-alert");
+  fanAlert.hidden = !S.state.fans?.failsafe;
+  setHTML(fanAlert, fanAlert.hidden ? "" : `<span><strong>Fan failsafe.</strong> The fan curve is waiting for its temperature reading.</span>
+    <a class="text-link" href="#settings/sensors">Check sensors</a>`);
   renderWhy();
   const held = heldOff();
   $("#power").setAttribute("aria-pressed", String(S.state.scene.on));
@@ -240,9 +248,10 @@ function renderBar() {
              && (S.state.openrgb.installed || S.state.openrgb.used)) {
     const o = S.state.openrgb;
     n.hidden = false;
-    setHTML(n, `<span><b>OpenRGB</b> isn't running, so the graphics card and other lights it drives stay dark.</span>
-      ${o.installed ? `<button class="btn" data-openrgb-start>Start OpenRGB</button>` : `<a class="btn" href="#settings">Set it up</a>`}
-      <a class="btn quiet" href="#settings">Settings</a><span class="spacer"></span>`);
+    setHTML(n, `<span class="openrgb-status"><b>OpenRGB is offline.</b> Its lights can’t update.</span>
+      <div class="openrgb-actions">${o.installed
+        ? `<button class="btn" data-openrgb-start>Start OpenRGB</button><a class="btn quiet" href="#settings/devices">Device settings</a>`
+        : `<a class="btn" href="#settings/helpers">Set up OpenRGB</a>`}</div>`);
   } else if (S.state.onboarded && S.state.setup_pending > setupDismissed) {
     const k = S.state.setup_pending;
     n.hidden = false;
@@ -309,9 +318,6 @@ async function applyState(state) {
   settleSceneMutation(S.state.scene_status);
   lastStateAt = Date.now();
   if (!connected) { connected = true; toast("Reconnected"); }
-  const fs = !!S.state.fans?.failsafe;
-  if (fs && !failsafeSeen) toast("No temperature readings, so the fans are at the failsafe speed. Check LibreHardwareMonitor.", true);
-  failsafeSeen = fs;
   pushSample();
   pushReadings(S.state.readings);
   if (!R.loaded || R.lhm !== !!state.sensors?.online || R.revision !== state.catalog_rev) {

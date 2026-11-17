@@ -1,7 +1,36 @@
 /* The scene shelf and master instrument share the active design's surfaces. */
+.st-title, .st-library-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.st-home .page-head:has(.st-title) { margin-bottom: 8px; }
+.st-home .page-head .st-title { flex: 1 1 auto; }
+.st-library-head { justify-content: space-between; margin-bottom: 12px; }
+.st-home .st-library-head .st-h { margin: 0; }
+.st-home .st-h { font: 600 19px/1.35 var(--display); letter-spacing: 0; text-transform: none; color: var(--ink); }
+.st-home > .st-workflow { padding-block: 10px 14px; }
 .st-home .st-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 248px), 1fr)); gap: 18px; }
 .st-home .st-card { padding: 0 0 12px; overflow: hidden; box-shadow: none; }
-.st-home .st-live { aspect-ratio: 4 / 3; border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--line-soft); }
+.st-card-media {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 8 / 5;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--well);
+}
+.st-home .st-live, .st-poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+}
+.st-poster { object-fit: cover; }
+.st-home .st-live { opacity: 0; }
+.st-home .st-live.has-frame { opacity: 1; }
+.st-preview-note { display: grid; justify-items: center; gap: 8px; color: var(--ink-3); font-size: 12px; }
+.st-preview-note svg { width: 22px; height: 22px; }
+.st-card-media:has(.has-frame) .st-preview-note { visibility: hidden; }
 .st-home .st-cap { padding: 15px 16px 0; gap: 5px; }
 .st-home .st-cap strong { font-size: 16px; white-space: normal; line-height: 1.3; }
 .st-home .st-cap > span { line-height: 1.5; color: var(--ink-2); }

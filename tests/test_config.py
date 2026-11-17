@@ -162,8 +162,14 @@ class StoreTests(unittest.TestCase):
         (self.dir / "config.json").write_text(json.dumps({"design": "vaporwave"}), encoding="utf-8")
         self.assertEqual(config.Store(self.dir).settings()["design"], "graphite")
 
+    def test_legacy_settings_without_a_design_keep_their_graphite_appearance(self):
+        self.dir.mkdir(parents=True)
+        (self.dir / "config.json").write_text(json.dumps({"temp_unit": "F"}), encoding="utf-8")
+        self.assertEqual(config.Store(self.dir).settings()["design"], "graphite")
+
     def test_defaults_when_empty(self):
         s = config.Store(self.dir)
+        self.assertEqual(s.settings()["design"], "firefly")
         self.assertEqual([p["id"] for p in s.get_presets()], ["silent", "balanced", "gaming", "night"])
         self.assertEqual(s.settings()["port"], 8787)
         self.assertEqual(s.state["scene"]["effect"], "solid")
@@ -191,7 +197,7 @@ class StoreTests(unittest.TestCase):
         again = config.Store(self.dir)
         self.assertEqual((again.settings()["design"], again.settings()["energy_price"]), ("paper", 0.42))
         again.reset_settings()
-        self.assertEqual((again.settings()["design"], again.settings()["energy_price"]), ("graphite", 0.3797))
+        self.assertEqual((again.settings()["design"], again.settings()["energy_price"]), ("firefly", 0.3797))
 
     def test_round_trip(self):
         s = config.Store(self.dir)

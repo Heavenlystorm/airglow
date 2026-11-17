@@ -19,6 +19,7 @@ test("recipes roundtrip only appearance and reject damaged or future files", () 
   const encoded = encodeLookRecipe(recipe);
   const decoded = parseLookRecipe(encoded);
   assert.deepEqual(decoded, { name: recipe.name, design: "paper", appearance: recipe.appearance });
+  assert.equal(parseLookRecipe(encodeLookRecipe({ ...recipe, design: "firefly" })).design, "firefly");
   assert.ok(!encoded.includes("fan_failsafe_duty"));
   for (const patch of [{ version: 2 }, { design: "unknown" }, { appearance: { scale: 400 } },
     { appearance: { accent: "bad" } }, { appearance: [] }, { name: " " }]) {

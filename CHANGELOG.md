@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.17.0
+- Meet Firefly, the new default design for fresh installations. A lantern-carrying companion, plum surfaces,
+  apricot controls, and mint accents carry through setup and Overview. Upgrading keeps your saved design.
+- Overview fits small lighting rigs more closely, making it easier to see and select individual zones.
+  Featured tiles have a continuous outline distinct from keyboard focus.
+- Creative Studio shows artwork for each starting template. Keyboard users can preview templates and retry
+  a preview after a renderer error.
+- Quick Switch filters sections, effects, profiles, and workspaces. It labels actions and keeps keyboard focus
+  predictable when you search or return to the workspace.
+- Fan protection remains visible alongside other alerts and links to sensor guidance. OpenRGB setup notices
+  take less space in narrow windows, and experimental device warnings have a clearer label.
+
 ## 1.16.1
 - Restore the original artwork and hover animations on Lighting effect tiles and remove the added Preview buttons.
   Effect selection retains the readiness checks, transitions and lighting-only Undo introduced in 1.16.0.

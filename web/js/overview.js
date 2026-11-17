@@ -11,6 +11,7 @@ import { createOverviewRig } from "./overview-rig.js";
 import { profileArtwork, fanInstrument } from "./overview-instruments.js";
 import { instrumentModel, peakBuckets, sensorFamily } from "./overview-sensors.js";
 import { closeSheet, openSheet } from "./sheet.js";
+import { editProfilesSheet, saveProfileSheet } from "./profiles.js";
 import { createLayoutHistory, createWorkspace, deleteWorkspace, exportWorkspace, importWorkspace, initializeWorkspaces, renameWorkspace, restoreOverview, starterWorkspace, switchWorkspace, syncWorkspace } from "./overview-workspaces.js";
 
 const COLS = 4;
@@ -113,10 +114,13 @@ function renderWorkspaceToolbar() {
   const options = `${O.layout.active_workspace ? "" : '<option value="">Current layout</option>'}${O.layout.workspaces.map((w) => `<option value="${esc(w.id)}">${esc(w.name)}</option>`).join("")}`;
   setHTML(select, options);
   select.value = O.layout.active_workspace || "";
+  $("#ov-workspace-name-display").textContent = select.selectedOptions[0]?.textContent || "Current layout";
+  select.parentElement.hidden = select.options.length < 2;
   select.disabled = resetting;
   $("#ov-workspace-manage").disabled = resetting;
   $("#ov-undo").disabled = resetting || !O.history.canUndo;
   $("#ov-redo").disabled = resetting || !O.history.canRedo;
+  toolbar.querySelector(".workspace-history").hidden = !O.editing && !O.history.canUndo && !O.history.canRedo;
   const status = $("#ov-workspace-status");
   status.textContent = { saving: "Saving…", saved: "Saved", unsaved: "Not saved" }[O.saveState];
   status.dataset.state = O.saveState;
@@ -220,8 +224,9 @@ function workspaceSheet() {
 function initWorkspaceToolbar() {
   const toolbar = document.createElement("div");
   toolbar.id = "ov-workspaces"; toolbar.className = "ov-workspaces";
-  toolbar.innerHTML = `<label class="workspace-picker"><span>Workspace</span><select class="select" id="ov-workspace" aria-label="Overview workspace"></select></label>
-    <button class="chip-btn" id="ov-workspace-manage" title="Create, rename or share a workspace" aria-label="Manage workspaces">Workspaces</button>
+  toolbar.innerHTML = `<div class="workspace-identity">
+    <div class="workspace-title"><h1 id="ov-workspace-name-display">My workspace</h1><label class="workspace-picker" title="Switch workspace"><svg aria-hidden="true"><use href="#i-down"/></svg><select class="select" id="ov-workspace" aria-label="Overview workspace"></select></label></div>
+    <div class="workspace-meta"><a id="ov-device-count" href="#devices"></a><button class="text-link" id="ov-workspace-manage" aria-label="Manage workspaces">Manage workspaces</button></div></div>
     <div class="workspace-history" role="group" aria-label="Layout history"><button class="icon-btn" id="ov-undo" aria-label="Undo layout edit" title="Undo layout edit (Ctrl+Z)">↶</button><button class="icon-btn" id="ov-redo" aria-label="Redo layout edit" title="Redo layout edit (Ctrl+Shift+Z)">↷</button></div><span id="ov-workspace-status" class="workspace-status" role="status"></span>`;
   $(".ov-bar").prepend(toolbar);
   $("#ov-workspace").addEventListener("change", (event) => {
@@ -315,11 +320,11 @@ function controlMarkup(t) {
   if (t.type === "lighting") {
     return `<div class="canvas-heading"><span>Lighting canvas</span><a class="link" href="#lighting" title="Open Lighting">Open Lighting ↗</a></div><div class="overview-rig-host"></div>
       <footer class="lt-foot"><div class="lt-what"><b class="lt-effect"></b><span class="lt-sub"></span></div>
-        <input type="range" class="lt-bri" min="0" max="100" aria-label="Brightness">
-        <label class="switch" title="Lights on or off"><input type="checkbox" class="lt-on"><span></span></label></footer>`;
+        <label class="lt-brightness"><span>Brightness <b class="lt-percent" aria-hidden="true"></b></span><input type="range" class="lt-bri" min="0" max="100" aria-label="Brightness"></label>
+        <label class="switch" title="Lights on or off"><input type="checkbox" class="lt-on" aria-label="Lights on"><span></span></label></footer>`;
   }
   if (t.type === "presets") {
-    return `<header class="tile-head"><span class="tile-name">Profiles</span><a class="tile-src link" href="#lighting">Edit</a></header><div class="chips pcards"></div>`;
+    return `<header class="tile-head"><span class="tile-name">Profiles</span><button class="tile-src link text-link" data-edit-profiles>Edit profiles</button></header><div class="chips pcards"></div>`;
   }
   if (t.type === "control") return `<header class="tile-head"><span class="tile-name">Control status</span></header>
     <div class="control-tile-state"></div><p class="control-tile-detail hint"></p><button class="btn quiet" data-control-center>Open control center</button>`;
@@ -581,6 +586,7 @@ function updateLighting(el, t) {
   setHTML(el.querySelector(".lt-sub"), esc(sub));
   const bri = el.querySelector(".lt-bri"), on = el.querySelector(".lt-on");
   if (document.activeElement !== bri && Date.now() - (bri._t || 0) > 1500) { bri.value = sc.brightness; rangeFill(bri); }
+  el.querySelector(".lt-percent").textContent = bri.value + "%";
   on.checked = sc.on;
   el.style.setProperty("--scene", sceneColor(eff));
   el._rig?.update({ zones: S.zones?.zones || [], frames: overviewFrames, view: t?.view || "2d" });
@@ -591,6 +597,7 @@ function wireLighting(el) {
   let timer;
   bri.addEventListener("input", () => {
     rangeFill(bri); bri._t = Date.now();
+    el.querySelector(".lt-percent").textContent = bri.value + "%";
     clearTimeout(timer);
     timer = setTimeout(() => applyLightingScene({ brightness: +bri.value }).catch(fail), 60);
   });
@@ -605,7 +612,7 @@ function updatePresets(el) {
   setHTML(el.querySelector(".chips"), S.presets.length
     ? S.presets.map((p) => `<button class="pcard" data-preset="${esc(p.id)}" aria-pressed="${p.id === active}" style="--pc:${sceneColor(p)};--ps:${sceneSwatch(p)}">
         <span class="pswatch">${profileArtwork(p)}</span><span class="pname">${esc(p.name)}</span><span class="pmeta">${esc(effectName(p.effect))}${p.id === active ? " · On" : ""}</span></button>`).join("")
-    : `<p class="hint">No profiles yet. Save one from the Lighting tab.</p>`);
+    : `<div class="profile-empty"><span>No saved profiles</span><button class="text-link" data-save-profile>Save current settings</button></div>`);
 }
 
 function fanSummary(fans) {
@@ -651,6 +658,12 @@ function update(el, t) {
 export function renderOverview() {
   if (!O.layout || !S.state) return;
   const g = grid();
+  const online = (S.state.devices || []).filter(device => device.online).length;
+  const deviceLink = $("#ov-device-count");
+  const connection = R.stale ? "Reconnecting…" : online === 0 ? "No devices online" : online + (online === 1 ? " device online" : " devices online");
+  if (deviceLink.textContent !== connection) deviceLink.textContent = connection;
+  deviceLink.dataset.online = String(online > 0 && !R.stale);
+  $("#ov-empty").hidden = O.editing || O.layout.tiles.length > 0;
   const wanted = O.layout.tiles.map((t) => mount(t));
   // drop removed tiles, keep the order of the layout
   for (const [id, el] of O.els) if (!tileById(id)) { el._rig?.dispose(); el.remove(); O.els.delete(id); }
@@ -684,6 +697,7 @@ function setEditing(on) {
   $("#ov-edit").setAttribute("aria-pressed", String(on));
   $("#ov-edit").innerHTML = on ? "Done" : `<svg aria-hidden="true"><use href="#i-move"/></svg>Customize`;
   $("#ov-editbar").hidden = !on;
+  renderWorkspaceToolbar();
   flip(grid(), () => renderOverview());
 }
 
@@ -1075,6 +1089,8 @@ export async function initOverview(layout) {
       if (e.target.closest("a")) e.preventDefault();
       return;
     }
+    if (e.target.closest("[data-edit-profiles]")) return editProfilesSheet(renderOverview);
+    if (e.target.closest("[data-save-profile]")) return saveProfileSheet(renderOverview);
     const p = e.target.closest("[data-preset]");
     if (p) {
       const preset = S.presets.find((x) => x.id === p.dataset.preset);
@@ -1099,6 +1115,7 @@ export async function initOverview(layout) {
   });
   $("#ov-edit").addEventListener("click", () => setEditing(!O.editing));
   $("#ov-addtile").addEventListener("click", addTileSheet);
+  $("#ov-first-tile").addEventListener("click", addTileSheet);
   $("#ov-reset").addEventListener("click", async () => {
     if (!confirm("Reset this workspace's tiles and pins to the default? Other workspaces stay saved, and layout Undo can restore this one.")) return;
     try {

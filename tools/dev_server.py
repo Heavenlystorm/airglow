@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -196,9 +197,17 @@ if __name__ == "__main__":
         store.update_settings({"lhm_url": f"http://127.0.0.1:{DEMO_LHM_PORT}"})
     nzxt, aura, gpu, kb = sample_rig()
     manager = FakeManager(nzxt, aura)
+    # The test double has no discovery thread. Open the sample devices so the
+    # preview shows the declared rig and its real simulated connection state.
+    manager.maintain(openrgb_enabled=True)
     manager.bridge.devices = {gpu.id: gpu, kb.id: kb}
     manager.bridge.status = "Connected, 2 devices"
+    manager.bridge.client.connected = True
     gpu.open(); kb.open()
+    # A demo may stay open for hours. The test doubles normally keep every frame.
+    for device in manager.all().values():
+        device.writes = deque(maxlen=32)
+    nzxt.hub.duties = deque(maxlen=32)
     ctrl = Controller(store, manager=manager)
     if os.environ.get("AIRGLOW_FIXTURE") == "1":
         # Browser CI exercises simulated controls; it must never capture the host's display/audio or open WebView2.

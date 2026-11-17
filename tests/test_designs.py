@@ -26,7 +26,7 @@ class DesignListTests(unittest.TestCase):
         html = (WEB / "index.html").read_text(encoding="utf-8")
         self.assertLess(html.index("js/design-boot.js"), html.index("css/app.css"))
         self.assertLess(html.index("css/app.css"), html.index("css/designs.css"))
-        self.assertIn('data-design="graphite"', html)
+        self.assertIn(f'data-design="{config.DEFAULT_CONFIG["design"]}"', html)
 
     def test_the_cached_design_uses_one_key(self):
         for name in ("design.js", "design-boot.js"):
