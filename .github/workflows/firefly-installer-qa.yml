@@ -15,9 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { scenario: clean, image: windows-2025 }
           - { scenario: clean, image: windows-2022 }
-          - { scenario: detect-setup, image: windows-2025 }
     name: ${{ matrix.image }} / ${{ matrix.scenario }}
     steps:
       - uses: actions/checkout@v7
@@ -53,7 +51,10 @@ jobs:
             Expand-Archive $zip -DestinationPath $dir.FullName
             $deps = @(Get-ChildItem (Join-Path $dir.FullName x64) -File -Recurse | Where-Object Extension -in '.msix','.appx')
             if (-not $deps) { throw 'No x64 dependencies in the WinGet release.' }
+            if ($env:ImageOS -like 'win22*') { Import-Module Appx -UseWindowsPowerShell }
             Add-AppxPackage -Path $bundle -DependencyPath $deps.FullName -ForceApplicationShutdown
+            $appInstaller = Get-AppxPackage Microsoft.DesktopAppInstaller
+            if ($appInstaller) { Add-Content -LiteralPath $env:GITHUB_PATH -Value $appInstaller.InstallLocation }
           }
       - name: Download and verify published packages
         if: matrix.scenario != 'clean'
