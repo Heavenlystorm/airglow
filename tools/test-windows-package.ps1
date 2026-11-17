@@ -36,8 +36,20 @@ function Invoke-Setup([string]$path, [string[]]$arguments) {
     if ($process.ExitCode -ne 0) { throw "$(Split-Path -Leaf $path) exited with $($process.ExitCode)." }
 }
 function Invoke-WinGet([string[]]$arguments) {
-    $text = & $winget @arguments 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { throw "WinGet exited with $LASTEXITCODE. $text" }
+    Write-Host "Running WinGet $($arguments -join ' ')"
+    $info = [Diagnostics.ProcessStartInfo]::new($winget)
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    foreach ($argument in $arguments) { $info.ArgumentList.Add($argument) }
+    $proc = [Diagnostics.Process]::Start($info)
+    $stdout = $proc.StandardOutput.ReadToEndAsync()
+    $stderr = $proc.StandardError.ReadToEndAsync()
+    $done = $proc.WaitForExit(180000)
+    if (-not $done) { $proc.Kill($true); $proc.WaitForExit() }
+    $text = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
+    if (-not $done) { throw "WinGet $($arguments[0]) timed out. $text" }
+    if ($proc.ExitCode -ne 0) { throw "WinGet $($arguments[0]) exited with $($proc.ExitCode). $text" }
     return $text
 }
 function Assert-Registration([string]$expectedVersion) {
