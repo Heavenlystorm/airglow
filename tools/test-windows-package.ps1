@@ -46,7 +46,24 @@ function Invoke-WinGet([string[]]$arguments) {
     $stdout = $proc.StandardOutput.ReadToEndAsync()
     $stderr = $proc.StandardError.ReadToEndAsync()
     $done = $proc.WaitForExit(180000)
-    if (-not $done) { $proc.Kill($true); $proc.WaitForExit() }
+    if (-not $done) {
+        $processes = @(Get-CimInstance Win32_Process)
+        $descendants = @($proc.Id)
+        for ($level=0; $level -lt 12; $level++) {
+            $children = @($processes | Where-Object { $_.ParentProcessId -in $descendants -and $_.ProcessId -notin $descendants })
+            if (-not $children) { break }
+            $descendants += $children.ProcessId
+        }
+        $related = @($processes | Where-Object {
+            $_.ProcessId -in $descendants -or $_.Name -in 'smartscreen.exe','consent.exe','AppInstaller.exe' -or $_.Name -like '*Airglow*'
+        } | Select-Object Name,ProcessId,ParentProcessId,CommandLine)
+        Record 'WinGet timeout process tree' $related
+        $windows = @(Get-Process | Where-Object MainWindowTitle | Select-Object ProcessName,MainWindowTitle)
+        Record 'Visible windows at timeout' $windows
+        Record 'Registration at timeout' ([bool](Test-Path $reg))
+        $proc.Kill($true)
+        $proc.WaitForExit()
+    }
     $text = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
     if (-not $done) { throw "WinGet $($arguments[0]) timed out. $text" }
     if ($proc.ExitCode -ne 0) { throw "WinGet $($arguments[0]) exited with $($proc.ExitCode). $text" }
@@ -108,7 +125,7 @@ try {
         [void](Invoke-WinGet @('settings','--enable','LocalManifestFiles'))
         [void](Invoke-WinGet @('validate','--manifest',$Manifest))
         [void](Invoke-WinGet @('install','--manifest',$Manifest,'--scope','user','--silent',
-            '--disable-interactivity','--accept-source-agreements','--accept-package-agreements'))
+            '--disable-interactivity','--accept-source-agreements','--accept-package-agreements','--verbose-logs'))
         $listing = Invoke-WinGet @('list','--name','Airglow','--exact','--accept-source-agreements','--disable-interactivity')
         if ($listing -notmatch "Airglow[^\r\n]*$([regex]::Escape($Version))") { throw "WinGet did not detect Airglow. $listing" }
         Record 'WinGet local manifest install and detection' ($listing -split '[\r\n]+' | Where-Object { $_ -match 'Airglow' } | Select-Object -Last 1)
@@ -154,6 +171,14 @@ try {
     $report.error = $_.Exception.Message
     $logs = Join-Path $profileRoot 'logs'
     if (Test-Path -LiteralPath $logs) { Copy-Item -LiteralPath $logs -Destination $output.FullName -Recurse }
+    if ($Manifest) {
+        $diag = Join-Path $env:LOCALAPPDATA 'Packages/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe/LocalState/DiagOutputDir'
+        if (Test-Path -LiteralPath $diag) {
+            Get-ChildItem -LiteralPath $diag -Filter '*.log' | Copy-Item -Destination $output.FullName
+        }
+        Get-ChildItem -LiteralPath $env:TEMP,$env:LOCALAPPDATA -Filter '*velopack*.log' -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 4 | Copy-Item -Destination $output.FullName
+    }
     throw
 } finally {
     $report | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $output.FullName "$Scenario.json") -Encoding utf8
