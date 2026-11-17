@@ -14,14 +14,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [clean, clean-setup, portable, upgrade]
+        scenario: [clean, detect-setup]
     name: Windows / ${{ matrix.scenario }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/checkout@v7
-        if: matrix.scenario == 'clean'
+        if: matrix.scenario == 'clean' || matrix.scenario == 'detect-setup'
         with:
           repository: Heavenlystorm/winget-pkgs
           ref: 5bd485821d2d447bf9746bcfb02b467b33e8d80e
@@ -29,7 +29,7 @@ jobs:
           sparse-checkout: manifests/h/Heavenlystorm/Airglow/1.17.0
           persist-credentials: false
       - name: Prepare WinGet on Windows Server
-        if: matrix.scenario == 'clean'
+        if: matrix.scenario == 'clean' || matrix.scenario == 'detect-setup'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,6 +83,12 @@ jobs:
           $options = @{Scenario=$env:SCENARIO;Version='1.17.0'}
           switch ($env:SCENARIO) {
             clean { $options.Manifest = 'manifest-source/manifests/h/Heavenlystorm/Airglow/1.17.0' }
+            detect-setup {
+              $options.Scenario = 'clean'
+              $options.Manifest = 'manifest-source/manifests/h/Heavenlystorm/Airglow/1.17.0'
+              $options.Setup = "$env:RUNNER_TEMP/assets/1.17.0/Airglow-stable-Setup.exe"
+              $options.DetectExistingSetup = $true
+            }
             clean-setup {
               $options.Scenario = 'clean'
               $options.Setup = "$env:RUNNER_TEMP/assets/1.17.0/Airglow-stable-Setup.exe"

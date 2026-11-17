@@ -3,7 +3,7 @@
 param(
     [Parameter(Mandatory)][ValidateSet('clean','portable','upgrade')][string]$Scenario,
     [Parameter(Mandatory)][string]$Version,
-    [string]$Setup, [string]$Portable, [string]$Manifest,
+    [string]$Setup, [string]$Portable, [string]$Manifest, [switch]$DetectExistingSetup,
     [string]$PreviousSetup, [string]$PreviousVersion,
     [string]$ExpectedDesign = 'firefly',
     [string]$OutputDirectory = 'output/installer-smoke'
@@ -60,6 +60,15 @@ function Invoke-WinGet([string[]]$arguments) {
         Record 'WinGet timeout process tree' $related
         $windows = @(Get-Process | Where-Object MainWindowTitle | Select-Object ProcessName,MainWindowTitle)
         Record 'Visible windows at timeout' $windows
+        Add-Type -AssemblyName UIAutomationClient
+        $desktop = [Windows.Automation.AutomationElement]::RootElement
+        $topWindows = $desktop.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)
+        foreach ($window in $topWindows) {
+            if ($window.Current.ProcessId -notin $related.ProcessId -and $window.Current.ClassName -ne '#32770') { continue }
+            $items = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+            $labels = @($items | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -Unique -First 30)
+            Record 'WinGet dialog' @{ title=$window.Current.Name; class=$window.Current.ClassName; labels=$labels }
+        }
         Record 'Registration at timeout' ([bool](Test-Path $reg))
         $proc.Kill($true)
         $proc.WaitForExit()
@@ -124,11 +133,17 @@ try {
         Record 'WinGet version' (Invoke-WinGet @('--version')).Trim()
         [void](Invoke-WinGet @('settings','--enable','LocalManifestFiles'))
         [void](Invoke-WinGet @('validate','--manifest',$Manifest))
-        [void](Invoke-WinGet @('install','--manifest',$Manifest,'--scope','user','--silent',
-            '--disable-interactivity','--accept-source-agreements','--accept-package-agreements','--verbose-logs'))
+        if ($DetectExistingSetup) {
+            Invoke-Setup $Setup @('--silent')
+            Record 'Installation route' 'Direct silent Setup.exe'
+        } else {
+            [void](Invoke-WinGet @('install','--manifest',$Manifest,'--scope','user','--silent',
+                '--disable-interactivity','--accept-source-agreements','--accept-package-agreements','--verbose-logs'))
+            Record 'Installation route' 'WinGet local manifest'
+        }
         $listing = Invoke-WinGet @('list','--name','Airglow','--exact','--accept-source-agreements','--disable-interactivity')
         if ($listing -notmatch "Airglow[^\r\n]*$([regex]::Escape($Version))") { throw "WinGet did not detect Airglow. $listing" }
-        Record 'WinGet local manifest install and detection' ($listing -split '[\r\n]+' | Where-Object { $_ -match 'Airglow' } | Select-Object -Last 1)
+        Record 'WinGet registration detection' ($listing -split '[\r\n]+' | Where-Object { $_ -match 'Airglow' } | Select-Object -Last 1)
     } elseif ($Scenario -eq 'portable') {
         $pkg = Join-Path $env:RUNNER_TEMP 'Airglow portable smoke'
         Expand-Archive -LiteralPath $Portable -DestinationPath $pkg
