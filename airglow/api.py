@@ -469,11 +469,22 @@ def route(server, method, path, body, query=None):
             ctrl.engine.identify(key)
             return {"ok": True}
         with ctrl._lock:
+            # Lighting edits one override. Merge it with the latest wiring settings under the same lock as Undo.
+            override_only = "override" in body and set(body) <= {"override", "expected_override"}
+            previous = None
+            if override_only:
+                current = store.zones().get(key)
+                if not current or not dev.online:
+                    raise ApiError(409, "The lighting zone is offline. Reconnect it and try again.")
+                previous = current.get("override")
+                if "expected_override" in body and previous != body["expected_override"]:
+                    raise ApiError(409, "This zone has changed since that edit. Its current lighting has been kept.")
+                body = {**current, "override": body["override"]}
             candidate = validate_zone(body, zone.max_leds)
             ctrl.engine.validate_zone_changes({key: candidate})
             cfg = store.set_zone(key, candidate, zone.max_leds)
             ctrl.engine.invalidate(key)
-        return {"config": cfg}
+        return {"config": cfg, "previous_override": previous} if override_only else {"config": cfg}
     if path == "/api/setup/probe":
         key = str(body.get("zone") or "")
         dev, zone = _find_zone(ctrl, key)
@@ -544,6 +555,8 @@ def route(server, method, path, body, query=None):
             if set(clean) - {"design", "appearance", "looks", "temp_unit", "energy_price"}:
                 ctrl.apply()                                 # display-only edits never issue hardware work
         return _settings_view(store, server.updater)
+    if path == "/api/quick-actions":
+        return store.update_quick_action(body.get("operation"), body.get("kind"), body.get("id"))
     if path == "/api/settings/reset":
         store.reset_settings()
         server.hooks.get("design_changed", lambda d: None)(store.settings()["design"])

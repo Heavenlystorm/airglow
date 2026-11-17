@@ -9,47 +9,6 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
 const flush = () => new Promise(setImmediate);
 const draftKey = "airglow.studio.unsaved.v1";
 
-async function themeFocusHarness() {
-  const timers = [], document = { activeElement: null };
-  const control = id => ({ dataset: { designCard: id }, addEventListener() {},
-    focus() { document.activeElement = this; } });
-  const graphite = control("graphite"), paper = control("paper"), done = control(null);
-  const sheet = {
-    querySelectorAll: () => [graphite, paper],
-    querySelector: selector => selector.includes("aria-checked") ? paper : graphite,
-  };
-  const context = vm.createContext({ document, setTimeout(fn) { timers.push(fn); } });
-  const source = readFileSync(new URL("../web/js/settings.js", import.meta.url), "utf8");
-  const imports = new Map([...source.matchAll(/import\s+\{([^}]+)\}\s+from\s+["']([^"']+)["']/g)]
-    .map(m => [m[2], m[1].split(",").map(name => name.trim())]));
-  const values = {
-    $: () => sheet, esc: String, S: {},
-    openSheet: () => { graphite.focus(); return sheet; },
-    currentDesign: () => "paper",
-    DESIGNS: [{ id: "graphite", name: "Graphite" }, { id: "paper", name: "Paper" }],
-  };
-  const module = new vm.SourceTextModule(source + "\nexport { designSheet };", { context });
-  await module.link(specifier => new vm.SyntheticModule(imports.get(specifier), function () {
-    for (const name of imports.get(specifier)) this.setExport(name, values[name] ?? (() => {}));
-  }, { context }));
-  await module.evaluate();
-  return { show: module.namespace.designSheet, document, paper, done, timers };
-}
-
-test("theme chooser focuses the selected design when the modal opens", async () => {
-  const h = await themeFocusHarness();
-  h.show();
-  assert.equal(h.document.activeElement, h.paper);
-});
-
-test("theme chooser cannot steal focus after the user moves to Done", async () => {
-  const h = await themeFocusHarness();
-  h.show();
-  h.done.focus();
-  for (const callback of h.timers) callback();
-  assert.equal(h.document.activeElement, h.done);
-});
-
 async function harness({ captureScenePolls = false } = {}) {
   const elements = new Map(), storage = new Map(), requests = [], scenePolls = [], timers = new Map();
   let timer = 0, releaseStudio;
@@ -491,15 +450,25 @@ test("the fan graph shows commanded live duty while a different curve draft is u
   const h = await fansHarness();
   Object.assign(h.core.S.state.fans, { temp: 50, duty: 37, target: 58 });
   h.fans.renderEditor();
-  assert.match(h.node("#editor").innerHTML, /Now 50°C, 37%/);
+  assert.equal(h.node("#curve-live").textContent, "50°C · 37%");
+  assert.match(h.node("#editor").innerHTML, /class="now-dot"/);
+  assert.doesNotMatch(h.node("#editor").innerHTML, /class="now-label"/);
   h.fans.movePoint(0, 30, 70);
-  assert.match(h.node("#editor").innerHTML, /Now 50°C, 37%/);
+  h.fans.renderEditor();
+  assert.equal(h.node("#curve-live").textContent, "50°C · 37%");
   h.core.S.state.fans.duty = 42;
   h.fans.renderEditor();
-  assert.match(h.node("#editor").innerHTML, /Now 50°C, 42%/, "ramping duty must repaint even at a steady temperature");
+  assert.equal(h.node("#curve-live").textContent, "50°C · 42%", "ramping duty must repaint even at a steady temperature");
+  h.core.S.state.temp_unit = "F";
+  h.fans.renderEditor();
+  assert.equal(h.node("#curve-live").textContent, "122°F · 42%");
   h.core.S.state.fans.duty = null;
   h.fans.renderEditor();
-  assert.ok(!h.node("#editor").innerHTML.includes("Now 50°C"), "missing live duty must not be guessed from a draft");
+  assert.equal(h.node("#curve-live").textContent, "Unavailable");
+  assert.doesNotMatch(h.node("#editor").innerHTML, /class="now-dot"/);
+  h.core.S.state.fans.curve = "performance";
+  h.fans.renderEditor();
+  assert.equal(h.node("#curve-live").textContent, "Different curve active");
 });
 
 test("Add curve point creates a keyboard-editable draft without applying it", async () => {

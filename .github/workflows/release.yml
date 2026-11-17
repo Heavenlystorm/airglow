@@ -50,7 +50,6 @@ jobs:
       contents: write
     env:
       # whether the optional secrets exist (a step's "if" can't read secrets directly)
-      HAS_WINGET: ${{ secrets.WINGET_TOKEN != '' }}
       HAS_SCOOP: ${{ secrets.SCOOP_BUCKET_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v7
@@ -100,18 +99,6 @@ jobs:
             --releaseName "Airglow ${{ steps.v.outputs.version }}" --publish --merge @pre
           if ($LASTEXITCODE -ne 0) { throw "vpk upload failed" }
 
-      # winget and Scoop get stable releases only. Each step waits for its secret: see docs/RELEASING.md.
-      # winget is allowed to fail on its own: a package that isn't in winget-pkgs yet, or a token GitHub no longer
-      # accepts, must not fail the release run or skip the Scoop update after it.
-      - name: winget
-        if: steps.v.outputs.channel == 'stable' && env.HAS_WINGET == 'true'
-        continue-on-error: true
-        uses: vedantmgoyal9/winget-releaser@v2
-        with:
-          identifier: Heavenlystorm.Airglow
-          installers-regex: '-Setup\.exe$'
-          token: ${{ secrets.WINGET_TOKEN }}
-
       - name: Scoop bucket
         if: steps.v.outputs.channel == 'stable' && env.HAS_SCOOP == 'true'
         shell: bash
@@ -130,3 +117,33 @@ jobs:
           git add bucket/airglow.json
           git commit -m "airglow $VERSION"
           git push
+
+  winget:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: windows-latest
+    continue-on-error: true
+    env:
+      HAS_WINGET: ${{ secrets.WINGET_TOKEN != '' }}
+    steps:
+      - name: Check initial catalog submission
+        id: listing
+        if: env.HAS_WINGET == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $uri = 'https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/h/Heavenlystorm/Airglow'
+          $response = Invoke-WebRequest -Uri $uri -Headers @{Authorization="Bearer $env:GH_TOKEN"} -SkipHttpErrorCheck
+          if ($response.StatusCode -eq 404) {
+            Write-Output '::notice::First WinGet submission is awaiting review. After it merges, rerun only this job to submit this published version.'
+          } elseif ($response.StatusCode -eq 200) {
+            'available=true' >> $env:GITHUB_OUTPUT
+          } else { throw "WinGet repository returned HTTP $($response.StatusCode)" }
+      - name: Submit the published installer
+        if: steps.listing.outputs.available == 'true'
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: Heavenlystorm.Airglow
+          installers-regex: '-Setup\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}

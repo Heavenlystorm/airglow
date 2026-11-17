@@ -12,9 +12,11 @@ export function setHTML(el, html) {
 }
 
 // ------------------------------------------------------------ api
+let acknowledgedQuickActions = null;
 // Every call gives up instead of waiting for ever: a wedged server used to leave the window on old readings with no
 // way back until Airglow was restarted.
 async function request(method, path, body, timeout = 8000) {
+  const quickActionsAtStart = acknowledgedQuickActions;
   const opts = { method, headers: {} };
   if (method === "POST") {
     opts.headers = { "Content-Type": "application/json", "X-Airglow": "1" };
@@ -27,6 +29,11 @@ async function request(method, path, body, timeout = 8000) {
     const res = await fetch(path, opts);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    // A full settings response can arrive after a newer pin/recent operation has settled.
+    if (path === "/api/quick-actions") acknowledgedQuickActions = data;
+    else if (data?.settings?.quick_actions && quickActionsAtStart !== acknowledgedQuickActions) {
+      data.settings.quick_actions = acknowledgedQuickActions;
+    }
     return data;
   } catch (e) {
     if (e.name === "AbortError") throw new Error("Airglow didn't answer in time");
@@ -69,8 +76,14 @@ export function settleSceneMutation(status) {
   if (status.desired_revision > current.sceneRevision) { mutations.delete("lighting"); mutationChanged(); return; }
   current.status = status.status === "pending" ? "starting" : status.status === "failed" ? "failed" : "saved";
   current.error = status.error || "";
+  if (current.status === "failed") delete current.userAction;
   if (current.status === "saved" && current.profileId) {
     emit("profile:applied", current.profileId); delete current.profileId;
+  }
+  if (current.userAction && current.status === "saved") {
+    const { kind, id } = current.userAction;
+    delete current.userAction;
+    if (status.status === "ready" && !status.overridden) emit(kind === "profile" ? "profile:used" : "effect:applied", id);
   }
   mutationChanged();
 }
@@ -128,9 +141,13 @@ export function post(path, body, timeout) {
       const result = await request("POST", path, snapshot, timeout);
       const applied = /^\/api\/presets\/([^/]+)\/apply$/.exec(path);
       const status = result.scene_status;
+      const profileId = applied && result.ok === true ? decodeURIComponent(applied[1]) : null;
+      const effectId = path === "/api/studio/use" ? snapshot.fx_id : path === "/api/scene" ? snapshot.effect : null;
+      const userAction = profileId ? { kind: "profile", id: profileId } :
+        effectId ? { kind: "effect", id: effectId } : null;
       if (status && mutations.get(key)?.id === id) {
         Object.assign(mutations.get(key), { sceneRevision: status.desired_revision, sceneSession: status.session,
-          profileId: applied && result.ok === true ? decodeURIComponent(applied[1]) : null });
+          profileId, userAction });
         settleSceneMutation(status);
       } else {
         update("saved");

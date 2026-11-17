@@ -86,6 +86,18 @@
 .qs-option[aria-selected="true"] .qs-type { color: var(--brass-hi); }
 .qs-option small { color: var(--ink-2); font-size: 12px; }
 .qs-status { color: var(--ink-2); overflow-wrap: anywhere; }
+.qs-group-title { padding: 8px 12px 2px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.qs-manage { align-self: start; justify-self: start; min-height: 32px; }
+.favorite-button { display: inline-grid; place-items: center; min-width: 28px; min-height: 28px; padding: 4px; border-radius: 7px; color: var(--ink-2); background: var(--panel); border: 1px solid var(--line-soft); cursor: pointer; }
+.favorite-button svg { width: 15px; height: 15px; pointer-events: none; }
+.favorite-button[aria-pressed="true"] { color: var(--brass-hi); --favorite-fill: currentColor; }
+.favorite-button:hover { color: var(--brass-hi); background: var(--raised); }
+.fx-choice { position: relative; display: grid; min-width: 0; }
+.fx-choice > .fx { width: 100%; height: 100%; }
+.fx-choice > .favorite-button { position: absolute; top: 6px; right: 6px; opacity: 0; }
+.fx-choice:hover > .favorite-button, .fx-choice:focus-within > .favorite-button, .fx-choice > [aria-pressed="true"] { opacity: 1; }
+@media (hover: none) { .fx-choice > .favorite-button { opacity: 1; } }
+.preset-choice { display: inline-flex; gap: 2px; align-items: center; }
 .qs-reset { justify-self: start; align-self: start; min-height: 32px; }
 @media (min-width: 961px) and (max-width: 1280px) {
   .quick-launch kbd { display: none; }

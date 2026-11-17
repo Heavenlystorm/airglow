@@ -190,7 +190,7 @@ async function harness(file, exports) {
     if (!elements.has(id)) elements.set(id, {
       events: new Map(), open: true, dataset: {}, classList: { toggle() {}, add() {}, remove() {} },
       addEventListener(type, fn) { this.events.set(type, fn); },
-      setAttribute() {}, removeAttribute() {}, querySelectorAll() { return []; }, focus() {},
+      setAttribute() {}, removeAttribute() {}, querySelector() { return null; }, querySelectorAll() { return []; }, focus() {},
       removeEventListener(type, fn) { if (this.events.get(type) === fn) this.events.delete(type); },
     });
     return elements.get(id);

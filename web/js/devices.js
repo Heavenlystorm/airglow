@@ -8,6 +8,8 @@ let frames = {};
 
 const ORDERS = ["RGB", "RBG", "BGR", "BRG", "GBR", "GRB"];
 const zoneSaves = new Map();
+const expandedZones = new Set();
+let deferredDetail = false;
 
 function devices() {
   const byId = new Map();
@@ -31,24 +33,35 @@ function renderList() {
       <i class="dot ${d.online ? "on" : "off"}"></i><span>${esc(d.name)}${d.experimental ? ` <span class="tag">Experimental</span>` : ""}</span><span class="sub">${esc(sub)}</span></button>`;
   };
   const o = S.state?.openrgb || {};
-  setHTML($("#dev-list"), `
+  const focused = document.activeElement;
+  const list = $("#dev-list");
+  setHTML(list, `
     <button class="btn primary dev-setup" data-open-setup${S.state?.setup_pending ? `="start">Set up ${S.state.setup_pending} new light${S.state.setup_pending === 1 ? "" : "s"}` : ">Set up lights"}</button>
     ${native.length ? `<h2>Connected directly</h2>${native.map(item).join("")}` : ""}
     <h2>Through OpenRGB</h2>${orgb.map(item).join("")}
     <button class="dev-item" role="option" data-dev="openrgb" aria-selected="${current === "openrgb"}">
       <i class="dot ${o.status?.startsWith("Connected") ? "on" : ""}"></i><span>${orgb.length ? "OpenRGB connection" : "Add more devices"}</span><span class="sub">${esc(o.status || "")}</span></button>
     ${dyn.length ? `<h2>Through Windows Dynamic Lighting</h2>${dyn.map(item).join("")}` : ""}`);
+  if (focused?.dataset?.dev && !focused.isConnected) {
+    (list.querySelector(`[data-dev="${CSS.escape(focused.dataset.dev)}"]`) || list.querySelector('[aria-selected="true"]'))?.focus({ preventScroll: true });
+  }
 }
 
 function zoneCard(z) {
   const c = zoneSaves.get(z.key)?.draft || z.config, L = c.layout, max = z.zone.max_leds;
   const total = L.shape === "fans" ? L.fans * L.leds_per_fan : L.leds;
-  const grid = z.zone.matrix;
+  const grid = z.zone.matrix, expanded = expandedZones.has(z.key);
+  const shape = L.shape === "fans" ? `${L.fans} fan${L.fans === 1 ? "" : "s"}` : L.shape === "matrix" ? `${L.rows} × ${L.cols} grid` : "Strip";
+  const equipment = !c.enabled && z.zone.default_leds === 0 ? "Nothing detected" : `${shape} · ${total} LED${total === 1 ? "" : "s"}`;
+  const id = `wiring-${esc(z.key)}`;
   return `<div class="zone-card${c.enabled ? "" : " off"}" id="zc-${esc(z.key)}" data-key="${esc(z.key)}">
-    <div class="zname"><span class="switch" title="${c.enabled ? "Switch this zone off" : "Switch this zone on"}"><input type="checkbox" data-f="enabled"${c.enabled ? " checked" : ""} aria-label="Zone on"><span></span></span>
-      <input data-f="name" value="${esc(c.name)}" maxlength="40" aria-label="Zone name" spellcheck="false"></div>
-    <div class="btn-row">${z.zone.resizable ? `<button class="btn" data-open-setup data-zone="${esc(z.key)}">What's plugged in?</button>` : ""}<button class="btn" data-identify>Identify</button></div>
+    <div class="zone-summary"><label class="switch"><input type="checkbox" data-f="enabled"${c.enabled ? " checked" : ""} aria-label="${esc(c.name)} on"><span></span></label>
+      <div><strong>${esc(c.name)}</strong><span>${esc(equipment)} · ${c.enabled ? "On" : "Off"}</span></div></div>
+    <button type="button" class="btn zone-configure" data-configure aria-expanded="${expanded}" aria-controls="${id}" aria-label="Configure ${esc(c.name)}">Configure <svg aria-hidden="true"><use href="#i-down"/></svg></button>
+    <div class="zstrip" aria-hidden="true" data-strip="${esc(z.key)}">${Array.from({ length: Math.min(total, 60) }, () => "<i></i>").join("")}</div>
+    <div class="zone-wiring" id="${id}"${expanded ? "" : " hidden"}>
     <div class="zfields">
+      <label>Name<input class="text" data-f="name" value="${esc(c.name)}" maxlength="40" aria-label="Zone name" spellcheck="false"></label>
       <label>Shape<select class="select" data-f="shape" aria-label="Shape"><option value="fans"${L.shape === "fans" ? " selected" : ""}>Fans</option><option value="strip"${L.shape === "strip" ? " selected" : ""}>Strip</option>${grid ? `<option value="matrix"${L.shape === "matrix" ? " selected" : ""}>Grid</option>` : ""}</select></label>
       ${L.shape === "fans"
         ? `<label>Fans<input class="text num" type="number" min="1" max="12" data-f="fans" aria-label="Fans" value="${L.fans}"></label>
@@ -60,7 +73,8 @@ function zoneCard(z) {
       <label>Direction<select class="select" data-f="reverse" aria-label="Direction"><option value="0"${L.reverse ? "" : " selected"}>Normal</option><option value="1"${L.reverse ? " selected" : ""}>Reversed</option></select></label>
       <span class="hint" style="margin-left:auto">${!c.enabled && z.zone.default_leds === 0 ? "Nothing detected on this channel" : `${total} of up to ${max} LEDs`}</span>
     </div>
-    <div class="zstrip" data-strip="${esc(z.key)}">${Array.from({ length: Math.min(total, 60) }, () => "<i></i>").join("")}</div>
+    <div class="btn-row">${z.zone.resizable ? `<button class="btn" data-open-setup data-zone="${esc(z.key)}">What's plugged in?</button>` : ""}<button class="btn" data-identify${z.device.online ? "" : " disabled"}>Identify</button></div>
+    </div>
   </div>`;
 }
 
@@ -76,7 +90,7 @@ function renderDetail() {
         <li>Go to the <b>SDK Server</b> tab and click <b>Start Server</b>. In Settings, turn on <b>Start server</b> and <b>Start at login</b> so it's always ready.</li>
         <li>Airglow connects within about 10 seconds. New devices start with their lighting on, except keyboards, mice and headsets, which you can switch on here.</li>
       </ol><p class="hint">Devices Airglow already drives directly (the NZXT hub and the ASUS board) are left out of OpenRGB, so two programs never fight over them.</p></div>`);
-    $("#orgb-on").addEventListener("change", (e) => post("/api/settings", { openrgb_enabled: e.target.checked }).then(() => { toast(e.target.checked ? "OpenRGB bridge on" : "OpenRGB bridge off"); emit("refresh"); }).catch(fail));
+    $("#orgb-on").onchange = (e) => post("/api/settings", { openrgb_enabled: e.target.checked }).then(() => { toast(e.target.checked ? "OpenRGB bridge on" : "OpenRGB bridge off"); emit("refresh"); }).catch(fail);
     return;
   }
   const d = devices().find((x) => x.id === current);
@@ -85,13 +99,34 @@ function renderDetail() {
     return;
   }
   const how = { native: "Direct USB connection", openrgb: "Through OpenRGB", dynamic: "Through Windows Dynamic Lighting, lit while Airglow's window is in front" }[d.kind] || "";
+  const active = document.activeElement;
+  const focusedZone = active?.closest?.("[data-key]")?.dataset.key;
+  const activeControl = focusedZone && Object.keys(active.dataset).find(key => ["f", "configure", "identify", "openSetup"].includes(key));
+  // Replacing a dirty native input fires change on Chromium and silently commits a partial name/count.
+  // Keep this field alive until the user's own blur. Discovery can still update the device list.
+  if (!pendingScroll && activeControl === "f" && ["text", "number"].includes(active.type)
+      && active.value !== active.defaultValue && d.zones.some(zone => zone.key === focusedZone)) {
+    deferredDetail = true;
+    return;
+  }
+  deferredDetail = false;
   setHTML(box, `<div class="dev-head"><div><h1>${esc(d.name)}</h1><p class="meta">${esc(d.vendor)}, ${esc(d.type)}. ${how}.${d.online ? "" : ` <span style="color:var(--warm)">${esc(d.error || "Not connected")}</span>`}</p></div></div>
     ${d.experimental ? `<p class="hint warn"><b>Experimental support.</b> This controller follows the same protocol as ones Airglow is tested with, but nobody has confirmed it with Airglow yet.${d.note ? ` ${esc(d.note)}` : ""} If something looks wrong, save a diagnostics report (Settings, About) and open an issue.</p>` : ""}
-    <p class="hint">Set how many LEDs each zone has and their shape, so effects line up. If you're not sure, press Identify: the first LED blinks green, then a white dot walks through every LED in order.</p>
+    <p class="hint">Choose Configure to rename a zone, adjust its wiring or identify its lights.</p>
     ${paramsBlock(d)}
     ${d.zones.map(zoneCard).join("")}`);
   wireParams(d);
-  if (pendingScroll) { document.getElementById(`zc-${pendingScroll}`)?.scrollIntoView({ block: "center" }); pendingScroll = null; }
+  if (pendingScroll) {
+    const card = document.getElementById(`zc-${pendingScroll}`);
+    card?.scrollIntoView({ block: "center" });
+    card?.querySelector("[data-configure]").focus({ preventScroll: true });
+    pendingScroll = null;
+  } else if (activeControl && !active.isConnected) {
+    const card = document.getElementById(`zc-${focusedZone}`);
+    const selector = activeControl === "f" ? `[data-f="${CSS.escape(active.dataset.f)}"]` : "[data-" + (activeControl === "openSetup" ? "open-setup" : activeControl) + "]";
+    const field = card?.querySelector(selector);
+    (field || card?.querySelector("[data-configure]"))?.focus({ preventScroll: true });
+  }
 }
 
 let pendingScroll = null;
@@ -106,7 +141,8 @@ function paramsBlock(d) {
 let paramTimer = null;
 function wireParams(d) {
   const root = $("#dev-detail .dev-params");
-  if (!root) return;
+  if (!root || root.dataset.wired) return;
+  root.dataset.wired = "true";
   wireFields(root, { params: d.parameters }, d.params || {}, (params, live) => {
     clearTimeout(paramTimer);
     paramTimer = setTimeout(() => post(`/api/devices/${encodeURIComponent(d.id)}/params`, params)
@@ -167,7 +203,7 @@ export function renderDevices() {
 
 export function showZone(key) {
   const z = S.zones?.zones.find((x) => x.key === key);
-  if (z) { current = z.device.id; pendingScroll = key; }
+  if (z) { current = z.device.id; expandedZones.add(key); pendingScroll = key; }
 }
 
 export function initDevices() {
@@ -176,6 +212,9 @@ export function initDevices() {
     if (b) { current = b.dataset.dev; renderList(); renderDetail(); paintStrips(); }
   });
   const box = $("#dev-detail");
+  box.addEventListener("focusout", () => {
+    if (deferredDetail) queueMicrotask(() => { if (deferredDetail) { renderDetail(); paintStrips(); } });
+  });
   box.addEventListener("change", (e) => {
     const card = e.target.closest("[data-key]"), f = e.target.dataset.f;
     if (!card || !f) return;
@@ -199,6 +238,14 @@ export function initDevices() {
   box.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.matches("input[data-f=name]")) e.target.blur(); });
   box.addEventListener("click", (e) => {
     const card = e.target.closest("[data-key]");
+    const configure = e.target.closest("[data-configure]");
+    if (card && configure) {
+      const key = card.dataset.key;
+      if (expandedZones.has(key)) expandedZones.delete(key);
+      else expandedZones.add(key);
+      card.querySelector(".zone-wiring").hidden = !expandedZones.has(key);
+      configure.setAttribute("aria-expanded", String(expandedZones.has(key)));
+    }
     if (card && e.target.closest("[data-identify]")) {
       post(`/api/zones/${encodeURIComponent(card.dataset.key)}/identify`).then(() => toast("Watch the zone: the first LED blinks green, then a white dot walks through every LED.")).catch(fail);
     }

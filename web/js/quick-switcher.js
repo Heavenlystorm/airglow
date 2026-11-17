@@ -1,6 +1,7 @@
 import { $, $$, S, cap, emit, esc, on, post, setHTML, toast } from "./core.js";
 import { activateOverviewWorkspace } from "./overview.js";
 import { closeSheet, openSheet } from "./sheet.js";
+import { groupedActions, initQuickPreferences, isFavorite, setFavorite } from "./quick-preferences.js";
 
 const categories = [
   { kind: "all", label: "All" },
@@ -84,10 +85,12 @@ async function activate(item) {
 }
 
 export function initQuickSwitcher(sections, catalogState) {
+  initQuickPreferences();
   let current = null, busy = "";
   const active = () => current?.root.isConnected && $("#sheet").open;
   const refresh = () => { if (active()) current.render(); };
   on("state", refresh);
+  on("quick:changed", refresh);
 
   function open() {
     if (active()) { current.input.focus(); return; }
@@ -107,12 +110,14 @@ export function initQuickSwitcher(sections, catalogState) {
         <select class="select">${categories.map(({ kind, label }) => `<option value="${kind}">${kind === "all" ? "All actions" : label}</option>`).join("")}</select>
       </label>
       <div id="qs-results" class="qs-results" role="listbox" aria-label="Matching actions"></div>
+      <button class="text-link qs-manage" type="button" aria-pressed="false">Edit favorites</button>
       <p class="qs-status" role="status" hidden></p>
       <button class="text-link qs-reset" type="button" hidden>Show all actions</button>
     </div>`);
     const root = $(".quick-switcher", sheet), input = $("#qs-search", root), list = $("#qs-results", root), status = $(".qs-status", root);
     const filters = $(".qs-filters", root), mobileFilter = $(".qs-mobile-filter select", root), reset = $(".qs-reset", root);
-    let items = [], selected = 0, message = "", kind = "all";
+    const manage = $(".qs-manage", root);
+    let items = [], selected = 0, message = "", kind = "all", editingFavorites = false;
     const session = { root, input, render };
     current = session;
 
@@ -138,12 +143,26 @@ export function initQuickSwitcher(sections, catalogState) {
       const state = catalogState();
       const previousItem = keepSelection ? items[selected] : null;
       const catalog = commands(sections, state === "ready");
-      items = search(kind === "all" ? catalog : catalog.filter(item => item.kind === kind), input.value);
+      const matches = search(catalog.filter(item => (kind === "all" || item.kind === kind) &&
+        (!editingFavorites || item.kind === "profile" || item.kind === "effect")), input.value);
+      const groups = input.value.trim() ? [["", matches]] : groupedActions(matches).filter(([, entries]) => entries.length);
+      items = groups.flatMap(([, entries]) => entries);
       if (previousItem) selected = items.findIndex(item => item.kind === previousItem.kind && item.id === previousItem.id);
       else if (!keepSelection) selected = 0;
-      const body = items.map((item, index) => `<div id="qs-option-${index}" class="qs-option" role="option" data-index="${index}" aria-disabled="${!!busy}">
+      let index = 0;
+      function option(item) {
+        const i = index++;
+        const action = editingFavorites ? isFavorite(item.kind, item.id) ? "Unpin favorite" : "Pin favorite" :
+          item.kind === "section" ? "Open section" : item.action;
+        return `<div id="qs-option-${i}" class="qs-option" role="option" data-index="${i}" aria-disabled="${!!busy}">
         <svg class="qs-type" aria-hidden="true"><use href="#i-${icons[item.kind]}"/></svg>
-        <span>${esc(item.name)}</span><small>${esc(item.kind === "section" ? "Open section" : item.action)}${item.detail ? ` · ${esc(item.detail)}` : ""}</small></div>`).join("");
+        <span>${esc(item.name)}</span><small>${esc(action)}${item.detail ? ` · ${esc(item.detail)}` : ""}</small></div>`;
+      }
+      const body = groups.map(([label, entries]) => {
+        const rows = entries.map(option).join("");
+        if (!label || (label === "All actions" && groups.length === 1)) return rows;
+        return `<div role="group" aria-label="${label}"><div class="qs-group-title" aria-hidden="true">${label}</div>${rows}</div>`;
+      }).join("");
       setHTML(list, body);
       list.hidden = !items.length;
       input.setAttribute("aria-expanded", String(!!items.length));
@@ -160,6 +179,23 @@ export function initQuickSwitcher(sections, catalogState) {
     async function choose(index) {
       const item = items[index];
       if (!item || busy) return;
+      if (editingFavorites) {
+        selected = index;
+        busy = "Saving favorites…";
+        message = "";
+        render();
+        try { await setFavorite(item.kind, item.id, !isFavorite(item.kind, item.id)); }
+        catch (error) {
+          message = `Could not save favorite: ${error.message}`;
+          if (current !== session || !active()) toast(message, true);
+        }
+        finally {
+          busy = "";
+          if (current === session && active()) { render(); input.focus(); }
+          else refresh();
+        }
+        return;
+      }
       if (!commands(sections, catalogState() === "ready").some(command => command.kind === item.kind && command.id === item.id)) {
         message = "This action is no longer available. Choose another result.";
         render();
@@ -195,6 +231,19 @@ export function initQuickSwitcher(sections, catalogState) {
       list.scrollTop = 0;
     }
     input.addEventListener("input", () => refilter(kind));
+    manage.addEventListener("click", () => {
+      if (busy) return;
+      editingFavorites = !editingFavorites;
+      manage.setAttribute("aria-pressed", String(editingFavorites));
+      manage.textContent = editingFavorites ? "Done editing favorites" : "Edit favorites";
+      list.setAttribute("aria-label", editingFavorites ? "Choose an item to pin or unpin" : "Matching actions");
+      for (const filter of [...filters.querySelectorAll("button"), ...mobileFilter.options]) {
+        const value = filter.dataset.qsKind || filter.value;
+        filter.hidden = editingFavorites && (value === "section" || value === "workspace");
+      }
+      refilter(kind === "workspace" || kind === "section" ? "all" : kind);
+      input.focus();
+    });
     filters.addEventListener("click", event => {
       const button = event.target.closest("[data-qs-kind]");
       if (!button) return;

@@ -47,8 +47,9 @@ function paintCommunity() {
   const items = g.effects.filter((e) => (!H.tag || (H.tag === "music" ? e.audio : e.tags.includes(H.tag)))
     && (!q || `${e.name} ${e.author} ${e.description} ${e.tags.join(" ")}`.toLowerCase().includes(q)));
   setHTML(box(), `<div class="st-home"><div class="page-head"><div><h1>Community effects</h1>
-    <p class="lede">${g.effects.length} shared scenes. Hover, focus or press Play preview to see one on your rig.</p></div>
+    <p class="lede">${g.effects.length} shared scenes. Preview an effect on screen before installing it.</p></div>
     <div class="btn-row"><button class="btn" data-st="learn">Learn</button><a class="btn" href="#studio">Back to the Studio</a></div></div>
+    <p id="st-motion-note" class="hint" hidden></p>
     <div class="st-filter"><input class="text" id="st-search" placeholder="Search names, authors, tags" value="${esc(H.search)}" spellcheck="false">
       <div class="chips"><button class="chip-btn" data-tag="" aria-pressed="${!H.tag}">All</button><button class="chip-btn" data-tag="music" aria-pressed="${H.tag === "music"}">Music</button>
       ${tags.map((t) => `<button class="chip-btn" data-tag="${esc(t)}" aria-pressed="${H.tag === t}">${esc(t)}</button>`).join("")}</div></div>

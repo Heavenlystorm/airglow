@@ -4,6 +4,7 @@
 
 import { $, $$, S, curveLabel, effectName, emit, esc, fail, get, on, post, sceneSwatch, toast } from "./core.js";
 import { sentence } from "./automations.js";
+import { favoriteButton } from "./quick-preferences.js";
 import { closeSheet, openSheet } from "./sheet.js";
 import { paintMini } from "./stage.js";
 
@@ -120,7 +121,7 @@ export function editProfilesSheet(done) {
         </div>
         <span class="hint">${esc(lookLine(p))}</span>
       </div>
-      <div class="pf-btns"><button type="button" class="btn" data-share="${i}">Share</button>
+      <div class="pf-btns">${favoriteButton("profile", p.id, p.name)}<button type="button" class="btn" data-share="${i}">Share</button>
         <button type="button" class="icon-btn" data-del="${i}" title="Delete ${esc(p.name)}"><svg><use href="#i-trash"/></svg></button></div>
     </div>`;
   const collect = () => $$("#ep-rows [data-row]").forEach((r) => {

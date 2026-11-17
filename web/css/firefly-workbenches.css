@@ -1,0 +1,51 @@
+.effect-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.effect-scope label { font-weight: 600; }
+.effect-scope .zone-pick { width: auto; max-width: min(100%, 24ch); }
+.effect-scope .stage-hint {
+  position: static;
+  flex: 1 1 150px;
+  color: var(--ink-3);
+  line-height: 1.4;
+  text-align: right;
+}
+.lighting-saved {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.lighting-saved > span::before {
+  content: "✓";
+  margin-right: 7px;
+  color: var(--ok, var(--ink));
+}
+.curve-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 26px;
+  align-items: center;
+  padding: 8px 5px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.curve-legend > span { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.curve-legend strong { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.curve-legend i { width: 9px; height: 9px; display: inline-block; border-radius: 50%; }
+.curve-live-key { background: var(--ink); }
+.curve-point-key { border: 2px solid var(--brass); }
+.curve-commit { margin-left: auto; }
+.st-home #st-motion-note { color: var(--ink-2); margin: 0 0 14px; }
+@container (max-width: 520px) {
+  .effect-scope .stage-hint { flex-basis: 100%; text-align: left; }
+}

@@ -267,6 +267,7 @@ function shell(t) {
 function sizeTile(el, t) {
   el.style.gridColumn = `span ${t.w}`;
   el.style.gridRow = `span ${t.h}`;
+  el.style.setProperty("--tile-rows", t.h);
   el.dataset.w = t.w; el.dataset.h = t.h;
   el.dataset.emphasis = t.appearance?.emphasis || "standard";
   const accent = t.appearance?.accent;

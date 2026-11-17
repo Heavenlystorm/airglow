@@ -702,6 +702,12 @@ function renderHome(pickStart) {
   const mine = effects.filter((e) => e.origin === "mine"), community = effects.filter((e) => e.origin === "community");
   const using = S.state?.scene?.effect;
   const rig = litZones().length;
+  const savedEffects = `<section class="st-sec" id="st-saved"><div class="st-library-head"><h2 class="st-h">Your effects</h2>${mine.length ? '<button class="btn quiet" data-st="blend-effects">Blend saved effects</button>' : ""}</div>
+      ${mine.length ? `<div class="st-grid">${mine.map((e) => cardHTML(e, `
+        <button class="btn${using === e.fx_id ? " on" : ""}" data-use="${esc(e.fx_id)}">${using === e.fx_id ? "On your lights" : "Use"}</button>
+        <button class="btn" data-edit="${esc(e.fx_id)}">Edit</button>
+        <button class="icon-btn" data-more="${esc(e.fx_id)}" aria-label="More for ${esc(e.name)}"><svg><use href="#i-more"/></svg></button>`)).join("")}</div>`
+        : '<p class="hint">Your saved effects will appear here.</p>'}</section>`;
   setHTML(box(), `<div class="st-home">
     <div class="page-head"><div class="st-title"><h1>Studio</h1><button class="text-link" data-st="learn">Guide</button></div>
       <div class="btn-row"><a class="btn" href="#studio/community">Community effects</a>
@@ -709,6 +715,8 @@ function renderHome(pickStart) {
     ${draftBanner()}
     ${workflowHTML()}
     ${rig ? "" : `<div class="banner"><span>No lights are set up yet, so previews use a sample case. <a href="#devices">Set up your lights</a> to see your own.</span></div>`}
+    <p id="st-motion-note" class="hint" hidden></p>
+    ${mine.length ? savedEffects : ""}
     <section class="st-sec${pickStart ? " flash" : ""}" id="st-start"><div class="st-library-head"><h2 class="st-h">Effect templates</h2>
       <button class="btn quiet" data-st="surprise">Surprise me</button></div>
       <div class="st-grid">${LAYER_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="${t.id}">${cardMedia(t.id)}
@@ -717,12 +725,7 @@ function renderHome(pickStart) {
         ${CODE_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="code-${t.id}">${cardMedia("code-" + t.id)}
         <div class="st-cap"><strong>${esc(t.name)} <i class="st-badge">Code</i></strong><span>${esc(t.description)}</span></div>
         <div class="st-acts"><button class="btn" data-code-tpl="${t.id}">Start here</button><button class="btn quiet st-scene-play" data-preview="code-${t.id}" aria-pressed="false" aria-label="Play preview of ${esc(t.name)}">Play preview</button></div></div>`).join("")}</div></section>
-    <section class="st-sec"><div class="st-library-head"><h2 class="st-h">Your effects</h2><button class="btn quiet" data-st="blend-effects">Blend saved effects</button></div>
-      ${mine.length ? `<div class="st-grid">${mine.map((e) => cardHTML(e, `
-        <button class="btn${using === e.fx_id ? " on" : ""}" data-use="${esc(e.fx_id)}">${using === e.fx_id ? "On your lights" : "Use"}</button>
-        <button class="btn" data-edit="${esc(e.fx_id)}">Edit</button>
-        <button class="icon-btn" data-more="${esc(e.fx_id)}" aria-label="More for ${esc(e.name)}"><svg><use href="#i-more"/></svg></button>`)).join("")}</div>`
-        : `<p class="hint">Your saved effects will appear here.</p>`}</section>
+    ${mine.length ? "" : savedEffects}
     ${community.length ? `<section class="st-sec"><h2 class="st-h">From the community</h2><div class="st-grid">${community.map((e) => cardHTML(e, `
         <button class="btn${using === e.fx_id ? " on" : ""}" data-use="${esc(e.fx_id)}">${using === e.fx_id ? "On your lights" : "Use"}</button>
         <button class="btn" data-remix="${esc(e.fx_id)}">Remix</button>
@@ -813,18 +816,24 @@ function sceneBlurred(e) {
 
 const cardCanvas = (key) => $(`[data-card="${CSS.escape(key)}"] .st-live`, box());
 
-function sceneMotionAllowed() {
-  return canPlayScene({ hidden: document.hidden || !galleryActive(), reducedSystem: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+function cardMotionEnabled() {
+  return canPlayScene({ reducedSystem: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
     motion: document.documentElement.dataset.motion });
 }
+
+function sceneMotionAllowed() { return !document.hidden && galleryActive() && cardMotionEnabled(); }
 
 function refreshSceneMotion() {
   const allowed = sceneMotionAllowed();
   if (!allowed) stopCard();
   if (document.hidden) STILL.cancel?.();
-  $$("[data-preview]", box()).forEach(button => {
+  const stillsOnly = !cardMotionEnabled(), buttons = $$("[data-preview]", box());
+  const note = $("#st-motion-note", box());
+  if (note) { note.hidden = !stillsOnly || !buttons.length; note.textContent = "Reduced motion is on. Effect previews are shown as stills."; }
+  buttons.forEach(button => {
+    button.hidden = stillsOnly;
     button.disabled = !allowed || button.closest("[data-card]").dataset.previewMissing === "true";
-    button.title = allowed ? "Preview on screen; Escape stops playback" : "Still preview follows your reduced-motion preference";
+    button.title = "Preview on screen. Escape stops playback.";
   });
 }
 

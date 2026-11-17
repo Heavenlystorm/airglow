@@ -7,6 +7,183 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const BASE = "https://airglow.test";
 const WEB = new URL("../web/", import.meta.url);
+
+test("welcome describes partial readings and keeps expanded discoveries through a poll", async t => {
+  const page = await staticPage(t);
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    S.state = { setup_pending: 0, online_asked: true, devices: [{ online: true, type: "Lighting", name: "Desk hub", zones: [1] }],
+      sensors: { online: true, cpu_temp: 54, cpu_name: "My CPU", gpu_temp: null, gpu_name: "My GPU" }, fans: { failsafe: false } };
+    (await import("/js/onboarding.js")).openWelcome();
+  });
+  const status = page.locator("#onb-status");
+  assert.match(await status.innerText(), /graphics card temperature.*(unavailable|missing)/i);
+  assert.doesNotMatch(await status.innerText(), /reading .* and .* through|safe speed/i);
+  const summary = status.locator("summary");
+  await summary.press("Enter");
+  assert.ok(await status.getByText("Desk hub").isVisible());
+  await page.evaluate(async () => {
+    const { S, emit } = await import("/js/core.js");
+    S.state.sensors.gpu_temp = 47;
+    emit("state");
+  });
+  assert.ok(await status.getByText("Desk hub").isVisible());
+  assert.ok(await summary.evaluate(el => el === document.activeElement));
+  assert.doesNotMatch(await status.innerText(), /graphics card temperature.*unavailable/i);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(async () => {
+    (await import("/js/design.js")).applyDesign("firefly", { persist: false });
+    (await import("/js/appearance.js")).applyAppearance({ scale: 120 }, { persist: false });
+    const { S, emit } = await import("/js/core.js"); S.state.setup_pending = 9; emit("state");
+    await document.fonts.ready;
+  });
+  assert.ok(await page.locator(".welcome-heading h2").evaluate(el =>
+    el.getBoundingClientRect().width >= el.closest(".sheet-head").getBoundingClientRect().width - 2), "The welcome heading owns the full width at 120%");
+});
+
+test("device wiring starts collapsed and retains a focused draft through discovery", async t => {
+  const writes = [];
+  let zones;
+  const page = await staticPage(t, async (route, url) => {
+    if (url.pathname === "/api/zones") { await route.fulfill({ json: { zones } }); return true; }
+    if (decodeURIComponent(url.pathname) !== "/api/zones/hub/a") return false;
+    const config = route.request().postDataJSON(); writes.push(config);
+    zones[0].config = config;
+    await route.fulfill({ json: { config } });
+    return true;
+  });
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    S.state = { openrgb: {} };
+    S.zones = { zones: ["a", "b"].map(key => ({ key: "hub/" + key, device: { id: "hub", name: "Desk hub", kind: "native", online: true },
+      config: { name: "Channel " + key, enabled: true, order: "RGB", layout: { shape: "strip", leds: 8 } },
+      zone: { max_leds: 40, default_leds: 8 } })) };
+    document.querySelector(".devices-view").hidden = false;
+    const devices = await import("/js/devices.js");
+    devices.initDevices(); devices.renderDevices();
+  });
+  const first = page.locator('[data-key="hub/a"]'), second = page.locator('[data-key="hub/b"]');
+  assert.equal(await first.getByLabel("Shape").isVisible(), false);
+  await first.getByRole("button", { name: /configure/i }).press("Enter");
+  const name = first.getByLabel("Zone name");
+  zones = await page.evaluate(async () => (await import("/js/core.js")).S.zones.zones);
+  await name.fill("Desk strip");
+  await page.evaluate(async () => {
+    const { S, emit } = await import("/js/core.js");
+    S.zones.zones[1].config.name = "Renamed elsewhere";
+    emit("zones");
+  });
+  assert.equal(await name.inputValue(), "Desk strip");
+  assert.ok(await name.evaluate(el => el === document.activeElement));
+  assert.equal(writes.length, 0, "Discovery cannot commit an unfinished name");
+  const saved = page.waitForResponse(response => decodeURIComponent(new URL(response.url()).pathname) === "/api/zones/hub/a", { timeout: 2000 });
+  await name.press("Tab");
+  await saved;
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].name, "Desk strip");
+  await page.evaluate(async () => {
+    const d = await import("/js/devices.js");
+    d.showZone("hub/b"); d.renderDevices();
+  });
+  assert.ok(await second.getByLabel("Shape").isVisible());
+});
+
+test("every automation starter previews before writing, saves once and permits retry", { timeout: 15000 }, async t => {
+  const writes = [];
+  const { promise: received, resolve: markReceived } = Promise.withResolvers();
+  const { promise: held, resolve: release } = Promise.withResolvers();
+  const page = await staticPage(t, async (route, url) => {
+    if (url.pathname === "/api/apps") { await route.fulfill({ json: [] }); return true; }
+    if (url.pathname !== "/api/automations") return false;
+    writes.push(route.request().postDataJSON());
+    if (writes.length === 1) {
+      markReceived();
+      await held;
+      await route.fulfill({ status: 503, json: { error: "Fixture save failed" } });
+    } else await route.fulfill({ json: writes.at(-1).rules });
+    return true;
+  });
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    S.state = { temp_unit: "F" }; S.rules = []; S.presets = [{ id: "custom", name: "My profile" }]; S.curves = { curves: { performance: {}, silent: {} } };
+    document.querySelector(".auto-view").hidden = false;
+    const auto = await import("/js/automations.js"); auto.initAutomations(); auto.renderAutomations();
+  });
+  for (const starter of await page.locator("[data-starter]").all()) {
+    await starter.press("Enter");
+    assert.equal(writes.length, 0);
+    await page.locator("#rb-form").waitFor({ timeout: 1400 });
+    if ((await starter.textContent()).includes("Game mode")) {
+      assert.match(await starter.textContent(), /My profile/);
+      assert.equal(await page.getByLabel("Profile", { exact: true }).inputValue(), "custom");
+    }
+    if ((await starter.textContent()).includes("Cool down")) assert.equal(await page.getByLabel("Temperature", { exact: true }).inputValue(), "176");
+    await page.keyboard.press("Escape");
+    assert.ok(await starter.evaluate(el => el === document.activeElement));
+  }
+  await page.locator("[data-starter]").first().click();
+  await page.locator("#rb-form").waitFor();
+  await page.locator("#rb-form").evaluate(form => { form.requestSubmit(); form.requestSubmit(); });
+  await received;
+  assert.equal(await page.locator("#rb-form").getAttribute("aria-busy"), "true");
+  release();
+  await page.locator("#rb-form").getByText("Fixture save failed").waitFor();
+  assert.equal(writes.length, 1);
+  await page.getByRole("button", { name: "Add automation" }).click();
+  await page.locator("#sheet").waitFor({ state: "hidden" });
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1].rules.length, 1);
+});
+
+test("short Overview shares its section and reading row and keeps the lighting controls compact", async t => {
+  const page = await overview(t, [{ id: "lighting", type: "lighting", w: 2, h: 2 }, tile(sensors[0], "auto", 0)]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => { document.querySelector("#ambient").innerHTML = "<span>CPU 52°</span><span>GPU 48°</span>"; });
+  const nav = await page.locator("#nav-select").boundingBox(), pins = await page.locator("#ambient").boundingBox();
+  assert.ok(Math.min(nav.y + nav.height, pins.y + pins.height) > Math.max(nav.y, pins.y), "normal-length pins share the Section row");
+  const rig = await page.locator(".tile-lighting").boundingBox();
+  assert.ok(rig.height >= 180 && rig.height < 265, "the normal rig fits a compact but usable mobile frame");
+  assert.equal(await page.locator(".tile-lighting").getAttribute("data-h"), "2");
+  await page.evaluate(async () => {
+    (await import("/js/appearance.js")).applyAppearance({ scale: 120 }, { persist: false });
+    document.querySelector(".lt-effect").textContent = "Gradient";
+  });
+  assert.ok(await page.locator(".lt-effect").evaluate(el => el.scrollWidth <= el.clientWidth + 1), "The active Gradient name fits at 120%");
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.evaluate(async () => {
+    (await import("/js/appearance.js")).applyAppearance({ scale: 120 }, { persist: false });
+    const readings = document.querySelector("#ambient");
+    readings.innerHTML = '<span class="pin">GraphicsCardPower <b>143.7</b><i> W</i></span><span class="pin">Temperature <b>103.9</b><i> °F</i></span>';
+  });
+  assert.ok(await page.locator("#ambient").evaluate(el => el.scrollWidth <= el.clientWidth + 1), "long pin labels and units fit at 120%");
+  assert.ok(await page.locator(".appbar").evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+});
+
+test("one Appearance entry describes the saved look and its design preview cancels", async t => {
+  const page = await staticPage(t);
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    S.state = {};
+    S.settings = { settings: { design: "paper", appearance: { scale: 110, density: "compact", accent: "#65ab85" } } };
+    document.querySelector(".settings-view").hidden = false;
+    const settings = await import("/js/settings.js");
+    settings.initSettings(); settings.renderSettings();
+  });
+  assert.equal(await page.locator("#s-design, #s-appearance").count(), 1);
+  const editor = page.getByRole("button", { name: "Edit appearance" });
+  const row = editor.locator("xpath=ancestor::div[contains(@class,'set-row')]");
+  assert.match(await row.innerText(), /paper/i);
+  assert.match(await row.innerText(), /110%/);
+  assert.match(await row.innerText(), /compact/i);
+  assert.match(await row.innerText(), /#65ab85/i);
+  await editor.press("Enter");
+  const design = page.locator("#ap-design");
+  assert.ok(await design.evaluate(el => el === document.activeElement));
+  await design.selectOption("firefly");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("html").getAttribute("data-design"), "paper");
+  assert.ok(await editor.evaluate(el => el === document.activeElement));
+});
 const OUTPUT = process.env.AIRGLOW_PRODUCTION_UI_OUTPUT;
 const styles = ["auto", "spark", "ring", "graph", "bar"];
 const sensors = [
@@ -72,7 +249,7 @@ async function overview(t, tiles) {
       ["/js/overview.js", "/js/readings.js", "/js/core.js"].map(path => import(path))
     );
     R.meta = Object.fromEntries(sensors.map(sensor => [sensor.id, sensor]));
-    S.state = {};
+    S.state = { scene: { on: true, brightness: 75 }, effective: { on: true, effect: "solid" } };
     document.querySelector(".overview-view").hidden = false;
     document.querySelector('.tabs [data-tab="overview"]').setAttribute("aria-current", "page");
     await initOverview({ tiles, pins: [] });
@@ -92,6 +269,127 @@ test("interface zoom keeps the viewport and its scroll area aligned", async (t) 
     assert.ok(Math.abs(dimensions.bottom - dimensions.viewport) < 1, `${scale}%: ${JSON.stringify(dimensions)}`);
     assert.ok(dimensions.overflow <= 1);
   }
+});
+
+test("Lighting scopes a tile to the selected zone and disconnects never redirect it to the whole rig", async t => {
+  const writes = [];
+  const config = { name: "Front", enabled: true, layout: { shape: "strip", x: .4, y: .5, angle: 0, length: .2 }, override: null };
+  const page = await staticPage(t, async (route, url) => {
+    if (route.request().method() !== "POST") return false;
+    const body = route.request().postDataJSON();
+    writes.push([url.pathname, body]);
+    const previous = config.override;
+    config.override = body.override;
+    await route.fulfill({ json: { config, previous_override: previous } });
+    return true;
+  });
+  await page.evaluate(async () => {
+    const { S, on } = await import("/js/core.js");
+    const { initLighting, renderLighting } = await import("/js/lighting.js");
+    S.state = { scene: { effect: "solid", params: {}, brightness: 65 }, scene_status: { status: "ready", undo_available: true } };
+    S.effects = ["solid", "cycle"].map(id => ({ id, name: id, params: [], needs: [] }));
+    S.presets = [{ id: "desk", name: "Desk" }];
+    S.zones = { zones: [{ key: "hub/front", device: { name: "Desk", online: true }, positions: [[.4, .5]], config: {
+      name: "Front", enabled: true, layout: { shape: "strip", x: .4, y: .5, angle: 0, length: .2 }, override: null,
+    } }] };
+    window.chosenEffects = []; on("effect:applied", id => window.chosenEffects.push(id));
+    document.querySelector(".lighting-view").hidden = false;
+    (await import("/js/stage.js")).initStage(); initLighting(); renderLighting();
+  });
+  const picker = page.locator("#zone-pick"), cycle = page.locator('[data-effect="cycle"]');
+  assert.equal(await page.locator(".lighting-saved [data-scene-undo]").count(), 1);
+  assert.equal(await page.locator("#stage #stage-hint").count(), 0);
+  assert.equal(await page.locator('.preset-choice > [data-favorite-id="desk"]').count(), 1);
+  assert.equal(await page.locator('.fx-choice > [data-favorite-id="cycle"]').count(), 1);
+  await picker.selectOption("hub/front");
+  await cycle.press("Enter");
+  await page.waitForFunction(() => window.chosenEffects.length > 0, null, { timeout: 4000 }).catch(async error => {
+    throw new Error(`${error.message}; writes ${JSON.stringify(writes)}, scope ${await picker.inputValue()}, inspector ${await page.locator("#inspector").innerText()}`);
+  });
+  assert.equal(await picker.inputValue(), "hub/front");
+  assert.equal(await cycle.getAttribute("aria-checked"), "true");
+  assert.ok(await cycle.evaluate(el => el === document.activeElement));
+  assert.deepEqual(writes.map(([path]) => path), ["/api/zones/hub%2Ffront"]);
+  assert.deepEqual(writes[0][1].override, { effect: "cycle", params: {} });
+  const undo = page.getByRole("button", {name:"Undo zone lighting"});
+  await undo.press("Enter");
+  await undo.waitFor({state:"hidden"});
+  assert.deepEqual(writes[1][1], { override: null, expected_override: {effect:"cycle",params:{}} });
+  assert.deepEqual(await page.evaluate(() => window.chosenEffects), ["cycle"]);
+  await cycle.press("Enter");
+  await undo.waitFor();
+  await page.locator('[data-mode="follow"]').press("Enter");
+  await page.waitForFunction(() => document.querySelector('[data-mode="follow"]').getAttribute("aria-checked") === "true");
+  assert.deepEqual(await page.evaluate(() => window.chosenEffects), ["cycle","cycle"]);
+  await page.evaluate(async () => { const { S, emit } = await import("/js/core.js"); S.zones.zones = []; emit("zones"); });
+  assert.equal(await picker.inputValue(), "hub/front");
+  assert.equal(await cycle.isDisabled(), true);
+  await page.locator("#zone-done").press("Enter");
+  assert.equal(await picker.inputValue(), "");
+  assert.equal(await cycle.isDisabled(), false);
+  assert.ok(await picker.evaluate(el => el === document.activeElement));
+  assert.deepEqual(writes.map(([path]) => path), Array(4).fill("/api/zones/hub%2Ffront"));
+});
+
+test("Fans keeps exact live and focused draft readings outside the plot during keyboard and pointer edits", async t => {
+  const writes = [];
+  const page = await staticPage(t, async (route, url) => {
+    if (route.request().method() !== "POST") return false;
+    writes.push(url.pathname); await route.abort(); return true;
+  });
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    const { initFans, renderFans } = await import("/js/fans.js");
+    S.state = { temp_unit: "C", sensors: {}, fans: { curve: "balanced", base_curve: "balanced", ports: [], temp: 50, duty: 37, target: 65 } };
+    const balanced = [[30, 30], [60, 50], [80, 100]];
+    S.curves = { curves: { balanced }, defaults: { balanced }, min_duty: 20, safety_temp: 90 };
+    document.querySelector(".fans-view").hidden = false;
+    initFans(); renderFans();
+  });
+  const point = page.locator('#editor .pt[data-i="1"]'), legend = page.locator("#curve-point");
+  await point.focus();
+  assert.equal(await legend.textContent(), "60°C · 50%");
+  await page.keyboard.press("Shift+ArrowUp");
+  assert.equal(await legend.textContent(), "60°C · 55%");
+  assert.ok(await point.evaluate(el => el === document.activeElement));
+  assert.equal(await page.locator("#curve-live").textContent(), "50°C · 37%");
+  const coord = await point.boundingBox();
+  await page.mouse.move(coord.x + coord.width / 2, coord.y + coord.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(coord.x + coord.width / 2 + 20, coord.y + coord.height / 2 - 20);
+  const dragged = await legend.textContent();
+  assert.notEqual(dragged, "60°C · 55%");
+  await page.mouse.up();
+  assert.equal(await legend.textContent(), dragged);
+  assert.equal(await page.locator("#curve-live").textContent(), "50°C · 37%");
+  assert.ok(await page.locator("#curve-save").isEnabled() && await page.locator("#curve-discard").isEnabled());
+  assert.equal(await page.locator("#editor .now-label, #editor .tip").count(), 0);
+  assert.ok(await page.getByText("Always full speed").isVisible());
+  assert.deepEqual(writes, []);
+});
+
+test("Studio puts saved work before templates and shows a single reduced-motion explanation", async t => {
+  let effects = [];
+  const page = await staticPage(t, async (route, url) => {
+    if (url.pathname !== "/api/studio/effects") return false;
+    await route.fulfill({ json: { effects } }); return true;
+  });
+  await page.evaluate(async () => {
+    const { initStudio, renderStudio } = await import("/js/studio.js");
+    document.querySelector(".studio-view").hidden = false;
+    initStudio(); await renderStudio();
+  });
+  const sections = () => page.locator("#st-start, #st-saved").evaluateAll(nodes => nodes.map(n => n.id));
+  assert.deepEqual(await sections(), ["st-start", "st-saved"]);
+  assert.equal(await page.locator("#st-motion-note:visible").count(), 1);
+  assert.equal(await page.locator("[data-preview]:visible").count(), 0);
+  effects = [{ fx_id: "fx:mine", name: "Apricot", origin: "mine", kind: "layers", layers: [] }];
+  await page.evaluate(async () => { await (await import("/js/studio.js")).renderStudio(); });
+  assert.deepEqual(await sections(), ["st-saved", "st-start"]);
+  assert.ok(await page.locator('[data-edit="fx:mine"]').isVisible());
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.locator('#st-start [data-preview]').first().waitFor();
+  assert.equal(await page.locator("#st-motion-note").isVisible(), false);
 });
 
 test("Studio templates have a bundled sample still before playback and keep it through a preview error", async (t) => {
@@ -383,6 +681,140 @@ async function switcher(t, mock) {
   });
   return page;
 }
+
+test("a delayed Settings read retains an acknowledged favorite and a later read can update it", async t => {
+  const started = Promise.withResolvers(), delayed = Promise.withResolvers();
+  const pinned = { kind: "effect", id: "solid" };
+  let reads = 0;
+  const page = await staticPage(t, async (route, url) => {
+    if (url.pathname === "/api/quick-actions") {
+      await route.fulfill({ json: { favorites: [pinned], recents: [] } });
+      return true;
+    }
+    if (url.pathname !== "/api/settings") return false;
+    if (++reads === 1) { started.resolve(); await delayed.promise; }
+    await route.fulfill({ json: { settings: { design: "firefly", quick_actions: { favorites: [], recents: [] } } } });
+    return true;
+  });
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    S.settings = { settings: { design: "firefly" } }; S.state = {};
+    const { loadSettings } = await import("/js/settings.js");
+    window.pendingSettings = loadSettings();
+  });
+  await started.promise;
+  await page.evaluate(async () => (await import("/js/quick-preferences.js")).setFavorite("effect", "solid", true));
+  const favorite = () => page.evaluate(async () => (await import("/js/quick-preferences.js")).isFavorite("effect", "solid"));
+  assert.equal(await favorite(), true);
+  delayed.resolve();
+  await page.evaluate(() => window.pendingSettings);
+  assert.equal(await favorite(), true, "an older snapshot cannot replace the pin");
+  await page.evaluate(async () => (await import("/js/settings.js")).loadSettings());
+  assert.equal(await favorite(), false, "a fresh server response can reflect another client's unpin");
+});
+
+test("a favorite save failure stays visible after closing Quick switch", async t => {
+  const started = Promise.withResolvers(), delayed = Promise.withResolvers();
+  const page = await switcher(t, async (route, url) => {
+    if (url.pathname !== "/api/quick-actions") return false;
+    started.resolve(); await delayed.promise;
+    await route.fulfill({ status: 503, json: { error: "Fixture disk unavailable" } });
+    return true;
+  });
+  await page.keyboard.press("Control+k");
+  const dialog = page.getByRole("dialog", { name: "Quick switch" });
+  await dialog.getByRole("button", { name: "Edit favorites" }).click();
+  await dialog.getByRole("combobox").fill("night");
+  await dialog.getByRole("combobox").press("Enter");
+  await started.promise;
+  await page.keyboard.press("Escape"); delayed.resolve();
+  await page.getByText(/Fixture disk unavailable/).waitFor({ timeout: 2000 });
+  assert.equal(await dialog.count(), 0);
+});
+
+test("keyboard pinning is separate from hardware and resolves renamed or deleted favorites", async t => {
+  const writes = [];
+  const favorites = [];
+  const recents = [{ kind: "effect", id: "solid" }];
+  const page = await switcher(t, async (route, url) => {
+    if (route.request().method() !== "POST") return false;
+    writes.push(url.pathname);
+    if (url.pathname !== "/api/quick-actions") return false;
+    const { kind, id, operation } = route.request().postDataJSON();
+    assert.equal(operation, "pin");
+    favorites.push({ kind, id });
+    await route.fulfill({ json: { favorites, recents } });
+    return true;
+  });
+  await page.evaluate(async recents => {
+    const { S } = await import("/js/core.js");
+    S.settings = { settings: { quick_actions: { favorites: [], recents } } };
+  }, recents);
+  await page.keyboard.press("Control+k");
+  const dialog = page.getByRole("dialog", { name: "Quick switch" });
+  const input = dialog.getByRole("combobox");
+  await dialog.getByRole("button", { name: "Edit favorites" }).press("Enter");
+  await input.fill("night");
+  await input.press("Enter");
+  await dialog.getByRole("option", { name: /Unpin favorite.*Lighting and cooling/ }).waitFor();
+  await dialog.getByRole("button", { name: "Done editing favorites" }).press("Enter");
+  await input.fill("");
+  const groups = dialog.getByRole("listbox").getByRole("group");
+  assert.equal(await groups.nth(0).getAttribute("aria-label"), "Favorites");
+  assert.equal(await groups.nth(1).getAttribute("aria-label"), "Recently used");
+  await page.evaluate(async () => {
+    const { S, emit } = await import("/js/core.js");
+    S.presets.find(p => p.id === "night").name = "Quiet evening";
+    emit("state");
+  });
+  await groups.first().getByRole("option", { name: /Quiet evening/ }).waitFor();
+  await page.evaluate(async () => {
+    const { S, emit } = await import("/js/core.js");
+    S.presets = S.presets.filter(p => p.id !== "night");
+    emit("state");
+  });
+  assert.equal(await dialog.getByRole("group", { name: "Favorites", exact: true }).count(), 0);
+  assert.deepEqual(writes, ["/api/quick-actions"]);
+});
+
+test("Recents accepts only confirmed manual effects and profiles", async t => {
+  const writes = [];
+  const page = await switcher(t, async (route, url) => {
+    if (url.pathname === "/api/quick-actions") {
+      writes.push(route.request().postDataJSON());
+      await route.fulfill({ json: { favorites: [], recents: [] } });
+      return true;
+    }
+    if (url.pathname === "/api/scene" || url.pathname.endsWith("/apply")) {
+      const failed = url.pathname.includes("night");
+      await route.fulfill({ json: { ok: !failed, scene_status: { status: "pending", desired_revision: 5, session: "demo" } } });
+      return true;
+    }
+    return false;
+  });
+  await page.evaluate(async () => {
+    const { post, settleSceneMutation } = await import("/js/core.js");
+    const status = { status: "ready", desired_revision: 5, session: "demo" };
+    settleSceneMutation(status); // An automation or an unsolicited live poll.
+    await post("/api/scene", { effect: "spectrum" });
+    settleSceneMutation({ ...status, status: "failed" });
+    settleSceneMutation(status); // Background recovery cannot turn a failed choice into a recent.
+    await post("/api/scene", { effect: "spectrum" });
+    settleSceneMutation({ ...status, overridden: true });
+    await post("/api/presets/night/apply"); // A partial profile failure.
+    settleSceneMutation(status);
+    await post("/api/scene", { effect: "solid" });
+    settleSceneMutation(status);
+    settleSceneMutation(status); // Repeating a poll must never create another recent entry.
+    await post("/api/presets/movie-time/apply");
+    settleSceneMutation(status);
+  });
+  await page.waitForFunction(() => performance.getEntriesByType("resource").filter(e => e.name.endsWith("/api/quick-actions")).length >= 2);
+  assert.deepEqual(writes, [
+    { operation: "use", kind: "effect", id: "solid" },
+    { operation: "use", kind: "profile", id: "movie-time" },
+  ]);
+});
 
 test("Ctrl+K opens the search, arrows change only selection, and Escape restores focus", async (t) => {
   const page = await switcher(t);

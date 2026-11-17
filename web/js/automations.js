@@ -1,4 +1,4 @@
-// Automations screen: rules as plain sentences, a builder, and one-click starters.
+// Automations screen: rules as plain sentences, a builder, and editable starter rules.
 
 import { $, $$, S, curveLabel, emit, esc, fail, get, on, post, setHTML, toast, unitF } from "./core.js";
 import { closeSheet, openSheet } from "./sheet.js";
@@ -40,10 +40,12 @@ export function sentence(r, html = true, names = {}) {
   return `${when}, ${then}.`.replace(/<b>([^<]*)<\/b>(?=[,.])/g, '<b class="end">$1</b>');
 }
 
+const gameProfile = () => S.presets.find(p => p.id === "gaming") || S.presets[0];
+
 const STARTERS = [
   { title: "Lights off at night", text: "Between 23:00 and 07:00, the lights go dark.", rule: { when: { type: "time", start: "23:00", end: "07:00" }, then: { type: "lights_off" } } },
   { title: "Dim when you step away", text: "After 10 idle minutes, lights drop to 15%.", rule: { when: { type: "idle", minutes: 10 }, then: { type: "dim", brightness: 15 } } },
-  { title: "Game mode", text: "While your game runs, use the Gaming profile.", rule: { when: { type: "app_running", exe: "" }, then: { type: "preset", preset: "gaming" } }, needsInput: true },
+  { title: "Game mode", text: () => gameProfile() ? `While your game runs, use ${gameProfile().name}.` : "Choose what happens while your game runs.", rule: { when: { type: "app_running", exe: "" }, then: { type: "preset", preset: "gaming" } } },
   { title: "Quiet when idle", text: "After 15 idle minutes, the fans go Silent.", rule: { when: { type: "idle", minutes: 15 }, then: { type: "fan_curve", curve: "silent" } } },
   { title: "Dark while locked", text: "Lights off whenever you lock the PC.", rule: { when: { type: "locked" }, then: { type: "lights_off" } } },
   { title: "Cool down under load", text: () => `Above ${tempTxt(80)}, the fans switch to Performance.`, rule: { when: { type: "temp_above", temp: 80, source: "max" }, then: { type: "fan_curve", curve: "performance" } } },
@@ -128,23 +130,23 @@ export function renderAutomations() {
   $("#auto-pause").hidden = !rules.length || !paused;
   $("#auto-pause-for").hidden = !rules.length || paused;
   const used = new Set(rules.map((r) => JSON.stringify([r.when.type, r.then.type])));
+  const starterIcon = { lights_off: "power", dim: "effect", fan_curve: "sliders", preset: "workspace" };
   const starters = STARTERS.filter((s) => !used.has(JSON.stringify([s.rule.when.type, s.rule.then.type])));
   setHTML($("#starters"), starters.length ? `<h2>${rules.length ? "More ideas" : "Start with one of these"}</h2>
-    <div class="starter-grid">${starters.map((s) => `<button class="starter" data-starter="${STARTERS.indexOf(s)}"><strong>${esc(s.title)}</strong>${esc(typeof s.text === "function" ? s.text() : s.text)}</button>`).join("")}</div>` : "");
+    <div class="starter-grid">${starters.map((s) => `<button class="starter" id="starter-${STARTERS.indexOf(s)}" data-starter="${STARTERS.indexOf(s)}" aria-haspopup="dialog"><svg class="starter-icon" aria-hidden="true"><use href="#i-${starterIcon[s.rule.then.type]}"/></svg><strong>${esc(s.title)}</strong><span>${esc(typeof s.text === "function" ? s.text() : s.text)}</span><svg class="starter-arrow" aria-hidden="true"><use href="#i-back"/></svg></button>`).join("")}</div>` : "");
 }
 
 // ------------------------------------------------------------ builder
-async function openBuilder(rule, isNew) {
+function openBuilder(rule, isNew, title = "") {
   const r = structuredClone(rule);
-  let apps = [];
-  try { apps = await get("/api/apps"); } catch { /* typing the name still works */ }
+  let apps = [], activeForm, saving = false;
   const curves = Object.keys(S.curves.curves);
   const previewText = () => {
     if (["app_running", "app_focused"].includes(r.when.type) && !r.when.exe)
       return "Type the program's file name, or pick one that's open right now, to finish this rule.";
     try { return sentence(r); } catch { return "Fill in the details to see the rule."; }
   };
-  const render = (err = "") => {
+  const render = () => {
     const active = document.activeElement;
     const focusId = active?.closest?.("#rb-form") && active.id ? active.id : null;
     const w = r.when, t = r.then;
@@ -158,12 +160,12 @@ async function openBuilder(rule, isNew) {
         <span>above</span><input class="text" type="number" min="${tempIn(30)}" max="${tempIn(100)}" data-w="temp" aria-label="Temperature" value="${tempIn(w.temp ?? 80)}" style="width:80px"><span>°${unitF() ? "F" : "C"}</span>`,
     }[w.type]();
     const thenFields = {
-      preset: () => `<select class="select" data-t="preset" aria-label="Profile" style="width:auto">${S.presets.map((p) => `<option value="${esc(p.id)}"${p.id === t.preset ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select>`,
+      preset: () => `<select class="select" data-t="preset" aria-label="Profile" required style="width:auto">${S.presets.length ? S.presets.map((p) => `<option value="${esc(p.id)}"${p.id === t.preset ? " selected" : ""}>${esc(p.name)}</option>`).join("") : '<option value="">No saved profiles</option>'}</select>`,
       lights_off: () => "",
       dim: () => `<span>to</span><input class="text" type="number" min="0" max="100" data-t="brightness" aria-label="Brightness" value="${t.brightness ?? 20}" style="width:80px"><span>%</span>`,
       fan_curve: () => `<select class="select" data-t="curve" aria-label="Fan curve" style="width:auto">${curves.map((c) => `<option value="${c}"${c === t.curve ? " selected" : ""}>${curveLabel(c)}</option>`).join("")}</select>`,
     }[t.type]();
-    openSheet(`<form id="rb-form"><h2>${isNew ? "New automation" : "Edit automation"}</h2>
+    openSheet(`<form id="rb-form"><h2>${esc(title || (isNew ? "New automation" : "Edit automation"))}</h2>
       <div class="builder">
         <div class="row"><span>When</span><select class="select" id="rb-when" aria-label="When">${[["app_running", "A program is running"], ["app_focused", "A program is in front"], ["idle", "The PC is idle"], ["time", "It's between two times"], ["locked", "The PC is locked"], ["temp_above", "It's running hot"]].map(([v, l]) => `<option value="${v}"${v === w.type ? " selected" : ""}>${l}</option>`).join("")}</select></div>
         ${whenFields ? `<div class="row"><span></span><div class="sub">${whenFields}</div></div>` : ""}
@@ -172,9 +174,9 @@ async function openBuilder(rule, isNew) {
         <div class="preview-sentence" id="rb-preview">${previewText()}</div>
         <p class="hint">When the condition stops being true, your own lighting and fan settings come back by themselves.</p>
       </div>
-      ${err ? `<p class="err">${esc(err)}</p>` : ""}
+      <p class="err" role="alert" hidden></p>
       <div class="actions"><span class="spacer"></span><button type="button" class="btn quiet" data-close>Cancel</button><button class="btn primary" id="rb-save">${isNew ? "Add automation" : "Save automation"}</button></div></form>`);
-    const form = $("#rb-form");
+    const form = activeForm = $("#rb-form");
     const updatePreview = () => setHTML(form.querySelector("#rb-preview"), previewText());
     form.querySelector("#rb-when").addEventListener("change", (e) => { r.when = { type: e.target.value }; render(); });
     form.querySelector("#rb-then").addEventListener("change", (e) => { r.then = { type: e.target.value, ...(e.target.value === "preset" ? { preset: S.presets[0]?.id } : e.target.value === "fan_curve" ? { curve: "silent" } : {}) }; render(); });
@@ -183,7 +185,8 @@ async function openBuilder(rule, isNew) {
       r.when[el.dataset.w] = el.dataset.w === "temp" ? tempOut(v) : v; updatePreview();
     }));
     form.querySelectorAll("[data-t]").forEach((el) => el.addEventListener(el.tagName === "INPUT" ? "input" : "change", () => { r.then[el.dataset.t] = el.type === "number" ? +el.value : el.value; updatePreview(); }));
-    form.querySelector("[data-app-pick]")?.addEventListener("change", (e) => {
+    form.addEventListener("change", (e) => {
+      if (!e.target.matches("[data-app-pick]")) return;
       if (e.target.value) { r.when.exe = e.target.value; form.querySelector('[data-w="exe"]').value = e.target.value; updatePreview(); }
     });
     form.querySelectorAll("[data-day]").forEach((b) => b.addEventListener("click", () => {
@@ -193,19 +196,48 @@ async function openBuilder(rule, isNew) {
     }));
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (saving) return;
+      saving = true;
+      form.setAttribute("aria-busy", "true");
+      const controls = [...form.elements].filter(el => !el.disabled);
+      controls.forEach(el => { el.disabled = true; });
+      const sheet = $("#sheet");
+      const preventClose = event => event.preventDefault();
+      sheet.addEventListener("cancel", preventClose);
       if (r.when.type === "time") { r.when.start ??= "23:00"; r.when.end ??= "07:00"; }
       if (r.when.type === "idle") r.when.minutes ??= 10;
       if (r.when.type === "temp_above") { r.when.temp ??= 80; r.when.source ??= "max"; }
       if (r.then.type === "dim") r.then.brightness ??= 20;
       const next = isNew ? [...currentRules(), r] : currentRules().map((x) => (x.id === r.id ? r : x));
-      try { await writeRules(next); closeSheet(); emit("refresh"); toast(isNew ? "Automation added" : "Automation saved"); }
-      catch (err2) { render(err2.message); }
+      let saved = false;
+      try {
+        await writeRules(next);
+        saved = true;
+        if (activeForm === form && form.isConnected) closeSheet();
+        emit("refresh"); toast(isNew ? "Automation added" : "Automation saved");
+      } catch (error) {
+        const message = form.querySelector(".err");
+        message.textContent = error.message; message.hidden = false;
+      } finally {
+        sheet.removeEventListener("cancel", preventClose);
+        saving = false; form.removeAttribute("aria-busy");
+        controls.forEach(el => { el.disabled = false; });
+        if (!saved && form.isConnected) form.querySelector("#rb-save").focus();
+        if (saved && document.activeElement === document.body)
+          $("#rules")?.querySelector(`[data-id="${CSS.escape(r.id)}"] [data-edit]`)?.focus({ preventScroll: true });
+      }
     });
     if (focusId) form.querySelector(`#${CSS.escape(focusId)}`)?.focus({ preventScroll: true });
   };
-  const appField = (w) => `<input class="text" data-w="exe" aria-label="Program file name" value="${esc(w.exe ?? "")}" placeholder="Cyberpunk2077.exe" spellcheck="false" style="width:220px">
-      ${apps.length ? `<select class="select" data-app-pick aria-label="Pick a running program" style="width:auto"><option value="">Pick a running program</option>${apps.map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select>` : ""}`;
+  const appOptions = () => '<option value="">Pick a running program</option>' + apps.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join("");
+  const appField = (w) => `<input class="text" data-w="exe" aria-label="Program file name" value="${esc(w.exe ?? "")}" placeholder="Cyberpunk2077.exe" spellcheck="false" required style="width:220px">
+      <select class="select" data-app-pick aria-label="Pick a running program" style="width:auto"${apps.length ? "" : " hidden"}>${appOptions()}</select>`;
   render();
+  get("/api/apps").then(list => {
+    apps = list;
+    const picker = activeForm?.querySelector("[data-app-pick]");
+    if (picker && apps.length && activeForm.isConnected) { setHTML(picker, appOptions()); picker.hidden = false; }
+  }).catch(() => {});
 }
 
 // ------------------------------------------------------------ events
@@ -246,9 +278,8 @@ export function initAutomations() {
     if (!b) return;
     const s = STARTERS[+b.dataset.starter];
     const rule = { id: newId(), enabled: true, ...structuredClone(s.rule) };
-    if (rule.then.type === "preset" && !S.presets.some((p) => p.id === rule.then.preset)) rule.then.preset = S.presets[0]?.id;
-    if (s.needsInput) openBuilder(rule, true);
-    else saveRules([...currentRules(), rule], `Added: ${s.title}`);
+    if (rule.then.type === "preset") rule.then.preset = gameProfile()?.id;
+    openBuilder(rule, true, s.title);
   });
   $("#auto-add").addEventListener("click", () => openBuilder({ id: newId(), enabled: true, when: { type: "app_running", exe: "" }, then: { type: "preset", preset: S.presets[0]?.id } }, true));
   $("#auto-pause").addEventListener("click", () => pauseAutomations(0));

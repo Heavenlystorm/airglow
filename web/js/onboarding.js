@@ -9,24 +9,41 @@ function item(ok, title, text, action = "") {
 }
 
 function welcomeList(st) {
-  const devs = st.devices || [];
-  const lit = devs.filter((d) => d.online);
-  const orgb = devs.filter((d) => d.kind === "openrgb");
-  let list = "";
-  for (const d of lit) {
-    const n = d.zones.length;
-    list += item(true, esc(d.name), `${esc(d.type)}, ${n} zone${n === 1 ? "" : "s"}${d.kind === "openrgb" ? ", through OpenRGB" : ""}`);
-  }
-  if (!lit.length) list += item(false, "No lighting devices found", "Airglow works with NZXT hubs and ASUS boards directly, and with hundreds more through OpenRGB.");
-  if (!orgb.length) list += item(null, "More devices through OpenRGB", "RAM, graphics cards, keyboards and strips work too, through OpenRGB. Airglow can set it up for you, below.");
-  list += st.sensors.online
-    ? item(true, "Temperatures", `Reading ${esc(st.sensors.cpu_name || "the processor")} and ${esc(st.sensors.gpu_name || "graphics card")} through LibreHardwareMonitor.`)
-    : item(false, "Temperatures aren't coming through", "They come from LibreHardwareMonitor, which Airglow can set up for you, below. Fans hold a safe speed until then.");
+  const devices = st.devices || [];
+  const online = devices.filter(d => d.online);
+  const sensors = st.sensors || {};
+  const attention = [], found = [];
   for (const c of st.conflicts || []) {
-    list += item(false, `${esc(c.name)} is running`, `It controls ${esc(c.conflicts_with)} too, which makes lights flicker.`,
-      `<button class="btn" data-close-app="${esc(c.name)}">Close it</button>`);
+    attention.push(item(false, `${esc(c.name)} is running`, `It also controls ${esc(c.conflicts_with)} and may cause flicker.`,
+      `<button class="btn" data-close-app="${esc(c.name)}">Close it</button>`));
   }
-  return list;
+  if (!online.length) attention.push(item(false, "No lighting devices found", "Connect a supported USB controller or set up OpenRGB for other devices."));
+  for (const d of devices) {
+    if (!d.online) {
+      attention.push(item(false, esc(d.name), esc(d.error || "Not connected")));
+      continue;
+    }
+    const n = d.zones?.length || 0;
+    found.push(item(true, esc(d.name), `${esc(d.type)} · ${n} zone${n === 1 ? "" : "s"}${d.kind === "openrgb" ? " · OpenRGB" : ""}`));
+  }
+  const unavailable = [];
+  for (const [key, label] of [["cpu", "Processor"], ["gpu", "Graphics card"]]) {
+    if (sensors.online && Number.isFinite(sensors[key + "_temp"])) {
+      found.push(item(true, `${label} temperature`, esc(sensors[key + "_name"] || "Available through LibreHardwareMonitor")));
+    } else unavailable.push(label);
+  }
+  if (unavailable.length) {
+    const title = unavailable.length === 2 ? "Processor and graphics card temperatures unavailable" : unavailable[0] + " temperature unavailable";
+    const reason = sensors.online ? "LibreHardwareMonitor is connected. The reading may appear as hardware is discovered."
+      : "Airglow gets these readings from LibreHardwareMonitor. Check the helper setup below.";
+    attention.push(item(false, title, reason));
+  }
+  if (st.fans?.failsafe) attention.unshift(item(false, "Fan failsafe is active", "The fan curve is waiting for its selected temperature reading."));
+  const readings = 2 - unavailable.length;
+  const summary = [online.length && `${online.length} lighting device${online.length === 1 ? "" : "s"}`,
+    readings && `${readings} temperature reading${readings === 1 ? "" : "s"}`].filter(Boolean).join(" · ");
+  const discovery = found.length ? `<details class="onb-found"><summary>${summary}</summary>${found.join("")}</details>` : "";
+  return attention.join("") + discovery;
 }
 
 const welcomeHint = (pending) => pending
@@ -38,8 +55,16 @@ function renderWelcomeStatus() {
   if (!status || !S.state) return;
   const pending = S.state.setup_pending;
   const focused = document.activeElement;
+  const details = status.querySelector(".onb-found");
+  const expanded = details?.open;
+  const summaryFocused = details?.querySelector("summary") === focused;
   const controls = new Map([...status.querySelectorAll("[data-close-app]")].map((b) => [b.dataset.closeApp, b]));
   setHTML(status, welcomeList(S.state));
+  const next = status.querySelector(".onb-found");
+  if (next && details && next !== details) {
+    next.open = expanded;
+    if (summaryFocused) next.querySelector("summary").focus({ preventScroll: true });
+  }
   for (const button of status.querySelectorAll("[data-close-app]")) {
     const retained = controls.get(button.dataset.closeApp);
     if (retained && retained !== button) button.replaceWith(retained);

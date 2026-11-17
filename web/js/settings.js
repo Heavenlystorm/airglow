@@ -5,7 +5,7 @@ import { paintTools, refreshTools } from "./helpers.js";
 import { openWelcome } from "./onboarding.js";
 import { openShortcuts } from "./help.js";
 import { openSheet, closeSheet } from "./sheet.js";
-import { DESIGNS, applyDesign, currentDesign } from "./design.js";
+import { DESIGNS, applyDesign } from "./design.js";
 import { DEFAULT_APPEARANCE, applyAppearance, normalizeAppearance, createAppearanceTransaction,
   serializeWrites, parseLookRecipe, encodeLookRecipe } from "./appearance.js";
 import { exportRig, openRigImport } from "./rig-migration.js";
@@ -76,81 +76,11 @@ function previewHTML() {
     <span class="dsg-ctl"><span class="dsg-btn">Save</span><span class="dsg-switch on"></span><span class="dsg-meter"><i></i></span></span>`;
 }
 
-function markDesign(id) {
-  const d = $("#sheet");
-  if (!d) return;
-  d.querySelectorAll("[data-design-card]").forEach((card) => {
-    const on = card.dataset.designCard === id;
-    card.tabIndex = on ? 0 : -1;
-    card.setAttribute("aria-checked", String(on));
-    let mark = card.querySelector(".dsg-inuse");
-    if (on && !mark) {
-      mark = document.createElement("span");
-      mark.className = "dsg-inuse";
-      mark.textContent = "In use";
-      card.querySelector(".dsg-name")?.append(mark);
-    } else if (!on && mark) {
-      mark.remove();
-    }
-  });
-}
-
-// One write at a time, so two quick clicks cannot land out of order and leave the server on the first design.
-let designQueue = Promise.resolve();
-let designRevision = 0, pendingDesign = null;
-function pickDesign(id) {
-  const revision = ++designRevision;
-  const chosen = applyDesign(id, { persist: false });
-  pendingDesign = chosen;
-  markDesign(chosen);
-  designQueue = save({ design: chosen }, "Design saved")
-    .then(() => {
-      if (revision !== designRevision) return;
-      pendingDesign = null;
-      const confirmed = S.settings?.settings?.design || chosen;
-      applyDesign(confirmed);
-      markDesign(confirmed);
-    })
-    .catch(() => {});
-}
-
-function designSheet() {
-  const current = currentDesign();
-  openSheet(`<div class="body design-sheet">
-    <h2>Interface design</h2>
-    <p class="lede">Changes how Airglow looks. Your lights stay their own colours in every design.</p>
-    <div class="design-gallery" role="radiogroup" aria-label="Interface design">${DESIGNS.map((d) => `<button type="button" role="radio" class="dsg-card" data-design-card="${d.id}" tabindex="${d.id === current ? 0 : -1}" aria-checked="${d.id === current}">
-      <span class="dsg-preview" data-design="${d.id}" aria-hidden="true">${previewHTML()}</span>
-      <span class="dsg-name">${esc(d.name)}${d.id === current ? `<span class="dsg-inuse">In use</span>` : ""}</span>
-      <span class="dsg-blurb">${esc(d.blurb)}</span></button>`).join("")}</div>
-    <div class="actions"><span class="spacer"></span><button type="button" class="btn primary" data-close>Done</button></div></div>`);
-  const d = $("#sheet");
-  const cards = [...d.querySelectorAll("[data-design-card]")];
-  cards.forEach((card, index) => {
-    card.addEventListener("click", () => pickDesign(card.dataset.designCard));
-    card.addEventListener("keydown", (event) => {
-      const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
-      let target;
-      if (step) target = cards[(index + step + cards.length) % cards.length];
-      else if (event.key === "Home") target = cards[0];
-      else if (event.key === "End") target = cards.at(-1);
-      else return;
-      event.preventDefault();
-      if (target !== card) {
-        target.focus();
-        target.click();
-      }
-    });
-  });
-  // openSheet has already opened the modal; deferred focus can override the user's next keypress.
-  (d.querySelector('[aria-checked="true"]') || cards[0])?.focus();
-}
-
 // This sheet edits one draft, including its saved-look library. Only Keep writes it.
 let appearanceSession = null;
 const appearanceName = (value) => {
   const a = normalizeAppearance(value);
-  return `${a.scale}% · ${a.density === "compact" ? "Compact" : "Comfortable"} · ${a.rig === "frame" ? "Framed rig" : "Minimal rig"}`;
+  return `${a.accent || "Design accent"} · ${a.density === "compact" ? "Compact" : "Comfortable"} · ${a.scale}%`;
 };
 const setPresentation = (value, persist = false) => {
   applyDesign(value.design, { persist });
@@ -158,8 +88,6 @@ const setPresentation = (value, persist = false) => {
 };
 
 export async function openAppearance() {
-  // A prior theme selection must be confirmed before taking the Cancel baseline.
-  await designQueue;
   await pendingSettings;
   if (appearanceSession && !appearanceSession.closed) return;
   const initial = S.settings?.settings;
@@ -171,10 +99,10 @@ export async function openAppearance() {
   appearanceSession = tx;
   const a = tx.draft.appearance;
   const d = openSheet(`<form id="appearance-form" class="appearance-sheet">
-    <div class="appearance-heading"><div><h2>Your personal look</h2><p class="lede">Try it across Airglow. Keep what feels right.</p></div><span class="appearance-state">Live preview</span></div>
+    <div class="appearance-heading"><div><h2>Appearance</h2><p class="lede">Try a design, adjust its details and save your look.</p></div><span class="appearance-state">Live preview</span></div>
     <div class="appearance-editor">
       <div class="appearance-controls">
-        <label class="appearance-field" for="ap-design"><span>Starting design</span><select class="select" id="ap-design">${DESIGNS.map((item) => `<option value="${item.id}"${item.id === tx.draft.design ? " selected" : ""}>${esc(item.name)}</option>`).join("")}</select></label>
+        <label class="appearance-field" for="ap-design"><span>Interface design</span><select class="select" id="ap-design">${DESIGNS.map((item) => `<option value="${item.id}"${item.id === tx.draft.design ? " selected" : ""}>${esc(item.name)}</option>`).join("")}</select></label>
         <fieldset class="appearance-accent"><legend>Interface accent</legend><div class="appearance-color-row"><input type="color" id="ap-color" value="${a.accent || "#dfb878"}" aria-label="Choose interface accent"><input class="text" id="ap-hex" aria-label="Interface accent hex color" maxlength="7" value="${a.accent || ""}" placeholder="Design default" spellcheck="false"><button type="button" class="btn quiet" id="ap-default-accent">Use default</button></div><p class="hint" id="ap-accent-note">Adjusted for legibility. Lights keep their own colors.</p></fieldset>
         <div class="appearance-pair">
           <label class="appearance-field" for="ap-density"><span>Density</span><select class="select" id="ap-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
@@ -343,16 +271,14 @@ export function renderSettings() {
   if (!v) return;
   const s = v.settings;
   if (appearanceSession && !appearanceSession.closed) setPresentation(appearanceSession.draft);
-  else if (pendingDesign) setPresentation({ ...s, design: pendingDesign });
   else setPresentation(s, true);
   const designName = DESIGNS.find((d) => d.id === s.design)?.name || "Graphite";
   setHTML($("#settings"), `
     <section class="set-group" id="set-general"><h2>General</h2>
       ${row("Start with Windows", "Opens quietly in the tray when you sign in, so lighting and fan curves apply right away.", sw("s-startup", v.start_with_windows, "Start with Windows"))}
       ${row("Temperature unit", "", `<div class="seg" id="s-unit" role="radiogroup" aria-label="Temperature unit"><button role="radio" data-v="C" aria-checked="${s.temp_unit === "C"}">°C</button><button role="radio" data-v="F" aria-checked="${s.temp_unit === "F"}">°F</button></div>`)}
-      ${row("Interface design", `Current design · ${esc(designName)}`,
-        `<span class="design-current"><span class="dsg-preview" data-design="${esc(s.design)}" aria-hidden="true">${previewHTML()}</span><button type="button" class="btn" id="s-design" aria-label="Change interface design (currently ${esc(designName)})">Change design</button></span>`)}
-      ${row("Personal look", esc(appearanceName(s.appearance)), `<button type="button" class="btn" id="s-appearance">Customize</button>`)}
+      ${row("Appearance", `<strong>${esc(designName)}</strong> · ${esc(appearanceName(s.appearance))}`,
+        `<span class="design-current"><span class="dsg-preview" data-design="${esc(s.design)}" aria-hidden="true">${previewHTML()}</span><button type="button" class="btn" id="s-appearance" aria-haspopup="dialog">Edit appearance</button></span>`)}
       ${row("Electricity price", "Feeds the Cost per hour tile. It starts at the German household average of 37.97 ct/kWh (Destatis, first half of 2026); Hamburg tariffs run from about 35 ct to 45 ct. Only the processor and graphics card power Airglow already reads is counted.",
         `<input class="text num" id="s-price" type="number" min="0.01" max="5" step="0.01" value="${s.energy_price}" aria-label="Electricity price per kilowatt hour" style="width:110px"><span class="hint">€/kWh</span>`)}
     </section>
@@ -525,7 +451,6 @@ export function initSettings() {
     if (e.target.closest("#s-diag")) post("/api/diagnostics", {}).then((r) => toast(`Saved ${r.name}. Explorer shows where.`)).catch(fail);
     if (e.target.closest("#s-welcome")) openWelcome();
     if (e.target.closest("#s-keys")) openShortcuts();
-    if (e.target.closest("#s-design")) designSheet();
     if (e.target.closest("#s-appearance")) openAppearance().catch(fail);
     if (e.target.closest("#s-rig-import")) openRigImport();
     if (e.target.closest("#s-rig-export")) {

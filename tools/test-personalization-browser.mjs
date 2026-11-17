@@ -210,10 +210,9 @@ test("scene playback is explicit, keyboard accessible and stops for reduced moti
   const page = await pageFor(t, "studio");
   const previews = await installBrowserPreviewBridge(page, BASE);
   t.after(() => previews.close());
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   const play = page.locator("[data-preview]").first();
   await play.waitFor();
-  assert.equal(await play.isDisabled(), true, "OS reduced motion keeps still previews");
-  await page.emulateMedia({ reducedMotion: "no-preference" });
   await eventually(() => play.isEnabled(), Boolean, "Playback becomes available");
   await play.focus();
   await play.press("Enter");
@@ -231,6 +230,8 @@ test("scene playback is explicit, keyboard accessible and stops for reduced moti
   });
   await eventually(() => page.locator(".st-card.is-playing").count(), x => x === 0, "App reduced motion stops preview");
   assert.equal(await play.isDisabled(), true);
+  assert.equal(await page.locator("[data-preview]:visible").count(), 0);
+  assert.equal(await page.locator("#st-motion-note:visible").count(), 1);
 });
 
 test("configured fan geometry renders framed and minimal portraits in dark and light designs", async t => {

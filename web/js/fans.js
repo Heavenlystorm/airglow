@@ -57,12 +57,18 @@ function interp(points, t) {
   return p.at(-1)[1];
 }
 
+function showPoint() {
+  const point = E.draft?.[E.sel];
+  $("#curve-point-label").textContent = point ? `Point ${E.sel + 1}` : "Curve point";
+  $("#curve-point").textContent = point ? `${fmtTemp(point[0])} · ${point[1]}%` : "Select a point";
+}
+
 function renderEditor() {
   if (!S.curves || !S.state) return;
   const F = S.state.fans;
   // a profile can bring its own curve: then none of the named ones is on, and the editor keeps the last one shown
   const named = F.base_curve in S.curves.curves ? F.base_curve : null;
-  if (!E.curve || (named && E.curve !== named && !dirty())) { E.curve = named || E.curve || "balanced"; E.draft = null; }   // follow tray/profile changes
+  if (!E.curve || (named && E.curve !== named && !dirty())) { E.curve = named || E.curve || "balanced"; E.draft = null; E.sel = null; }   // follow tray/profile changes
   if (!E.draft) E.draft = saved().map((p) => p.slice());
   const { min_duty: minDuty, safety_temp: safety } = S.curves;
   const src = S.settings?.settings?.temp_source;
@@ -72,7 +78,7 @@ function renderEditor() {
   // Rebuilding the whole graph every two seconds threw away the focus of a point you had picked with the keyboard.
   // Only draw when something it shows has changed, and put the focus back when it does.
   const key = JSON.stringify([E.curve, E.draft, E.sel, E.drag ? E.drag.i : null, F.curve, F.temp, F.duty, named, minDuty,
-                               safety, dirty(), S.settings?.settings?.temp_source, S.state.sensors.liquid_temp]);
+                               safety, dirty(), unitF(), S.settings?.settings?.temp_source, S.state.sensors.liquid_temp]);
   if (key === E.drawn) return;
   E.drawn = key;
   const focusPt = document.activeElement?.matches?.("#editor .pt") ? +document.activeElement.dataset.i : null;
@@ -92,18 +98,19 @@ function renderEditor() {
     <text class="zone-label" x="${ED.L + 8}" y="${ED.B - 8}">Below ${minDuty}% some fans stall, so curves stay above it</text>`;
   if (dirty()) g += `<polyline class="ghost" points="${line(saved())}"/>`;
   g += `<polygon class="curve-fill" points="${ex(ED.tMin)},${ED.B} ${line(pts)} ${ex(ED.tMax)},${ED.B}"/><polyline class="curve-line" points="${line(pts)}"/>`;
-  if (F.temp != null && F.duty != null && E.curve === F.curve) {
+  const active = E.curve === F.curve;
+  const live = active && F.temp != null && F.duty != null;
+  $("#curve-live").textContent = !active ? "Different curve active" : live ? `${fmtTemp(F.temp)} · ${Math.round(F.duty)}%` : "Unavailable";
+  showPoint();
+  if (live) {
     const t = clamp(F.temp, ED.tMin, ED.tMax), d = F.duty;
-    const right = ex(t) < ED.R - 150;
-    g += `<line class="now-line" x1="${ex(t)}" x2="${ex(t)}" y1="${ED.T}" y2="${ED.B}"/><circle class="now-dot" cx="${ex(t)}" cy="${ey(d)}" r="5"/>
-      <text class="now-label" x="${ex(t) + (right ? 10 : -10)}" y="${ey(d) - 12}" text-anchor="${right ? "start" : "end"}">Now ${fmtTemp(F.temp)}, ${Math.round(d)}% requested</text>`;
+    g += `<line class="now-line" x1="${ex(t)}" x2="${ex(t)}" y1="${ED.T}" y2="${ED.B}"/><circle class="now-dot" cx="${ex(t)}" cy="${ey(d)}" r="5"/>`;
   }
   pts.forEach(([t, d], i) => {
-    g += `<circle class="pt${E.sel === i ? " sel" : ""}" data-i="${i}" cx="${ex(t)}" cy="${ey(d)}" r="8" tabindex="0" role="slider" aria-label="Point ${i + 1}: ${Math.round(toUnit(t))} degrees, ${d} percent" aria-valuenow="${d}" aria-valuemin="${minDuty}" aria-valuemax="100"/>`;
+    g += `<circle class="pt${E.sel === i ? " sel" : ""}" data-i="${i}" cx="${ex(t)}" cy="${ey(d)}" r="8" tabindex="0" role="slider" aria-label="Point ${i + 1}" aria-valuenow="${d}" aria-valuetext="${fmtTemp(t)}, ${d} percent" aria-valuemin="${minDuty}" aria-valuemax="100"/>`;
   });
-  if (E.drag) g += `<text class="tip" x="${ex(pts[E.drag.i][0])}" y="${ey(pts[E.drag.i][1]) - 16}" text-anchor="middle">${fmtTemp(pts[E.drag.i][0])}, ${pts[E.drag.i][1]}%</text>`;
   setHTML($("#editor"), g);
-  if (focusPt != null) $(`#editor .pt[data-i="${focusPt}"]`)?.focus({ preventScroll: true });
+  if (focusPt != null && E.sel === focusPt) $(`#editor .pt[data-i="${focusPt}"]`)?.focus({ preventScroll: true });
   $("#curve-save").disabled = !dirty();
   $("#curve-discard").disabled = !dirty();
   $("#curve-reset").disabled = !S.curves.defaults[E.curve];
@@ -138,6 +145,13 @@ function addCurvePoint(t, d) {
 
 function wireEditor() {
   const svg = $("#editor");
+  svg.addEventListener("focusin", (e) => {
+    const point = e.target.closest(".pt");
+    if (!point || +point.dataset.i === E.sel) return;
+    E.sel = +point.dataset.i;
+    svg.querySelectorAll(".pt").forEach(p => p.classList.toggle("sel", p === point));
+    showPoint();
+  });
   svg.addEventListener("pointerdown", (e) => {
     const c = e.target.closest(".pt");
     if (!c) { E.sel = null; renderEditor(); return; }
@@ -166,10 +180,10 @@ function wireEditor() {
     const i = +c.dataset.i, step = e.shiftKey ? 5 : 1, [t, d] = E.draft[i];
     const moves = { ArrowUp: [0, step], ArrowDown: [0, -step], ArrowRight: [step, 0], ArrowLeft: [-step, 0] };
     if (moves[e.key]) { e.preventDefault(); movePoint(i, t + moves[e.key][0], d + moves[e.key][1]); E.sel = i; }
-    else if ((e.key === "Delete" || e.key === "Backspace") && E.draft.length > 2) { e.preventDefault(); E.draft.splice(i, 1); E.sel = null; }
+    else if ((e.key === "Delete" || e.key === "Backspace") && E.draft.length > 2) { e.preventDefault(); E.draft.splice(i, 1); E.sel = Math.min(i, E.draft.length - 1); }
     else return;
     renderEditor();
-    if (E.sel != null) $(`#editor .pt[data-i="${i}"]`)?.focus();
+    if (E.sel != null) $(`#editor .pt[data-i="${E.sel}"]`)?.focus({ preventScroll: true });
   });
   $("#curve-seg").addEventListener("click", async (e) => {
     const c = e.target.closest("[data-c]")?.dataset.c;

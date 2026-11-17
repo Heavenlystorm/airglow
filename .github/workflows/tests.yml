@@ -87,3 +87,57 @@ jobs:
           name: airglow-setup
           path: dist/releases/*-Setup.exe
           if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: airglow-portable
+          path: dist/releases/*-Portable.zip
+          if-no-files-found: error
+
+  installation:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scenario: clean
+            artifact: airglow-setup
+          - scenario: portable
+            artifact: airglow-portable
+          - scenario: upgrade
+            artifact: airglow-setup
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          path: candidate
+      - name: Check installation and theme
+        shell: pwsh
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          SCENARIO: ${{ matrix.scenario }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = python -c "from airglow import __version__; print(__version__)"
+          $artifact = @(Get-ChildItem candidate -File)
+          if ($artifact.Count -ne 1) { throw 'Expected one candidate package.' }
+          $options = @{ Scenario = $env:SCENARIO; Version = $version }
+          if ($env:SCENARIO -eq 'portable') { $options.Portable = $artifact[0].FullName }
+          else { $options.Setup = $artifact[0].FullName }
+          if ($env:SCENARIO -eq 'upgrade') {
+            # The first stable Firefly installer is a fixed, reproducible upgrade baseline.
+            $options.PreviousVersion = '1.17.0'
+            gh release download v1.17.0 --repo Heavenlystorm/airglow --pattern Airglow-stable-Setup.exe --dir baseline
+            if ($LASTEXITCODE -ne 0) { throw 'Could not download the upgrade baseline.' }
+            $options.PreviousSetup = (Resolve-Path baseline/Airglow-stable-Setup.exe).Path
+            if ((Get-FileHash $options.PreviousSetup).Hash -ne '525D74214D0D69E07E299E8BB8A09C0D66C0CABFCD217EC37CD3097E9D958980') { throw 'Baseline installer checksum mismatch.' }
+          }
+          ./tools/test-windows-package.ps1 @options
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: airglow-installation-${{ matrix.scenario }}
+          path: output/installer-smoke
+          if-no-files-found: warn

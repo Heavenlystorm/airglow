@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     "temp_unit": "C",
     "design": "firefly",              # how the window looks; the lights keep their real colours either way
     "appearance": DEFAULT_APPEARANCE,
+    "quick_actions": {"favorites": [], "recents": []},
     "looks": [],                      # personal display recipes; no lighting or cooling settings
     "energy_price": 0.3797,           # €/kWh for the Cost per hour tile: the German household average, H1 2026
     "fan_failsafe_duty": 30,
@@ -207,6 +208,30 @@ def validate_looks(looks):
     return out
 
 
+def _quick_item(kind, item_id):
+    if kind not in ("effect", "profile") or not isinstance(item_id, str) or not 1 <= len(item_id) <= 256 or not item_id.isprintable():
+        raise ValueError("A quick action needs an effect or profile ID")
+    return {"kind": kind, "id": item_id}
+
+
+def _quick_actions(value):
+    if not isinstance(value, dict):
+        raise ValueError("Invalid quick actions")
+    clean = {}
+    for key, limit in (("favorites", 512), ("recents", 8)):
+        items = value.get(key, [])
+        if not isinstance(items, list) or len(items) > limit:
+            raise ValueError(f"Invalid {key} list")
+        clean[key] = []
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError("Invalid quick action")
+            action = _quick_item(item.get("kind"), item.get("id"))
+            if action not in clean[key]:
+                clean[key].append(action)
+    return clean
+
+
 def validate_settings(patch):
     """Validate a partial settings update; returns the cleaned subset."""
     out = {}
@@ -225,6 +250,8 @@ def validate_settings(patch):
             out[key] = value
         elif key == "appearance":
             out[key] = validate_appearance(value)
+        elif key == "quick_actions":
+            out[key] = _quick_actions(value)
         elif key == "looks":
             out[key] = validate_looks(value)
         elif key == "energy_price":
@@ -810,6 +837,27 @@ class Store:
         with self._lock:
             self._save_config(clean)
         return clean
+
+    def update_quick_action(self, operation, kind, item_id):
+        item = _quick_item(kind, item_id)
+        if operation not in ("pin", "unpin", "use"):
+            raise ValueError("Unknown quick action")
+        with self._lock:
+            saved = self.config["quick_actions"]
+            key = "recents" if operation == "use" else "favorites"
+            items = [entry for entry in saved[key] if entry != item]
+            if operation == "use":
+                items = [item, *items[:7]]
+            elif operation == "pin":
+                if item in saved[key]:
+                    return copy.deepcopy(saved)
+                if len(items) >= 512:
+                    raise ValueError("Unpin a favorite before adding another")
+                items.append(item)
+            candidate = {**saved, key: items}
+            if candidate != saved:
+                self._save_config({"quick_actions": candidate})
+            return copy.deepcopy(candidate)
 
     def reset_settings(self):
         """Put the settings back to their defaults. Everything someone built up stays: zones, presets, fan curves,

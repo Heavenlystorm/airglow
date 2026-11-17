@@ -7,10 +7,14 @@ tag is pushed.
    `1.6.0-beta.1` a beta.
 2. Give it a section in `CHANGELOG.md` (`## 1.6.0`). A beta without its own section uses `## Unreleased`. The
    section becomes the release notes, on GitHub and in Airglow's update notice.
-3. Commit, then tag and push: `git tag v1.6.0` and `git push origin v1.6.0`.
+3. Push the candidate branch. The tests workflow checks the installer, portable ZIP and upgrade on separate
+   Windows VMs. It opens the app, detects the version and checks that fresh users get Firefly and upgrading keeps Paper.
+   After the candidate passes, tag and push with `git tag v1.6.0` and `git push origin v1.6.0`.
 4. The workflow requires the same source qualification as normal CI, checks the tag, builds with PyInstaller, then
    packs the Velopack release. The package and native-host checks must pass before publication. Betas are
-   pre-releases. Stable releases also update winget and the Scoop bucket.
+   pre-releases. The WinGet and Scoop publication steps run when their respective credentials are configured.
+   If the first WinGet submission is awaiting moderation, rerun only the release's `winget` job after it merges.
+   This submits the existing public installer and leaves its checksum intact.
 5. Smoke-test the published Setup.exe on a PC (or VM) that has never had Airglow: install, open, check the Devices
    tab, quit from the tray, uninstall from Apps & features.
 

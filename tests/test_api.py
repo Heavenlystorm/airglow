@@ -289,6 +289,26 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request("POST", f"/api/zones/{enc}/identify", {})[0], 200)
         self.assertEqual(self.request("POST", "/api/zones/nope%2Fz9", cfg)[0], 404)
 
+    def test_zone_override_undo_compares_current_effect_and_preserves_wiring(self):
+        key = "nzxt-hub/ch1"
+        path = "/api/zones/" + urllib.parse.quote(key, safe="")
+        original = self.store.zones()[key]
+        try:
+            status, first = self.request("POST", path, {"override": {"effect": "solid", "params": {"color": "#174289"}}})
+            self.assertEqual((status, first["previous_override"]), (200, original.get("override")))
+            changed = first["config"]["override"]
+            self.assertEqual(self.request("POST", path, dict(first["config"], name="Renamed zone"))[0], 200)
+            undo = {"override": first["previous_override"], "expected_override": changed}
+            status, restored = self.request("POST", path, undo)
+            self.assertEqual((status, restored["config"]["name"], restored["config"]["override"]), (200, "Renamed zone", original.get("override")))
+            self.assertEqual(self.request("POST", path, undo)[0], 409)
+            device = self.manager.get("nzxt-hub")
+            with mock.patch.object(device, "is_open", False):
+                self.assertEqual(self.request("POST", path, {"override": changed})[0], 409)
+            self.assertEqual(self.store.zones()[key], restored["config"])
+        finally:
+            self.request("POST", path, original)
+
     def test_frames(self):
         status, f = self.request("GET", "/api/frames")
         self.assertEqual(status, 200)

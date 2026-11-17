@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.18.0
+- Lighting shows which zone you are editing beside the effect deck. Choose Whole rig to change the shared effect. Undo can restore the previous zone or rig effect.
+- Pin effects and profiles from Lighting or Quick Switch. Open Quick Switch with Ctrl+K to see your favorites and the last eight effects and profiles you applied.
+- Overview gives temperatures and fan readings more room. Devices highlights connection problems and keeps wiring details inside each channel's Configure control.
+- Studio brings drafts and saved effects back into reach and identifies the hardware used in previews. Fan curve editing shows exact values in a fixed legend.
+- Each automation starter opens an editable rule. Check its trigger, action and priority before adding it. Settings brings design, accent, scale and density together under Appearance.
+
 ## 1.17.0
 - Meet Firefly, the new default design for fresh installations. A lantern-carrying companion, plum surfaces,
   apricot controls, and mint accents carry through setup and Overview. Upgrading keeps your saved design.

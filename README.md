@@ -14,15 +14,16 @@ account or telemetry.
 
 ## The Firefly workspace
 
-Firefly is the default design for new installations in 1.17.0. It pairs a lantern-carrying companion with a plum,
-apricot, and mint workspace. Upgrading keeps your saved design. You can switch among thirteen designs in Settings.
-The screenshot below shows four simulated devices.
+Firefly welcomes new users with a lantern-carrying companion, plum work surfaces, and warm apricot controls.
+Upgrading keeps your saved design. Open **Settings → Appearance** to try a different look or adjust the scale.
+The screenshots show Firefly with sample hardware.
 
 ![Firefly workspace with a lighting canvas, saved profiles, fan speeds and CPU and GPU readings](docs/screenshots/firefly-preview.png)
 
 - **Set up your lights.** Arrange fans and strips to match your case, then change the whole rig or one zone. [Lighting](#lighting)
 - **Make an effect.** Stack layers, set a palette or write code. Try it on a sample rig before applying it to your lights. [Studio](#the-studio)
 - **Tune your cooling.** Follow a temperature with a fan curve or switch profiles when a game starts. [Fans and automations](#fans-and-automations)
+- **Find your favorites.** Pin frequently used effects and profiles. Press **Ctrl+K** to find them alongside your recent choices. Profiles that also change fans are labeled **Lighting and cooling**.
 
 Share a setup or ask a question in [GitHub Discussions](https://github.com/Heavenlystorm/airglow/discussions) or
 [r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/).

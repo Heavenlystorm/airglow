@@ -14,7 +14,7 @@ const VIEWS = ["overview", "lighting", "studio", "fans", "automations", "devices
 const READY = {
   overview: "#ov-grid .tile-sensor", lighting: "#deck [data-effect]", studio: "#studio .st-home",
   fans: "#curve-seg button", automations: "#starters .starter, #rules > li",
-  devices: "#dev-list [data-dev]", settings: "#s-design",
+  devices: "#dev-list [data-dev]", settings: "#s-appearance",
 };
 const result = { started: new Date().toISOString(), base: BASE, checks: [], pageErrors: [], failures: [] };
 let current = "startup";
@@ -235,30 +235,28 @@ try {
 
     await check(`${size}-theme-dialog-persistence`, async () => {
       await visit("settings");
-      await page.locator("#s-design").click();
-      await page.locator(".design-gallery").waitFor({ state: "visible" });
-      assert.equal(await page.locator("[data-design-card]").count(), THEMES.length);
-      assert.equal(await page.locator('[data-design-card][aria-checked="true"]').getAttribute("data-design-card"), "graphite");
-      const done = page.locator("#sheet [data-close]");
-      await done.focus();
+      const edit = page.getByRole("button", { name: "Edit appearance" });
+      await edit.click();
+      const design = page.locator("#ap-design"), keep = page.locator("#ap-keep");
+      assert.equal(await design.locator("option").count(), THEMES.length);
+      assert.equal(await design.inputValue(), "graphite");
+      assert.ok(await design.evaluate(el => el === document.activeElement));
+      await keep.focus();
       await page.keyboard.press("Tab");
-      assert.equal(await page.evaluate(() => document.activeElement.dataset.designCard), "graphite", "Dialog focus should wrap to the selected design");
-      const fireflySaved = page.waitForResponse(response => response.url() === BASE + "/api/settings" && response.request().method() === "POST");
-      await page.keyboard.press("Home");
-      assert.ok((await fireflySaved).ok());
-      assert.equal(await page.evaluate(() => document.activeElement.dataset.designCard), "firefly");
-      assert.equal(await page.locator('[data-design-card="firefly"]').getAttribute("aria-checked"), "true");
+      assert.ok(await design.evaluate(el => el === document.activeElement), "Tab wraps to design");
       await page.keyboard.press("Shift+Tab");
-      assert.ok(await done.evaluate((element) => element === document.activeElement), "Reverse Tab should stay inside the dialog");
+      assert.ok(await keep.evaluate(el => el === document.activeElement), "Reverse Tab stays in the editor");
+      await design.selectOption("firefly");
+      await page.waitForFunction(() => document.documentElement.dataset.design === "firefly");
+      assert.equal((await api("/api/settings")).settings.design, "graphite", "Preview leaves the saved design alone");
       await settled();
       await layout(`${size}-theme-dialog`, "settings", true);
-      const saved = page.waitForResponse((response) => response.url() === BASE + "/api/settings" && response.request().method() === "POST");
-      await page.locator('[data-design-card="paper"]').click();
-      assert.ok((await saved).ok(), "Design selection should persist successfully");
-      await page.waitForFunction(() => document.documentElement.dataset.design === "paper");
+      await design.selectOption("paper");
+      const saved = page.waitForResponse(response => response.url() === BASE + "/api/settings" && response.request().method() === "POST");
+      await keep.click();
+      assert.ok((await saved).ok(), "Keep saves the whole look");
+      await page.waitForFunction(() => document.activeElement.id === "s-appearance");
       assert.equal((await api("/api/settings")).settings.design, "paper");
-      await done.click();
-      await page.waitForFunction(() => document.activeElement.id === "s-design");
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.locator(READY.settings).waitFor({ state: "visible" });
       assert.equal(await page.locator("html").getAttribute("data-design"), "paper", "Reload should retain the saved theme");

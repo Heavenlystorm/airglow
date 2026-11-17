@@ -209,12 +209,14 @@ const overlaps = (b, o) => b.x < o.x + o.width && o.x < b.x + b.width && b.y < o
 
 function declutter() {
   const groups = [...svg().querySelectorAll("g.zone")];
-  const shapes = groups.map((g) => [...g.querySelectorAll(".ring, .hit:not(circle)")].map((e) => {
+  const shapes = groups.map((g) => [...g.querySelectorAll(g.querySelector(".ring") ? ".ring" : ".hit")].map((e) => {
     const b = e.getBBox();
+    // A single LED has a generous pointer target. Reserve just the visible dot for label placement.
+    if (e.matches("circle.hit")) return { x: b.x + b.width / 2 - 6, y: b.y + b.height / 2 - 6, width: 12, height: 12 };
     return { x: b.x - 14, y: b.y - 14, width: b.width + 28, height: b.height + 28 };   // the LEDs and their strokes
   }));
   const placed = [];
-  groups.forEach((g, i) => {
+  groups.forEach((g) => {
     const t = g.querySelector("text.label");
     t.classList.remove("clash");
     t.setAttribute("x", t.dataset.x);
@@ -227,7 +229,7 @@ function declutter() {
       t.setAttribute("x", clamp(Number(t.dataset.x), left, Math.max(left, right - b.width)));
       b = t.getBBox();
     }
-    const onZone = (b) => shapes.some((list, j) => j !== i && list.some((o) => overlaps(b, o)));
+    const onZone = (b) => shapes.some(list => list.some(o => overlaps(b, o)));
     const onLabel = (b) => placed.some((o) => overlaps(b, o));
     if (onZone(b) && t.dataset.below) {
       t.setAttribute("y", t.dataset.below);
@@ -235,7 +237,7 @@ function declutter() {
       if (below.y + below.height <= VB_H + VB_M && !onZone(below) && !onLabel(below)) { placed.push(below); return; }
       t.setAttribute("y", t.dataset.y);
     }
-    if (onLabel(b)) t.classList.add("clash");
+    if (onZone(b) || onLabel(b)) t.classList.add("clash");
     else placed.push(b);
   });
 }
@@ -306,8 +308,8 @@ export function renderOverlay() {
   declutter();
   $("#stage").classList.toggle("arranging", st.arranging);
   $("#stage-hint").textContent = st.arranging
-    ? "Drag zones to where they sit in your case. Use the handle to rotate."
-    : (visible.length ? "Select a zone to give it its own effect. Arrange shows switched-off zones too." : "");
+    ? "Drag a zone to move it. Drag its handle to rotate."
+    : (visible.length ? "Pick a zone on the rig to edit its lighting." : "");
 }
 
 // ------------------------------------------------------------ canvas (LEDs)
