@@ -32,10 +32,12 @@ jobs:
         if: matrix.scenario == 'clean'
         shell: pwsh
         run: |
-          $pkg = Get-AppxPackage Microsoft.DesktopAppInstaller
-          if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue) -and -not $pkg) {
+          $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+          $version = if ($cmd) { (& $cmd.Source --version).Trim().TrimStart('v') } else { '0.0' }
+          Write-Host "Runner WinGet $version"
+          if ([version]$version -lt [version]'1.29.380') {
             Install-Module Microsoft.WinGet.Client -Repository PSGallery -Scope CurrentUser -Force
-            Repair-WinGetPackageManager -AllUsers -Latest
+            Repair-WinGetPackageManager -Version 1.29.380 -AllUsers
           }
       - name: Download and verify published packages
         if: matrix.scenario != 'clean'

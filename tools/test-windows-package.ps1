@@ -92,6 +92,7 @@ try {
             if ($appInstaller) { $winget = Join-Path $appInstaller.InstallLocation 'winget.exe' }
         }
         if (-not $winget) { throw 'WinGet is missing from the test runner.' }
+        Record 'WinGet version' (Invoke-WinGet @('--version')).Trim()
         [void](Invoke-WinGet @('settings','--enable','LocalManifestFiles'))
         [void](Invoke-WinGet @('validate','--manifest',$Manifest))
         [void](Invoke-WinGet @('install','--manifest',$Manifest,'--scope','user','--silent',
