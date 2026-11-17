@@ -35,6 +35,23 @@ function Invoke-Setup([string]$path, [string[]]$arguments) {
     if (-not $process.WaitForExit(180000)) { throw "Timed out running $(Split-Path -Leaf $path)." }
     if ($process.ExitCode -ne 0) { throw "$(Split-Path -Leaf $path) exited with $($process.ExitCode)." }
 }
+function Confirm-RunnerPagingNotice {
+    Add-Type -AssemblyName UIAutomationClient
+    $desktop = [Windows.Automation.AutomationElement]::RootElement
+    $all = [Windows.Automation.Condition]::TrueCondition
+    foreach ($window in $desktop.FindAll([Windows.Automation.TreeScope]::Children, $all)) {
+        if ($window.Current.Name -ne 'System Properties' -or $window.Current.ClassName -ne '#32770') { continue }
+        $items = $window.FindAll([Windows.Automation.TreeScope]::Descendants, $all)
+        $notice = @($items | Where-Object { $_.Current.Name -like 'Windows created a temporary paging file on your computer because of a problem that occurred with your paging file configuration*' })
+        $buttons = @($items | Where-Object { $_.Current.ControlType -eq [Windows.Automation.ControlType]::Button })
+        if ($notice.Count -eq 1 -and $buttons.Count -eq 1 -and $buttons[0].Current.Name -eq 'OK') {
+            Record 'Runner notification before acknowledgement' @{ title=$window.Current.Name; message=$notice[0].Current.Name; button='OK' }
+            $buttons[0].GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+            return $true
+        }
+    }
+    return $false
+}
 function Invoke-WinGet([string[]]$arguments) {
     Write-Host "Running WinGet $($arguments -join ' ')"
     $info = [Diagnostics.ProcessStartInfo]::new($winget)
@@ -45,6 +62,12 @@ function Invoke-WinGet([string[]]$arguments) {
     $proc = [Diagnostics.Process]::Start($info)
     $stdout = $proc.StandardOutput.ReadToEndAsync()
     $stderr = $proc.StandardError.ReadToEndAsync()
+    if ($arguments[0] -eq 'install' -and $env:AIRGLOW_QA_ACK_PAGING_NOTICE -eq '1') {
+        for ($attempt=0; $attempt -lt 20 -and -not $proc.HasExited; $attempt++) {
+            if (Confirm-RunnerPagingNotice) { break }
+            Start-Sleep -Seconds 1
+        }
+    }
     $done = $proc.WaitForExit(180000)
     if (-not $done) {
         $processes = @(Get-CimInstance Win32_Process)
@@ -63,11 +86,17 @@ function Invoke-WinGet([string[]]$arguments) {
         Add-Type -AssemblyName UIAutomationClient
         $desktop = [Windows.Automation.AutomationElement]::RootElement
         $topWindows = $desktop.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)
+        $nativeWindow = (Get-Process -Id $proc.Id).MainWindowHandle
+        $nativeElement = if ($nativeWindow -ne [IntPtr]::Zero) { [Windows.Automation.AutomationElement]::FromHandle($nativeWindow) }
+        if ($nativeElement) {
+            $items = $nativeElement.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)
+            Record 'WinGet main HWND' @{ title=$nativeElement.Current.Name; class=$nativeElement.Current.ClassName; labels=@($items | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -Unique -First 30) }
+        }
         foreach ($window in $topWindows) {
             if ($window.Current.ProcessId -notin $related.ProcessId -and $window.Current.ClassName -ne '#32770') { continue }
             $items = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
             $labels = @($items | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -Unique -First 30)
-            Record 'WinGet dialog' @{ title=$window.Current.Name; class=$window.Current.ClassName; labels=$labels }
+            Record 'WinGet dialog' @{ title=$window.Current.Name; class=$window.Current.ClassName; pid=$window.Current.ProcessId; labels=$labels }
         }
         Record 'Registration at timeout' ([bool](Test-Path $reg))
         $proc.Kill($true)

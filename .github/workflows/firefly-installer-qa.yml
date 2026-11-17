@@ -9,13 +9,16 @@ permissions:
 
 jobs:
   windows:
-    runs-on: windows-2025
+    runs-on: ${{ matrix.image }}
     timeout-minutes: 18
     strategy:
       fail-fast: false
       matrix:
-        scenario: [detect-setup]
-    name: Windows / ${{ matrix.scenario }}
+        include:
+          - { scenario: clean, image: windows-2025 }
+          - { scenario: clean, image: windows-2022 }
+          - { scenario: detect-setup, image: windows-2025 }
+    name: ${{ matrix.image }} / ${{ matrix.scenario }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -24,7 +27,7 @@ jobs:
         if: matrix.scenario == 'clean' || matrix.scenario == 'detect-setup'
         with:
           repository: Heavenlystorm/winget-pkgs
-          ref: 5bd485821d2d447bf9746bcfb02b467b33e8d80e
+          ref: 1184466d120ec45b647241507fe7684ddf6ee3dc
           path: manifest-source
           sparse-checkout: manifests/h/Heavenlystorm/Airglow/1.17.0
           persist-credentials: false
@@ -78,6 +81,7 @@ jobs:
         shell: pwsh
         env:
           RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          AIRGLOW_QA_ACK_PAGING_NOTICE: ${{ matrix.image == 'windows-2025' && '1' || '0' }}
           SCENARIO: ${{ matrix.scenario }}
         run: |
           $options = @{Scenario=$env:SCENARIO;Version='1.17.0'}
@@ -86,11 +90,6 @@ jobs:
             detect-setup {
               $options.Scenario = 'clean'
               $options.Manifest = 'manifest-source/manifests/h/Heavenlystorm/Airglow/1.17.0'
-              $installerFile = Join-Path $options.Manifest 'Heavenlystorm.Airglow.installer.yaml'
-              $manifestText = Get-Content -LiteralPath $installerFile -Raw
-              $manifestText = $manifestText.Replace('UpgradeBehavior: install', "ProductCode: Airglow`nUpgradeBehavior: install")
-              [IO.File]::WriteAllText((Resolve-Path $installerFile).Path, $manifestText)
-              Write-Host 'Testing the proposed ProductCode from the verified uninstall registry key.'
               $options.Setup = "$env:RUNNER_TEMP/assets/1.17.0/Airglow-stable-Setup.exe"
               $options.DetectExistingSetup = $true
             }
@@ -109,6 +108,6 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: release-1.17.0-${{ matrix.scenario }}-lifecycle
+          name: release-1.17.0-${{ matrix.image }}-${{ matrix.scenario }}-lifecycle
           path: output/installer-smoke
           if-no-files-found: warn
