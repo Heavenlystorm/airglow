@@ -27,7 +27,7 @@ Here's what you can do:
 - **Make it yours.** Set up the lights in your case, try the built-in effects, and save a look for every mood.
 - **Play in the Studio.** Make an effect from layers, follow the music, or press **Surprise me** and see what happens.
   You can even try it on a sample case before setting up your lights.
-- **Keep an eye on things.** See temperatures, load, power and fans together, with twelve interface designs to choose
+- **Keep an eye on things.** See temperatures, load, power and fans together, with thirteen interface designs to choose
   from. Your lights keep their real colours in every design.
 - **Set it and get on with your day.** Shape a fan curve or make an automation for game time, quiet time or bedtime.
 

@@ -1,5 +1,5 @@
 /* Interface designs.
-   Twelve looks, each a complete palette and its own structural signature: not a hue rotation. Selectors are scoped to
+   Each look has a complete palette and its own structural signature. Selectors are scoped to
    [data-design="…"] on any element, so the same rules paint the live app (on <html>) and the miniature on a Settings
    card (on the card's preview). Every [data-design] element starts from the Graphite palette below, so a preview keeps
    its own design even when the sheet around it is in another one.
@@ -125,6 +125,154 @@
   --dsg-btn-glow: none;
   --dsg-knob-ring: none;
   --dsg-edge-w: 1px;
+}
+
+/* Firefly — warm controls, cool instruments and rounded plum housings. */
+[data-design="firefly"] {
+  --ground: #221d30;
+  --panel: #30293e;
+  --raised: #40364e;
+  --hover: #4b405a;
+  --well: #241f31;
+  --line: #62536d;
+  --line-soft: #493e55;
+  --ink: #fff4e4;
+  --ink-2: #e2d4df;
+  --ink-3: #c2b2c7;
+  --brass: #ffc38b;
+  --brass-hi: #ffdbb2;
+  --brass-glow: #ffc38b26;
+  --hot: #ffa19b;
+  --warm: #ffd37e;
+  --ok: #a4dec6;
+  --display: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  --text: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --engrave: none;
+  --plate: var(--panel);
+  --bevel: inset 0 1px 0 #fff4e40a;
+  --r-stage: 16px;
+  --r-panel: 16px;
+  --r-ctl: 9px;
+  --edge: var(--line-soft);
+  --edge-strong: var(--line);
+  --edge-panel: var(--line-soft);
+  --edge-stage: #4a3f55;
+  --edge-deep: #201b2b;
+  --scope-bg: #1c1925;
+  --btn-top: #463b52;
+  --btn-top-hover: #554860;
+  --card-top: var(--raised);
+  --card-on-top: #51404b;
+  --seg-on-top: #54475c;
+  --layer-top: var(--panel);
+  --layer-on-top: #51404b;
+  --layer-on-bottom: #493943;
+  --power-top: var(--raised);
+  --power-bottom: var(--panel);
+  --thumb-top: #ecdfeb;
+  --thumb-bottom: #beadc8;
+  --knob-top: #e2d4df;
+  --knob-bottom: #b5a3c0;
+  --knob-on-bottom: var(--brass);
+  --notice-bg: #3b2c2e;
+  --notice-edge: #715453;
+  --notice-ink: #ffdbbc;
+  --why-bg: #342d42;
+  --toast-top: #45384f;
+  --primary-ink: #37241f;
+  --primary-edge: #ffc38b;
+  --primary-hover-top: #ffe0bc;
+  --primary-highlight: #fff3e980;
+  --tools-bg: #3a3148;
+  --chip-bg: var(--raised);
+  --sample-bg: #292334;
+  --highlight: #f5dffc0a;
+  --control-ring: #d9c3d84d;
+  --well-inner: inset 0 1px 3px #17131f40;
+  --well-inner-soft: inset 0 1px 2px #17131f30;
+  --shadow-1: 0 2px 4px #17131f24;
+  --shadow-2: 0 10px 28px #17131f55;
+  --shadow-3: 0 20px 60px #17131f99;
+  --data-line: #a5dece;
+  --data-spark: var(--data-line);
+  --data-area: var(--data-line);
+  --data-2: #d1b9f0;
+  --code-bg: #211c2b;
+  --code-gutter: #292233;
+  --code-dim: #ac98b3;
+  --code-ink: var(--ink);
+  --code-keyword: #ddaef3;
+  --code-def: #bbcdfc;
+  --code-string: var(--data-line);
+  --code-number: var(--brass);
+  --code-comment: #baacc5;
+  --code-tag: #f5afbb;
+  --code-attribute: #efd0a2;
+  --code-property: #b6dbeb;
+  --code-selection: #82628966;
+}
+[data-design="firefly"] :is(.wordmark, h1, h2, h3) {
+  letter-spacing: -.025em;
+  font-weight: 650;
+}
+[data-design="firefly"] .appbar { background: #292335; box-shadow: none; }
+[data-design="firefly"] .tabs a { border-radius: 100px; letter-spacing: 0; }
+[data-design="firefly"] .tabs a[aria-current="page"] {
+  background: color-mix(in srgb, var(--brass) 13%, var(--panel));
+  color: var(--brass-hi);
+}
+[data-design="firefly"] .tab-ink { display: none; }
+[data-design="firefly"] :is(.chip-btn, .tile-tools) { backdrop-filter: none; }
+[data-design="firefly"] :is(.ambient, .seg, .text, select.select) { box-shadow: none; }
+[data-design="firefly"] .chip-btn { border-radius: 100px; }
+[data-design="firefly"] .chip-btn:hover { background: var(--hover); border-color: var(--ink-3); }
+[data-design="firefly"] .chip-btn[aria-pressed="true"] { border-color: var(--brass); }
+[data-design="firefly"] .seg button { border-radius: 6px; }
+[data-design="firefly"] .seg button[aria-checked="true"] {
+  color: var(--brass-hi);
+  background: var(--seg-on-top);
+  box-shadow: var(--bevel);
+}
+[data-design="firefly"] .power[aria-pressed="true"]:not([data-held]) {
+  background: var(--brass);
+  border-color: var(--primary-edge);
+  color: var(--primary-ink);
+  box-shadow: var(--bevel);
+}
+[data-design="firefly"] .power[aria-pressed="true"] svg { filter: none; }
+[data-design="firefly"] input[type="range"]::-webkit-slider-runnable-track { border-radius: 3px; }
+[data-design="firefly"] input[type="range"]::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border: 2px solid var(--panel);
+  border-radius: 50%;
+  background: var(--brass-hi);
+  box-shadow: 0 1px 3px #17131f55;
+}
+[data-design="firefly"] input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--focus-color);
+  outline-offset: 1px;
+}
+[data-design="firefly"] .sheet { border-radius: var(--r-stage); }
+[data-design="firefly"] .set-group > h2 { color: var(--ink); }
+[data-design="firefly"] .readout .num,
+[data-design="firefly"] .ro .big,
+.dsg-preview[data-design="firefly"] .dsg-num {
+  font-family: var(--display);
+  font-weight: 450;
+  letter-spacing: -.035em;
+}
+[data-design="firefly"] .g-track { stroke: var(--line-soft); }
+.dsg-preview[data-design="firefly"] .dsg-meter,
+.dsg-preview[data-design="firefly"] .dsg-meter i { border-radius: 10px; }
+.dsg-preview[data-design="firefly"] .dsg-meter i { background: var(--data-line); }
+.dsg-preview[data-design="firefly"] .dsg-tab.on {
+  color: var(--brass-hi);
+  background: color-mix(in srgb, var(--brass) 13%, var(--panel));
+  border: 0;
+  border-radius: 8px;
+  padding: 1px 4px;
 }
 
 /* ------------------------------------------------------------------ ASCII

@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 
 COLOR_ORDERS = ("RGB", "RBG", "BGR", "BRG", "GBR", "GRB")
 TEMP_SOURCES = ("max", "cpu", "gpu", "liquid")    # liquid: an AIO's or custom loop's coolant, when LHM reads one
-DESIGNS = ("graphite", "ascii", "paper", "amber", "contrast", "neon",
+DESIGNS = ("firefly", "graphite", "ascii", "paper", "amber", "contrast", "neon",
            "kiln", "lumen", "midnight", "spore", "rim", "darkroom")   # interface designs; ids match web/js/design.js
 MIN_FAN_DUTY = 20          # below this some fans stall
 SAFETY_TEMP = 90           # at or above this the hub fans run at 100% whatever the curve says
@@ -35,7 +35,7 @@ DEFAULT_CONFIG = {
     "lhm_url": "http://127.0.0.1:8085",
     "temp_source": "max",
     "temp_unit": "C",
-    "design": "graphite",             # how the window looks; the lights keep their real colours either way
+    "design": "firefly",              # how the window looks; the lights keep their real colours either way
     "appearance": DEFAULT_APPEARANCE,
     "looks": [],                      # personal display recipes; no lighting or cooling settings
     "energy_price": 0.3797,           # €/kWh for the Cost per hour tile: the German household average, H1 2026
@@ -712,6 +712,9 @@ class Store:
             log.warning("ignoring config.json: it doesn't hold an object")
             raw = {}
         cfg = copy.deepcopy(DEFAULT_CONFIG)
+        if raw or self._load_failed:
+            # Older files without a recognized design used Graphite. A valid saved choice wins below.
+            cfg["design"] = "graphite"
         self.schema = raw.get("schema", 0) if isinstance(raw.get("schema", 0), int) else 0
         cfg["schema"] = self.schema
         for key, value in raw.items():

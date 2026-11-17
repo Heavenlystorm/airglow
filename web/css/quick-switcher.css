@@ -1,3 +1,35 @@
+.nav-space { display: contents; }
+@media (min-width: 961px) {
+  /* Pinned readings, typeface and interface zoom all change the room left for tabs. */
+  .nav-space { display: grid; align-items: center; min-width: 0; height: 100%; container: nav-space / inline-size; }
+  @container nav-space (max-width: 610px) {
+    .tabs a { padding-inline: 6px; }
+  }
+  @container nav-space (max-width: 480px) {
+    .tabs { display: none; }
+    .compact-nav { display: block; }
+    .compact-nav select { max-width: 100%; }
+  }
+}
+.quick-launch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  gap: 7px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 9px;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.quick-launch:hover { color: var(--ink); background: var(--hover); }
+.quick-launch svg, .qs-field svg { width: 18px; height: 18px; }
+.quick-launch kbd { font: 500 11px/1 var(--text); white-space: nowrap; }
+
 .sheet:has(.quick-switcher) {
   width: min(600px, calc((100vw - 32px) / var(--ui-scale, 1)));
   animation-duration: 180ms;
@@ -5,18 +37,40 @@
 
 .sheet .quick-switcher { gap: 12px; }
 .quick-switcher .sheet-head { align-items: center; }
-.quick-switcher .text { min-width: 0; width: 100%; }
+.qs-field { position: relative; display: flex; align-items: center; }
+.qs-field svg { position: absolute; left: 13px; color: var(--ink-2); pointer-events: none; }
+.quick-switcher .qs-field .text { min-width: 0; width: 100%; min-height: 44px; padding-inline-start: 40px; }
+.qs-filters { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
+.qs-mobile-filter { display: none; }
+.qs-filters button {
+  flex: none;
+  min-height: 32px;
+  padding: 3px 10px;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.qs-filters button:hover { background: var(--hover); color: var(--ink); }
+.qs-filters button[aria-pressed="true"] {
+  color: var(--brass-hi);
+  background: color-mix(in srgb, var(--brass) 10%, var(--panel));
+  border-color: color-mix(in srgb, var(--brass) 45%, var(--panel));
+}
 .qs-results {
   max-height: min(360px, calc(47dvh / var(--ui-scale, 1)));
   overflow: auto;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
 }
 .qs-option {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
-  align-items: baseline;
-  gap: 4px 14px;
-  min-height: 42px;
+  grid-template-columns: 18px minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  gap: 2px 12px;
+  min-height: 44px;
   padding: 10px 12px;
   border-radius: var(--r-ctl);
   overflow-wrap: anywhere;
@@ -28,12 +82,41 @@
   box-shadow: inset 0 0 0 1px var(--focus-color);
 }
 .qs-option[aria-disabled="true"] { cursor: wait; }
+.qs-option .qs-type { width: 17px; height: 17px; color: var(--ink-2); }
+.qs-option[aria-selected="true"] .qs-type { color: var(--brass-hi); }
 .qs-option small { color: var(--ink-2); font-size: 12px; }
 .qs-status { color: var(--ink-2); overflow-wrap: anywhere; }
+.qs-reset { justify-self: start; align-self: start; min-height: 32px; }
+@media (min-width: 961px) and (max-width: 1280px) {
+  .quick-launch kbd { display: none; }
+  .quick-launch { padding: 0; }
+}
 @media (max-width: 540px) {
   .sheet .quick-switcher { padding-inline: 16px; }
-  .qs-option { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .qs-filters { display: none; }
+  .qs-mobile-filter {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 12px;
+    color: var(--ink-2);
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 13px;
+  }
+  .qs-mobile-filter .select { width: auto; min-width: 0; flex: 1; min-height: 34px; }
+  .qs-option { grid-template-columns: 18px minmax(0, 1fr); }
+  .qs-option small { grid-column: 2; }
+  .qs-option .qs-type { grid-row: span 2; }
+}
+@media (max-width: 600px) {
+  .appbar { grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 9px; }
+  .bar-right { display: contents; }
+  .bar-right .quick-launch { grid-column: 2; grid-row: 1; }
+  .bar-right .power { grid-column: 3; grid-row: 1; }
+  .bar-right .ambient { grid-column: 1 / -1; grid-row: 2; justify-self: end; max-width: 100%; flex-wrap: wrap; }
+  .compact-nav { grid-row: 3; }
 }
 @media (forced-colors: active) {
   .qs-option[aria-selected="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
+  .qs-filters button[aria-pressed="true"] { border-color: Highlight; }
 }

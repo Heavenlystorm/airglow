@@ -82,7 +82,7 @@ test("Overview uses large displays and keeps responsive tile editing accurate", 
     assert.deepEqual(await api("/api/overview"), original, "Window resizing must preserve saved tile sizes");
 
     await page.setViewportSize({ width: 3840, height: 2160 });
-    for (const design of ["ascii", "paper", "amber", "contrast", "neon", "kiln", "lumen", "midnight", "spore", "rim", "darkroom", "graphite"]) {
+    for (const design of ["firefly", "ascii", "paper", "amber", "contrast", "neon", "kiln", "lumen", "midnight", "spore", "rim", "darkroom", "graphite"]) {
       await api("/api/settings", { design });
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.locator("#ov-grid .tile-sensor").first().waitFor({ state: "visible" });

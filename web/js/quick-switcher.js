@@ -1,6 +1,15 @@
-import { $, $$, S, cap, emit, esc, post, setHTML, toast } from "./core.js";
+import { $, $$, S, cap, emit, esc, on, post, setHTML, toast } from "./core.js";
 import { activateOverviewWorkspace } from "./overview.js";
 import { closeSheet, openSheet } from "./sheet.js";
+
+const categories = [
+  { kind: "all", label: "All" },
+  { kind: "section", label: "Sections", icon: "section" },
+  { kind: "effect", label: "Effects", icon: "effect" },
+  { kind: "profile", label: "Profiles", icon: "sliders" },
+  { kind: "workspace", label: "Workspaces", icon: "workspace" },
+];
+const icons = Object.fromEntries(categories.map(({ kind, icon }) => [kind, icon]));
 
 function commands(sections, ready) {
   const navigation = sections.map(id => ({ kind: "section", id, name: cap(id), action: `Open ${cap(id)}` }));
@@ -78,6 +87,7 @@ export function initQuickSwitcher(sections, catalogState) {
   let current = null, busy = "";
   const active = () => current?.root.isConnected && $("#sheet").open;
   const refresh = () => { if (active()) current.render(); };
+  on("state", refresh);
 
   function open() {
     if (active()) { current.input.focus(); return; }
@@ -86,12 +96,23 @@ export function initQuickSwitcher(sections, catalogState) {
     const sheet = openSheet(`<div class="body quick-switcher">
       <div class="sheet-head"><h2>Quick switch</h2><button class="icon-btn" data-quick-close aria-label="Close Quick switch"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div>
       <label class="sr" for="qs-search">Search actions</label>
-      <input id="qs-search" class="text search" type="search" role="combobox" aria-autocomplete="list" aria-controls="qs-results" aria-expanded="false" placeholder="Search actions" autocomplete="off" autofocus>
+      <div class="qs-field">
+        <svg aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="qs-search" class="text search" type="search" role="combobox" aria-autocomplete="list" aria-controls="qs-results" aria-expanded="false" placeholder="Search by name or action" autocomplete="off" autofocus>
+      </div>
+      <div class="qs-filters" role="group" aria-label="Filter actions">
+        ${categories.map(({ kind, label }) => `<button type="button" data-qs-kind="${kind}" aria-pressed="${kind === "all"}">${label}</button>`).join("")}
+      </div>
+      <label class="qs-mobile-filter">Search in
+        <select class="select">${categories.map(({ kind, label }) => `<option value="${kind}">${kind === "all" ? "All actions" : label}</option>`).join("")}</select>
+      </label>
       <div id="qs-results" class="qs-results" role="listbox" aria-label="Matching actions"></div>
       <p class="qs-status" role="status" hidden></p>
+      <button class="text-link qs-reset" type="button" hidden>Show all actions</button>
     </div>`);
     const root = $(".quick-switcher", sheet), input = $("#qs-search", root), list = $("#qs-results", root), status = $(".qs-status", root);
-    let items = [], selected = 0, message = "";
+    const filters = $(".qs-filters", root), mobileFilter = $(".qs-mobile-filter select", root), reset = $(".qs-reset", root);
+    let items = [], selected = 0, message = "", kind = "all";
     const session = { root, input, render };
     current = session;
 
@@ -102,7 +123,10 @@ export function initQuickSwitcher(sections, catalogState) {
 
     function markSelection(scroll = false) {
       const options = $$("[role=option]", list);
-      for (const [index, option] of options.entries()) option.setAttribute("aria-selected", String(index === selected));
+      for (const [index, option] of options.entries()) {
+        const value = String(index === selected);
+        if (option.getAttribute("aria-selected") !== value) option.setAttribute("aria-selected", value);
+      }
       const row = options[selected];
       if (row) {
         input.setAttribute("aria-activedescendant", row.id);
@@ -110,12 +134,16 @@ export function initQuickSwitcher(sections, catalogState) {
       } else input.removeAttribute("aria-activedescendant");
     }
 
-    function render() {
+    function render(keepSelection = true) {
       const state = catalogState();
-      items = search(commands(sections, state === "ready"), input.value);
-      selected = Math.min(selected, Math.max(0, items.length - 1));
+      const previousItem = keepSelection ? items[selected] : null;
+      const catalog = commands(sections, state === "ready");
+      items = search(kind === "all" ? catalog : catalog.filter(item => item.kind === kind), input.value);
+      if (previousItem) selected = items.findIndex(item => item.kind === previousItem.kind && item.id === previousItem.id);
+      else if (!keepSelection) selected = 0;
       const body = items.map((item, index) => `<div id="qs-option-${index}" class="qs-option" role="option" data-index="${index}" aria-disabled="${!!busy}">
-        <span>${esc(item.name)}</span><small>${esc(item.action)}${item.detail ? ` · ${esc(item.detail)}` : ""}</small></div>`).join("");
+        <svg class="qs-type" aria-hidden="true"><use href="#i-${icons[item.kind]}"/></svg>
+        <span>${esc(item.name)}</span><small>${esc(item.kind === "section" ? "Open section" : item.action)}${item.detail ? ` · ${esc(item.detail)}` : ""}</small></div>`).join("");
       setHTML(list, body);
       list.hidden = !items.length;
       input.setAttribute("aria-expanded", String(!!items.length));
@@ -125,12 +153,18 @@ export function initQuickSwitcher(sections, catalogState) {
         !items.length ? "No matching actions." : "");
       status.hidden = !note;
       status.classList.toggle("err", !!message);
-      status.textContent = note;
+      if (status.textContent !== note) status.textContent = note;
+      reset.hidden = !!items.length || !!busy || (!input.value && kind === "all");
     }
 
     async function choose(index) {
       const item = items[index];
       if (!item || busy) return;
+      if (!commands(sections, catalogState() === "ready").some(command => command.kind === item.kind && command.id === item.id)) {
+        message = "This action is no longer available. Choose another result.";
+        render();
+        return;
+      }
       selected = index;
       message = "";
       busy = item.kind === "effect" || item.kind === "profile" ? `Applying ${item.name}…` : `${item.action}…`;
@@ -152,13 +186,34 @@ export function initQuickSwitcher(sections, catalogState) {
       if (outcome.message || outcome.error) toast(outcome.message || outcome.error, !!outcome.error);
     }
 
-    input.addEventListener("input", () => { selected = 0; message = ""; render(); list.scrollTop = 0; });
+    function refilter(nextKind) {
+      kind = nextKind;
+      mobileFilter.value = kind;
+      message = "";
+      for (const button of $$("[data-qs-kind]", filters)) button.setAttribute("aria-pressed", String(button.dataset.qsKind === kind));
+      render(false);
+      list.scrollTop = 0;
+    }
+    input.addEventListener("input", () => refilter(kind));
+    filters.addEventListener("click", event => {
+      const button = event.target.closest("[data-qs-kind]");
+      if (!button) return;
+      refilter(button.dataset.qsKind);
+      input.focus();
+    });
+    mobileFilter.addEventListener("change", () => refilter(mobileFilter.value));
+    reset.addEventListener("click", () => {
+      input.value = "";
+      refilter("all");
+      input.focus();
+    });
     input.addEventListener("keydown", (event) => {
       if (event.isComposing) return;
       if (event.key === "Enter") { event.preventDefault(); choose(selected); return; }
       if ((event.key !== "ArrowDown" && event.key !== "ArrowUp") || !items.length) return;
       event.preventDefault();
-      selected = (selected + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      if (selected < 0) selected = event.key === "ArrowDown" ? 0 : items.length - 1;
+      else selected = (selected + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
       markSelection(true);
     });
     list.addEventListener("mousedown", event => { if (event.target.closest("[data-index]")) event.preventDefault(); });
@@ -177,6 +232,7 @@ export function initQuickSwitcher(sections, catalogState) {
     input.focus();
   }
 
+  $("#quick-open").addEventListener("click", open);
   document.addEventListener("keydown", (event) => {
     if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey || event.isComposing || event.key.toLowerCase() !== "k") return;
     if ($("#sheet").open && !active()) return;

@@ -7,9 +7,6 @@
 .st-workflow-line strong[data-state="live"] { color: var(--brass-hi); }
 .st-workflow-line > span { flex: 1; min-width: 180px; }
 .st-workflow-error { margin: 8px 0 0; font-size: 13px; color: var(--warm); overflow-wrap: anywhere; }
-.st-remix-steps { display: flex; flex-wrap: wrap; gap: 6px 26px; margin: 10px 0 0; padding-left: 18px; color: var(--ink-3); font-size: 12px; }
-.st-remix-steps li { padding-right: 8px; }
-.st-remix-steps [aria-current="step"] { color: var(--ink); font-weight: 600; }
 .st-details { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
 .st-details > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; font-weight: 600; padding: 4px 0 8px; }
 .st-details[open] > summary { color: var(--ink); margin-bottom: 8px; }
@@ -55,7 +52,6 @@
   .st-edit .st-right { grid-column: 1; grid-row: 5; border-top: 1px solid var(--line-soft); }
   .st-workflow { padding: 10px 12px; }
   .st-workflow-line > span { flex-basis: 100%; }
-  .st-remix-steps { gap: 5px 24px; }
   .st-top .st-name { max-width: calc(100% - 50px); }
   .st-top .seg { margin-right: auto; }
   .st-stagebar { flex-wrap: wrap; gap: 10px; }

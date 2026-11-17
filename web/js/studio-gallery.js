@@ -2,6 +2,13 @@
 import { $, $$, S, emit, esc, fail, get, post, setHTML, toast } from "./core.js";
 import { closeSheet, openSheet } from "./sheet.js";
 const LICENSES = ["MIT", "Apache-2.0", "BSD-3-Clause", "MPL-2.0", "GPL-3.0-or-later"];
+export function cardMedia(poster) {
+  return `<div class="st-card-media">${poster
+    ? `<img class="st-poster" src="art/studio/${esc(poster)}.webp" alt="Sample rig showing this effect" width="480" height="300">`
+    : '<span class="st-preview-note"><svg aria-hidden="true"><use href="#i-effect"/></svg><span>Preparing preview…</span></span>'}
+    <canvas class="st-live" aria-hidden="true"></canvas></div>`;
+}
+
 export function createStudioGallery({ H, E, box, remember, save, queueStills, addStill, effectRunnable }) {
 let sheetGallery = null, generation = 0;
 const isOpen = () => H.view === "community" && !!box() && !box().closest(".view")?.hidden;
@@ -45,7 +52,7 @@ function paintCommunity() {
     <div class="st-filter"><input class="text" id="st-search" placeholder="Search names, authors, tags" value="${esc(H.search)}" spellcheck="false">
       <div class="chips"><button class="chip-btn" data-tag="" aria-pressed="${!H.tag}">All</button><button class="chip-btn" data-tag="music" aria-pressed="${H.tag === "music"}">Music</button>
       ${tags.map((t) => `<button class="chip-btn" data-tag="${esc(t)}" aria-pressed="${H.tag === t}">${esc(t)}</button>`).join("")}</div></div>
-    ${items.length ? `<div class="st-grid">${items.map((e) => `<div class="st-card" data-card="${esc(e.id)}"><canvas class="st-live" aria-hidden="true"></canvas>
+    ${items.length ? `<div class="st-grid">${items.map((e) => `<div class="st-card" data-card="${esc(e.id)}">${cardMedia()}
       <div class="st-cap"><strong>${esc(e.name)}${e.featured ? ` <span class="tag new">Featured</span>` : ""}</strong><span>by ${esc(e.author)}${e.audio ? ` <i class="st-badge">Music</i>` : ""}</span>
       ${e.description ? `<p class="st-desc">${esc(e.description)}</p>` : ""}</div>
       <div class="st-acts"><button class="btn quiet st-scene-play" data-preview="${esc(e.id)}" aria-pressed="false" aria-label="Play preview of ${esc(e.name)}">Play preview</button>${e.installed && !e.update ? `<button class="btn" disabled>Installed</button>` : `<button class="btn primary" data-install="${esc(e.id)}">${e.update ? "Update" : "Install"}</button>`}
@@ -76,7 +83,13 @@ function paintCommunity() {
         const { effect } = await get(`/api/studio/gallery/effect?id=${encodeURIComponent(id)}`);
         if (!isOpen() || H.io !== io || !en.target.isConnected) continue;
         addStill({ key: id, eff: effectRunnable(effect) });
-      } catch { /* the card stays dark */ }
+      } catch {
+        if (isOpen() && H.io === io && en.target.isConnected) {
+          en.target.dataset.previewMissing = "true";
+          en.target.querySelector(".st-preview-note span").textContent = "Preview unavailable";
+          en.target.querySelector("[data-preview]").disabled = true;
+        }
+      }
     }
   }));
   $$(".st-card", box()).forEach((c) => io.observe(c));

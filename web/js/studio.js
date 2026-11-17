@@ -15,7 +15,7 @@ import { closeSheet, openSheet } from "./sheet.js";
 import { MASTER, uid, newDoc, normalizeDoc, snapDoc as snapshotDocument, createHistory, createDraftStorage,
   DRAFT_KEY, PALETTE_KEY, cleanPalettes, addPalette, workflowStatus } from "./studio-document.js";
 import { createLivePreview } from "./studio-preview.js";
-import { createStudioGallery } from "./studio-gallery.js";
+import { cardMedia, createStudioGallery } from "./studio-gallery.js";
 import { scenePackExport, scenePackImport, packHistoryHTML } from "./studio-packs.js";
 import { VARIATION_LIMIT, documentKey, captureVariation, restoreVariation, interpolateVariation,
   varyMaster, addVariation, createVariationStore, canPlayScene } from "./studio-variations.js";
@@ -89,7 +89,7 @@ function workflowHTML() {
   return `<div class="st-workflow" id="st-workflow" aria-live="polite"><div class="st-workflow-line"><strong id="st-output-state">Preview only</strong>
     <span id="st-output-note"></span><button class="btn quiet" data-st="stop-preview" id="st-stop-preview" hidden>Stop preview</button></div>
     <p class="st-workflow-error" id="st-workflow-error" hidden></p>
-    <ol class="st-remix-steps" aria-label="Create an effect"><li>Choose a starting effect</li><li id="st-step-edit">Edit palette, macros and layers</li><li id="st-step-save">Save your effect</li><li id="st-step-apply">Apply when ready</li></ol></div>`;
+    </div>`;
 }
 
 function paintWorkflow() {
@@ -105,10 +105,6 @@ function paintWorkflow() {
   if (error) { error.textContent = message; error.hidden = !message; }
   const stop = $("#st-stop-preview");
   if (stop) { stop.hidden = !(LIVE.state.confirmed || LIVE.state.wanted || LIVE.state.error || S.state?.trial?.kind === "studio"); stop.disabled = LIVE.state.pending; }
-  for (const [id, current] of [["edit", !!E.doc && (!E.doc.fx_id || E.doc.dirty)], ["save", !!E.doc?.fx_id && !E.doc.dirty && status.kind !== "applied"], ["apply", status.kind === "applied"]]) {
-    const step = $(`#st-step-${id}`);
-    if (step) { if (current) step.setAttribute("aria-current", "step"); else step.removeAttribute("aria-current"); }
-  }
 }
 
 function favoritePalettes() {
@@ -375,7 +371,7 @@ export function initStudio() {
     if (!document.hidden && H.view !== "edit") {
       for (const [key, frame] of STILL.frames) {
         const canvas = cardCanvas(key);
-        if (canvas) paintRig(canvas, frame.frames, { pad: 18, zones: frame.zones });
+        if (canvas) paintGalleryFrame(canvas, frame.frames, frame.zones);
       }
       pump();
     }
@@ -696,7 +692,7 @@ async function histGo(dir) {
 function cardHTML(eff, acts) {
   const by = eff.origin === "community" ? `by ${esc(eff.author)}` : eff.kind === "code" ? "Code" : `${eff.layers?.length || 0} layer${eff.layers?.length === 1 ? "" : "s"}`;
   const music = eff.permissions?.includes("audio") ? `<i class="st-badge">Music</i>` : "";
-  return `<div class="st-card" data-card="${esc(eff.fx_id || eff.id)}"><canvas class="st-live" aria-hidden="true"></canvas>
+  return `<div class="st-card" data-card="${esc(eff.fx_id || eff.id)}">${cardMedia()}
     <div class="st-cap"><strong>${esc(eff.name)}</strong><span>${by} ${music}</span></div>
     <div class="st-acts"><button class="btn quiet st-scene-play" data-preview="${esc(eff.fx_id || eff.id)}" aria-pressed="false" aria-label="Play preview of ${esc(eff.name)}">Play preview</button>${acts}</div></div>`;
 }
@@ -707,26 +703,26 @@ function renderHome(pickStart) {
   const using = S.state?.scene?.effect;
   const rig = litZones().length;
   setHTML(box(), `<div class="st-home">
-    <div class="page-head"><div><h1>Studio</h1>
-      <p class="lede">Choose a starting effect, edit its palette and layers, then save. Apply it to your lights when you are ready.</p></div>
-      <div class="btn-row"><button class="btn" data-st="learn">Learn</button><a class="btn" href="#studio/community">Community effects</a>
-      <button class="btn" data-st="blend-effects">Blend saved effects</button><button class="btn" data-st="surprise">Surprise me</button><button class="btn primary" data-st="new">New effect</button></div></div>
+    <div class="page-head"><div class="st-title"><h1>Studio</h1><button class="text-link" data-st="learn">Guide</button></div>
+      <div class="btn-row"><a class="btn" href="#studio/community">Community effects</a>
+      <button class="btn primary" data-st="new">New effect</button></div></div>
     ${draftBanner()}
     ${workflowHTML()}
     ${rig ? "" : `<div class="banner"><span>No lights are set up yet, so previews use a sample case. <a href="#devices">Set up your lights</a> to see your own.</span></div>`}
-    <section class="st-sec${pickStart ? " flash" : ""}" id="st-start"><h2 class="st-h">Start from</h2>
-      <div class="st-grid">${LAYER_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="${t.id}"><canvas class="st-live" aria-hidden="true"></canvas>
+    <section class="st-sec${pickStart ? " flash" : ""}" id="st-start"><div class="st-library-head"><h2 class="st-h">Effect templates</h2>
+      <button class="btn quiet" data-st="surprise">Surprise me</button></div>
+      <div class="st-grid">${LAYER_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="${t.id}">${cardMedia(t.id)}
         <div class="st-cap"><strong>${esc(t.name)}</strong><span>${esc(t.description)}</span></div>
-        <div class="st-acts"><button class="btn quiet st-scene-play" data-preview="${t.id}" aria-pressed="false" aria-label="Play preview of ${esc(t.name)}">Play preview</button><button class="btn" data-tpl="${t.id}">Start here</button></div></div>`).join("")}
-        ${CODE_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="code-${t.id}"><canvas class="st-live" aria-hidden="true"></canvas>
+        <div class="st-acts"><button class="btn" data-tpl="${t.id}">Start here</button><button class="btn quiet st-scene-play" data-preview="${t.id}" aria-pressed="false" aria-label="Play preview of ${esc(t.name)}">Play preview</button></div></div>`).join("")}
+        ${CODE_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="code-${t.id}">${cardMedia("code-" + t.id)}
         <div class="st-cap"><strong>${esc(t.name)} <i class="st-badge">Code</i></strong><span>${esc(t.description)}</span></div>
-        <div class="st-acts"><button class="btn quiet st-scene-play" data-preview="code-${t.id}" aria-pressed="false" aria-label="Play preview of ${esc(t.name)}">Play preview</button><button class="btn" data-code-tpl="${t.id}">Start here</button></div></div>`).join("")}</div></section>
-    <section class="st-sec"><h2 class="st-h">Your effects</h2>
+        <div class="st-acts"><button class="btn" data-code-tpl="${t.id}">Start here</button><button class="btn quiet st-scene-play" data-preview="code-${t.id}" aria-pressed="false" aria-label="Play preview of ${esc(t.name)}">Play preview</button></div></div>`).join("")}</div></section>
+    <section class="st-sec"><div class="st-library-head"><h2 class="st-h">Your effects</h2><button class="btn quiet" data-st="blend-effects">Blend saved effects</button></div>
       ${mine.length ? `<div class="st-grid">${mine.map((e) => cardHTML(e, `
         <button class="btn${using === e.fx_id ? " on" : ""}" data-use="${esc(e.fx_id)}">${using === e.fx_id ? "On your lights" : "Use"}</button>
         <button class="btn" data-edit="${esc(e.fx_id)}">Edit</button>
         <button class="icon-btn" data-more="${esc(e.fx_id)}" aria-label="More for ${esc(e.name)}"><svg><use href="#i-more"/></svg></button>`)).join("")}</div>`
-        : `<p class="hint">Nothing saved yet. Pick a starting effect above. Edits appear in the preview; live draft preview is optional.</p>`}</section>
+        : `<p class="hint">Your saved effects will appear here.</p>`}</section>
     ${community.length ? `<section class="st-sec"><h2 class="st-h">From the community</h2><div class="st-grid">${community.map((e) => cardHTML(e, `
         <button class="btn${using === e.fx_id ? " on" : ""}" data-use="${esc(e.fx_id)}">${using === e.fx_id ? "On your lights" : "Use"}</button>
         <button class="btn" data-remix="${esc(e.fx_id)}">Remix</button>
@@ -747,8 +743,8 @@ function renderHome(pickStart) {
   });
   $("#st-import")?.addEventListener("change", (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importFile(f); });
   queueStills([
-    ...LAYER_TEMPLATES.map((t) => ({ key: t.id, eff: { kind: "layers", layers: { v: 2, layers: t.layers, master: t.master || {}, expose: t.expose || {} }, params: {} } })),
-    ...CODE_TEMPLATES.map((t) => ({ key: `code-${t.id}`, eff: { kind: "code", code: t.code, params: Object.fromEntries(t.params.map((p) => [p.id, p.default])) } })),
+    ...LAYER_TEMPLATES.map((t) => ({ key: t.id, poster: true, eff: { kind: "layers", layers: { v: 2, layers: t.layers, master: t.master || {}, expose: t.expose || {} }, params: {} } })),
+    ...CODE_TEMPLATES.map((t) => ({ key: `code-${t.id}`, poster: true, eff: { kind: "code", code: t.code, params: Object.fromEntries(t.params.map((p) => [p.id, p.default])) } })),
     ...effects.map((e) => ({ key: e.fx_id, eff: effectRunnable(e) })),
   ]);
 }
@@ -771,7 +767,12 @@ function queueStills(items) { stopStills(); wireHover(); items.forEach(addStill)
 
 const galleryActive = () => ["home", "community"].includes(H.view) && !!box() && !box().closest(".view")?.hidden;
 
-function addStill(item) { if (!galleryActive()) return; STILL.items.push(item); STILL.queue.push(item); pump(); }
+function addStill(item) {
+  if (!galleryActive()) return;
+  STILL.items.push(item);
+  // The bundled starters already ship with frames rendered on the sample rig.
+  if (!item.poster) { STILL.queue.push(item); pump(); }
+}
 
 // one effect at a time: start it, take one frame, stop it
 async function pump() {
@@ -790,7 +791,9 @@ async function pump() {
 function wireHover() {
   box().onpointerover = e => {
     if (e.pointerType === "touch" || STILL.live?.pinned || e.target.closest("[data-preview]")) return;
-    playCard(e.target.closest("[data-card]")?.dataset.card);
+    const card = e.target.closest("[data-card]");
+    // Moving between children can fire repeatedly. A fresh keyboard focus or explicit Play can retry.
+    if (!card?.querySelector(".st-live[data-playback-failed]")) playCard(card?.dataset.card);
   };
   box().onpointerleave = () => { if (!STILL.live?.pinned) stopCard(); };
   // Stable listeners are deduplicated by the DOM on repaints; onfocusin is not a portable handler property.
@@ -820,7 +823,7 @@ function refreshSceneMotion() {
   if (!allowed) stopCard();
   if (document.hidden) STILL.cancel?.();
   $$("[data-preview]", box()).forEach(button => {
-    button.disabled = !allowed;
+    button.disabled = !allowed || button.closest("[data-card]").dataset.previewMissing === "true";
     button.title = allowed ? "Preview on screen; Escape stops playback" : "Still preview follows your reduced-motion preference";
   });
 }
@@ -830,7 +833,8 @@ function stopCard() {
   const { key } = STILL.live;
   STILL.live.stop(); STILL.live = null;
   const canvas = cardCanvas(key), frame = STILL.frames.get(key);
-  if (canvas && frame) paintRig(canvas, frame.frames, { pad: 18, zones: frame.zones });
+  if (canvas && frame) paintGalleryFrame(canvas, frame.frames, frame.zones);
+  else canvas?.classList.remove("has-frame");
   const card = canvas?.closest("[data-card]");
   card?.classList.remove("is-playing");
   const button = card?.querySelector("[data-preview]");
@@ -852,10 +856,20 @@ function playCard(key, pinned = false) {
   if (button) { button.setAttribute("aria-pressed", "true"); button.textContent = "Stop preview"; }
 }
 
+function paintGalleryFrame(canvas, frames, zones) {
+  paintRig(canvas, frames, { pad: 18, zones });
+  canvas.classList.add("has-frame");
+}
+
+function unavailableStill(canvas) {
+  const note = canvas.parentElement?.querySelector(".st-preview-note span");
+  if (note) note.textContent = "Preview unavailable";
+}
+
 function still(canvas, eff, gen, key) {
   const zones = rigZones(), stamp = JSON.stringify([eff, zones]);
   const cached = STILL.cache.get(stamp);
-  if (cached) { STILL.frames.set(key, cached); paintRig(canvas, cached.frames, { pad: 18, zones }); return Promise.resolve(); }
+  if (cached) { STILL.frames.set(key, cached); paintGalleryFrame(canvas, cached.frames, zones); return Promise.resolve(); }
   return new Promise((resolve) => {
     const { points, slices } = ledPoints(zones);
     let done = false, timeout = 0;
@@ -876,15 +890,15 @@ function still(canvas, eff, gen, key) {
           const frame = { frames: zoneFrames(colors, slices), zones };
           STILL.frames.set(key, frame); STILL.cache.set(stamp, frame);
           if (STILL.cache.size > 48) STILL.cache.delete(STILL.cache.keys().next().value);
-          if (STILL.live?.key !== key && !document.hidden) paintRig(canvas, frame.frames, { pad: 18, zones });
+          if (STILL.live?.key !== key && !document.hidden) paintGalleryFrame(canvas, frame.frames, zones);
         }
         finish();
       },
-      onStopped: finish, onError: finish,
+      onStopped: finish, onError: () => { unavailableStill(canvas); finish(); },
     });
     STILL.cancel = cancel;
     runner.load(eff, points);
-    timeout = setTimeout(finish, 15000);
+    timeout = setTimeout(() => { unavailableStill(canvas); finish(); }, 15000);
   });
 }
 
@@ -892,7 +906,18 @@ function playOn(canvas, eff, key) {
   const zones = rigZones();
   const { points, slices } = ledPoints(zones);
   let raf = 0, t0 = performance.now(), last = t0;
-  const runner = new PreviewRunner({ onFrame: (colors) => { if (sceneMotionAllowed()) paintRig(canvas, zoneFrames(colors, slices), { pad: 18, zones }); } });
+  const runner = new PreviewRunner({
+    onFrame: (colors) => {
+      if (sceneMotionAllowed()) paintGalleryFrame(canvas, zoneFrames(colors, slices), zones);
+      delete canvas.dataset.playbackFailed;
+    },
+    onError: () => {
+      if (STILL.live?.key !== key) return;
+      if (STILL.live.pinned) toast("Couldn't play this preview. Try again in a moment.", true);
+      canvas.dataset.playbackFailed = "true";
+      stopCard();
+    },
+  });
   runner.load(eff, points);
   const loop = (now) => {
     if (!sceneMotionAllowed()) { stopCard(); return; }
@@ -1925,7 +1950,6 @@ async function onClick(e) {
     return;
   }
   if (ds.jump) return jumpToLine(+ds.jump);
-  if (ds.st === "new") { $("#st-start")?.scrollIntoView({ behavior: "smooth" }); $("#st-start")?.classList.add("flash"); return; }
   if (ds.st === "community-retry") return renderCommunity();
   if (ds.st === "learn") return learnSheet();
   if (ds.st === "surprise") {
@@ -1945,7 +1969,10 @@ async function onClick(e) {
     return openEditor(docFromEffect(eff, { remix: eff.origin !== "mine" }));
   }
   if (ds.st === "import") { $("#st-import")?.click(); return; }
-  if (ds.tpl) { const tp = LAYER_TEMPLATES.find((x) => x.id === ds.tpl); return openEditor(newDoc({ name: tp.id === "blank" ? "Untitled effect" : `My ${tp.name.toLowerCase()}`, layers: structuredClone(tp.layers), master: tp.master, expose: tp.expose || {} })); }
+  if (ds.tpl || ds.st === "new") {
+    const tp = LAYER_TEMPLATES.find(x => x.id === (ds.tpl || "blank"));
+    return openEditor(newDoc({ name: tp.id === "blank" ? "Untitled effect" : `My ${tp.name.toLowerCase()}`, layers: structuredClone(tp.layers), master: tp.master, expose: tp.expose || {} }));
+  }
   if (ds.codeTpl) {
     const tp = CODE_TEMPLATES.find((x) => x.id === ds.codeTpl);
     try {

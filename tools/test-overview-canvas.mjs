@@ -49,6 +49,29 @@ async function fits(page){
   const boxes=await page.locator('.overview-rig-host, .lt-bri, .lt-on').evaluateAll(els=>els.map(el=>({w:el.getBoundingClientRect().width,h:el.getBoundingClientRect().height})));
   assert.ok(boxes.every(b=>b.w>0&&b.h>0),'Rig and direct controls remain visible');
 }
+
+test('an empty workspace can add a tile and open its profile editor directly', async t => {
+  const page = await browser.newPage({viewport: {width: 390, height: 844}, reducedMotion: 'reduce'});
+  t.after(() => page.close());
+  let layout = {tiles: [], pins: [], active_workspace: 'quiet', workspaces: [
+    {id: 'quiet', name: 'Quiet evenings', tiles: [], pins: []},
+  ]};
+  await page.route(BASE + '/api/overview', async route => {
+    if (route.request().method() === 'POST') layout = route.request().postDataJSON();
+    await route.fulfill({json: layout});
+  });
+  await page.goto(BASE + '/#overview');
+  await page.getByRole('heading', {name: 'Quiet evenings'}).waitFor();
+  await page.locator('#ov-first-tile').click();
+  await page.locator('[data-ctl="presets"]').click();
+  await page.getByRole('button', {name: 'Edit profiles', exact: true}).click();
+  await page.locator('#ep-form').waitFor();
+  assert.equal(new URL(page.url()).hash, '#overview');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#ov-empty').isVisible(), false);
+  await eventually(() => layout, value => value.tiles[0]?.type === 'presets');
+});
+
 test('showcase, presentation, undo and 3D persist without lighting writes',async t=>{
   const page=await pageFor(t),writes=[];
   page.on('request',r=>{

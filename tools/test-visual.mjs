@@ -4,11 +4,12 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { DESIGNS } from "../web/js/design.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT = process.env.AIRGLOW_VISUAL_OUTPUT ? resolve(process.env.AIRGLOW_VISUAL_OUTPUT) : join(ROOT, "output", "visual-overhaul", "checks");
 const BASE = "http://127.0.0.1:8790";
-const THEMES = ["graphite", "ascii", "paper", "amber", "contrast", "neon", "kiln", "lumen", "midnight", "spore", "rim", "darkroom"];
+const THEMES = DESIGNS.map(design => design.id);
 const VIEWS = ["overview", "lighting", "studio", "fans", "automations", "devices", "settings"];
 const READY = {
   overview: "#ov-grid .tile-sensor", lighting: "#deck [data-effect]", studio: "#studio .st-home",
@@ -194,7 +195,7 @@ try {
       await page.goto(`${BASE}/?visual=${theme}-${size}#overview`, { waitUntil: "domcontentloaded" });
       await page.locator(READY.overview).first().waitFor({ state: "visible" });
       await page.waitForFunction((id) => document.documentElement.dataset.design === id, theme);
-      for (const view of theme === "graphite" ? VIEWS : ["overview", "lighting", "settings"]) {
+      for (const view of ["firefly", "graphite"].includes(theme) ? VIEWS : ["overview", "lighting", "settings"]) {
         await check(`${size}-${theme}-${view}`, async () => {
           await visit(view);
           assert.equal(await page.locator("html").getAttribute("data-design"), theme, "Navigation must retain the chosen design");
@@ -236,12 +237,17 @@ try {
       await visit("settings");
       await page.locator("#s-design").click();
       await page.locator(".design-gallery").waitFor({ state: "visible" });
-      assert.equal(await page.locator("[data-design-card]").count(), 12);
+      assert.equal(await page.locator("[data-design-card]").count(), THEMES.length);
       assert.equal(await page.locator('[data-design-card][aria-checked="true"]').getAttribute("data-design-card"), "graphite");
       const done = page.locator("#sheet [data-close]");
       await done.focus();
       await page.keyboard.press("Tab");
-      assert.equal(await page.evaluate(() => document.activeElement.dataset.designCard), "graphite", "Dialog focus should wrap to its first choice");
+      assert.equal(await page.evaluate(() => document.activeElement.dataset.designCard), "graphite", "Dialog focus should wrap to the selected design");
+      const fireflySaved = page.waitForResponse(response => response.url() === BASE + "/api/settings" && response.request().method() === "POST");
+      await page.keyboard.press("Home");
+      assert.ok((await fireflySaved).ok());
+      assert.equal(await page.evaluate(() => document.activeElement.dataset.designCard), "firefly");
+      assert.equal(await page.locator('[data-design-card="firefly"]').getAttribute("aria-checked"), "true");
       await page.keyboard.press("Shift+Tab");
       assert.ok(await done.evaluate((element) => element === document.activeElement), "Reverse Tab should stay inside the dialog");
       await settled();
@@ -252,6 +258,7 @@ try {
       await page.waitForFunction(() => document.documentElement.dataset.design === "paper");
       assert.equal((await api("/api/settings")).settings.design, "paper");
       await done.click();
+      await page.waitForFunction(() => document.activeElement.id === "s-design");
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.locator(READY.settings).waitFor({ state: "visible" });
       assert.equal(await page.locator("html").getAttribute("data-design"), "paper", "Reload should retain the saved theme");

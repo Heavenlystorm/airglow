@@ -18,7 +18,7 @@ export function openSheet(html) {
     d.addEventListener("keydown", (e) => {
       if (e.key !== "Tab") return;
       const items = [...d.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")]
-        .filter((el) => !el.disabled && el.getClientRects().length);
+        .filter((el) => el.tabIndex >= 0 && !el.disabled && el.getClientRects().length);
       if (!items.length) return;
       const first = items[0], last = items.at(-1);
       if (!d.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
@@ -26,7 +26,16 @@ export function openSheet(html) {
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     });
   }
-  if (!d.open) d.showModal();
+  if (!d.open) {
+    const openerId = document.activeElement?.id;
+    d.showModal();
+    if (openerId) d.addEventListener("close", () => {
+      // A save can replace the original button while its dialog is open.
+      if (!d.open && (document.activeElement === document.body || d.contains(document.activeElement))) {
+        document.getElementById(openerId)?.focus({ preventScroll: true });
+      }
+    }, { once: true });
+  }
   d.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", closeSheet));
   return d;
 }

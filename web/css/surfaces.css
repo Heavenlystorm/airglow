@@ -35,8 +35,8 @@
 .ins-title .meta { flex: none; font-size: 11px; }
 .field { min-width: 0; }
 .deck { grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px; padding: 0 0 2px; }
-/* Twelve cards need 952px at their 72px minimum; below that, keep two even rows. */
-@container (max-width: 951px) { .deck { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+/* Give effect names room to stay together while keeping a generous live canvas. */
+@container (max-width: 1279px) { .deck { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 .fx { padding: 6px 6px 8px; }
 .fx .name { margin-top: 8px; padding: 0 3px; }
 .thumb { height: 48px; border-radius: var(--r-ctl); }
@@ -185,6 +185,30 @@
 .gl-card { padding: 14px; gap: 5px; }
 .gl-detail { gap: 16px; }
 .onb-item { padding: 14px; }
+.welcome-heading { min-width: 0; }
+.welcome-heading p { color: var(--ink-2); font-size: 13px; line-height: 1.5; margin: 5px 0 0; }
+.welcome-sheet .sheet-head { align-items: flex-start; }
+.welcome-sheet .onb-list { gap: 0; border-block: 1px solid var(--line-soft); }
+.welcome-sheet .onb-list .onb-item { padding: 11px 2px; border-radius: 0; background: none; }
+.welcome-sheet .onb-list .onb-item + .onb-item { border-top: 1px solid var(--line-soft); }
+[data-design="firefly"] .welcome-heading::before {
+  content: ""; display: block; width: 85px; height: 74px; margin-bottom: 12px;
+  background: url("../art/firefly.webp") center / contain no-repeat;
+}
+[data-design="firefly"] .welcome-heading h2 { font-size: 26px; }
+[data-design="firefly"] .starter { border-style: solid; background: var(--panel); }
+[data-design="firefly"] .starter:hover { border-color: var(--brass); background: var(--raised); }
+[data-design="firefly"] .inspector { border-color: var(--line-soft); }
+@media (min-width: 961px) {
+  [data-design="firefly"] .inspector {
+    margin: 22px 24px 22px 16px; padding: 20px 16px;
+    border: 1px solid var(--line-soft); border-radius: var(--r-panel);
+  }
+  [data-design="firefly"] .fx .name { min-height: 1.3em; }
+}
+@media (max-width: 480px), (max-height: 650px) {
+  [data-design="firefly"] .welcome-heading::before { width: 55px; height: 48px; margin-bottom: 8px; }
+}
 :where([data-design="graphite"]) .sheet { border-color: var(--line); background: var(--panel); box-shadow: 0 30px 100px #00000080; }
 :where([data-design="graphite"]) .sheet h2 { font-size: 24px; font-weight: 500; letter-spacing: -.035em; }
 :where([data-design="graphite"]) .dsg-card { border-color: var(--line-soft); background: var(--ground); }

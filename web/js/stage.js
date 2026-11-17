@@ -6,8 +6,10 @@ import { $, S, clamp, emit, esc, fail, on, post, refreshZones } from "./core.js"
 const U = 1000;                       // canvas units -> viewBox units
 const VB_W = 1600, VB_H = 1000;
 const VB_M = 48;                      // room around the case: a zone at its very edge still shows whole, glow and all
+const WORKSPACE = { x: -VB_M, y: -VB_M, width: VB_W + 2 * VB_M, height: VB_H + 2 * VB_M };
 
 const st = { selected: null, arranging: false, drag: null, mode: "2d", view: { s: 1, ox: 0, oy: 0 }, frames: {} };
+let camera = WORKSPACE;
 let rig3d = null, rigModule = null, modeRequest = 0;
 
 const canvas = () => $("#stage-canvas");
@@ -158,11 +160,29 @@ function paintPortrait(ctx, zones, { ox, oy, s, w, h }, bounds = portraitBounds(
   ctx.restore();
 }
 
+function stageCamera(zones) {
+  // Arrange and setup placement work in the entire case, including currently disabled zones.
+  if (st.arranging || zones.some(z => !z.config.enabled)) return WORKSPACE;
+  const bounds = portraitBounds(zones);
+  if (!bounds) return WORKSPACE;
+  const width = Math.max(420, bounds.x1 - bounds.x0 + 150);
+  const height = Math.max(340, bounds.y1 - bounds.y0 + 150);
+  return { x: (bounds.x0 + bounds.x1 - width) / 2, y: (bounds.y0 + bounds.y1 - height) / 2, width, height };
+}
+
+// The canvas and its SVG hit targets share one xMidYMid meet projection.
+function projectCamera(w, h) {
+  const s = Math.min(w / camera.width, h / camera.height);
+  const ox = (w - camera.width * s) / 2 - camera.x * s;
+  const oy = (h - camera.height * s) / 2 - camera.y * s;
+  st.view = { s, ox, oy, w, h };
+  if (s > 0) svg().style.setProperty("--stage-label-size", st.arranging ? "22px" : `${13 / s}px`);
+}
+
 function computeView() {
   if (st.mode === "3d") return;
   const c = canvas(), r = c.getBoundingClientRect();
-  const s = Math.min(r.width / (VB_W + VB_M * 2), r.height / (VB_H + VB_M * 2));
-  st.view = { s, ox: (r.width - VB_W * s) / 2, oy: (r.height - VB_H * s) / 2, w: r.width, h: r.height };
+  projectCamera(r.width, r.height);
   const dpr = window.devicePixelRatio || 1;
   c.width = Math.round(r.width * dpr);
   c.height = Math.round(r.height * dpr);
@@ -197,9 +217,16 @@ function declutter() {
   groups.forEach((g, i) => {
     const t = g.querySelector("text.label");
     t.classList.remove("clash");
+    t.setAttribute("x", t.dataset.x);
     t.setAttribute("y", t.dataset.y);
     let b = t.getBBox();
     if (!b.width) return;
+    if (!st.arranging && st.view.w && st.view.s > 0) {
+      const left = (8 - st.view.ox) / st.view.s;
+      const right = (st.view.w - 8 - st.view.ox) / st.view.s;
+      t.setAttribute("x", clamp(Number(t.dataset.x), left, Math.max(left, right - b.width)));
+      b = t.getBBox();
+    }
     const onZone = (b) => shapes.some((list, j) => j !== i && list.some((o) => overlaps(b, o)));
     const onLabel = (b) => placed.some((o) => overlaps(b, o));
     if (onZone(b) && t.dataset.below) {
@@ -215,16 +242,24 @@ function declutter() {
 
 export function renderOverlay() {
   const s = svg();
-  s.setAttribute("viewBox", `${-VB_M} ${-VB_M} ${VB_W + VB_M * 2} ${VB_H + VB_M * 2}`);
   const zones = S.zones?.zones || [];
   rig3d?.setZones(zones); rig3d?.select(st.selected);
-  const visible = zones.filter((z) => z.device.online && (z.config.enabled || st.arranging));
+  const visible = zones.filter((z) => z.device.online && (z.config.enabled || st.arranging || (st.mode === "2d" && z.key === st.selected)));
+  camera = stageCamera(visible);
+  s.setAttribute("viewBox", `${camera.x} ${camera.y} ${camera.width} ${camera.height}`);
+  if (st.view.w && st.view.h) projectCamera(st.view.w, st.view.h);
   const identity = $("#stage-identity");
   if (identity) {
     const selected = visible.find((z) => z.key === st.selected);
     identity.innerHTML = `<b>Living Rig</b><span>${selected ? esc(selected.config.name) : `${visible.length} zone${visible.length === 1 ? "" : "s"}`}<span class="rig-stage-note"> · ${selected ? `${selected.positions.length} LEDs` : "Your layout"}</span></span>`;
   }
-  $("#stage-empty").hidden = zones.some((z) => z.device.online && z.config.enabled) || st.arranging;
+  const empty = $("#stage-empty");
+  empty.hidden = visible.length > 0 || st.arranging;
+  if (!empty.hidden) {
+    const connected = zones.some(z => z.device.online);
+    $("#stage-empty-title").textContent = connected ? "Your lighting zones are switched off" : "No lighting found yet";
+    $("#stage-empty-detail").textContent = connected ? "Enable a zone in Devices, or choose Arrange to see its position." : "Connect a supported device or use OpenRGB to add your lights.";
+  }
   let html = "", handles = "";
   for (const z of visible) {
     const L = z.config.layout, on = z.config.enabled && z.positions.length;
@@ -244,6 +279,10 @@ export function renderOverlay() {
       const pts = [[-w, -h], [w, -h], [w, h], [-w, h]].map(([ox, oy]) => [L.x * U + ca * ox - sa * oy, L.y * U + sa * ox + ca * oy]);
       hit = `<polygon class="hit" points="${pts.map((p) => p.join(",")).join(" ")}" stroke-width="2" style="fill:${sel ? "rgba(236,235,230,.06)" : "transparent"}"/>`;
       lx = Math.min(...pts.map((p) => p[0])); ly = Math.min(...pts.map((p) => p[1])) - 18; below = Math.max(...pts.map((p) => p[1])) + 36;
+    } else if (!st.arranging && z.positions.length === 1) {
+      const [px, py] = z.positions[0].map(value => value * U);
+      hit = `<circle class="hit" cx="${px}" cy="${py}" r="19"/>`;
+      lx = px + 26; ly = py + 5; below = py + 30;
     } else {
       const a = L.angle * Math.PI / 180, h = L.length * U / 2;
       const x1 = L.x * U - Math.cos(a) * h, y1 = L.y * U - Math.sin(a) * h, x2 = L.x * U + Math.cos(a) * h, y2 = L.y * U + Math.sin(a) * h;
@@ -260,7 +299,7 @@ export function renderOverlay() {
     const placingThis = !!st.placing?.includes(z.key);
     const aria = `${z.config.name}${on ? "" : " (off)"}${z.device?.name ? `, ${z.device.name}` : ""}`;
     html += `<g class="zone${on ? "" : " off"}${sel || placingThis ? " selected" : ""}${placingThis ? " placing" : ""}" data-key="${esc(z.key)}" tabindex="0" role="button" aria-label="${esc(aria)}" aria-pressed="${sel}">${deco}${hit}
-      <text class="label" x="${lx}" y="${ly}" data-y="${ly}" data-below="${below}">${esc(z.config.name)}${on ? "" : " (off)"}</text></g>`;
+      <text class="label" x="${lx}" y="${ly}" data-x="${lx}" data-y="${ly}" data-below="${below}">${esc(z.config.name)}${on ? "" : " (off)"}</text></g>`;
     handles += handle;
   }
   s.innerHTML = html + handles;             // handles must stay above every zone's transparent hit area
@@ -473,6 +512,7 @@ function selectZone(key, focus = false) {
   if (st.selected !== key) {
     st.selected = key;
     renderOverlay();
+    draw();
     emit("select-zone", key);
   }
   if (focus) zoneEl(key)?.focus({ preventScroll: true });
@@ -567,6 +607,7 @@ export function placing(keys) {
 export function select(key) {
   st.selected = key;
   renderOverlay();
+  draw();
 }
 
 export function initStage() {

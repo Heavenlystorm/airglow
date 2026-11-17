@@ -3,9 +3,6 @@
 // palette, so the first thing a new effect can do is look different with one control.
 
 export const LAYER_TEMPLATES = [
-  { id: "blank", name: "Blank", description: "One colour to build on.",
-    master: { palette: ["#0b2a4a", "#2f5bff"] },
-    layers: [{ id: "base", type: "solid", params: { color: "#0b2a4a" } }] },
   { id: "aurora", name: "Aurora", description: "Slow northern lights with a few stars.",
     master: { palette: ["#00ffa3", "#2f5bff", "#8a3dff"] },
     layers: [
@@ -40,6 +37,9 @@ export const LAYER_TEMPLATES = [
       { id: "trail", type: "comet", palette: true, react: { what: "speed", amount: 30 },
         expose: { tail: "Tail length" }, params: { color: "#00e0c8", background: "#05070d", speed: 45, tail: 50 } },
       { id: "glow", type: "bass", palette: true, opacity: 40, blend: "add", params: { color: "#8a3dff", sensitivity: 60, size: 60 } }] },
+  { id: "blank", name: "Blank", description: "One colour to build on.",
+    master: { palette: ["#0b2a4a", "#2f5bff"] },
+    layers: [{ id: "base", type: "solid", params: { color: "#0b2a4a" } }] },
 ];
 
 export const CODE_TEMPLATES = [

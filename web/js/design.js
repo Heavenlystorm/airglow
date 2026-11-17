@@ -2,6 +2,7 @@
 // The ids must match DESIGNS in airglow/config.py; tests/test_designs.py checks that they do.
 
 export const DESIGNS = [
+  { id: "firefly", name: "Firefly", blurb: "Soft plum, apricot controls and little trails of mint light." },
   { id: "graphite", name: "Graphite", blurb: "A quiet control room: charcoal surfaces, warm ivory and champagne light." },
   { id: "ascii", name: "ASCII", blurb: "A P1 phosphor serial console: monospace, character frames, block meters." },
   { id: "paper", name: "Paper", blurb: "A service manual in daylight: warm paper, graphite ink, hairline panels." },
@@ -16,16 +17,15 @@ export const DESIGNS = [
   { id: "darkroom", name: "Darkroom", blurb: "A print room unlit: warm black, hairline condensed capitals, one amber safelight." },
 ];
 
-export const DESKTOP = "graphite";
+export const DESKTOP = "firefly";
 const KEY = "airglow.design";
 
 export const isDesign = (id) => DESIGNS.some((d) => d.id === id);
 export const currentDesign = () => document.documentElement.dataset.design || DESKTOP;
 
-// Apply a design for this session and remember it for the pre-paint script. Unknown ids fall back to Graphite:
-// the CSS then paints the default rather than a half-styled page.
-export function applyDesign(id, { persist = true } = {}) {
-  const chosen = isDesign(id) ? id : DESKTOP;
+// Older unrecognized design ids historically resolved to Graphite.
+export function applyDesign(id = DESKTOP, { persist = true } = {}) {
+  const chosen = isDesign(id) ? id : "graphite";
   document.documentElement.dataset.design = chosen;
   if (persist) {
     try { localStorage.setItem(KEY, chosen); } catch (e) { /* storage off: the server value still applies next boot */ }

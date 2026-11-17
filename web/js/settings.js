@@ -81,6 +81,7 @@ function markDesign(id) {
   if (!d) return;
   d.querySelectorAll("[data-design-card]").forEach((card) => {
     const on = card.dataset.designCard === id;
+    card.tabIndex = on ? 0 : -1;
     card.setAttribute("aria-checked", String(on));
     let mark = card.querySelector(".dsg-inuse");
     if (on && !mark) {
@@ -118,17 +119,31 @@ function designSheet() {
   openSheet(`<div class="body design-sheet">
     <h2>Interface design</h2>
     <p class="lede">Changes how Airglow looks. Your lights stay their own colours in every design.</p>
-    <div class="design-gallery" role="radiogroup" aria-label="Interface design">${DESIGNS.map((d) => `<button type="button" role="radio" class="dsg-card" data-design-card="${d.id}" aria-checked="${d.id === current}">
+    <div class="design-gallery" role="radiogroup" aria-label="Interface design">${DESIGNS.map((d) => `<button type="button" role="radio" class="dsg-card" data-design-card="${d.id}" tabindex="${d.id === current ? 0 : -1}" aria-checked="${d.id === current}">
       <span class="dsg-preview" data-design="${d.id}" aria-hidden="true">${previewHTML()}</span>
       <span class="dsg-name">${esc(d.name)}${d.id === current ? `<span class="dsg-inuse">In use</span>` : ""}</span>
       <span class="dsg-blurb">${esc(d.blurb)}</span></button>`).join("")}</div>
     <div class="actions"><span class="spacer"></span><button type="button" class="btn primary" data-close>Done</button></div></div>`);
   const d = $("#sheet");
-  d.querySelectorAll("[data-design-card]").forEach((card) => {
+  const cards = [...d.querySelectorAll("[data-design-card]")];
+  cards.forEach((card, index) => {
     card.addEventListener("click", () => pickDesign(card.dataset.designCard));
+    card.addEventListener("keydown", (event) => {
+      const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
+      let target;
+      if (step) target = cards[(index + step + cards.length) % cards.length];
+      else if (event.key === "Home") target = cards[0];
+      else if (event.key === "End") target = cards.at(-1);
+      else return;
+      event.preventDefault();
+      if (target !== card) {
+        target.focus();
+        target.click();
+      }
+    });
   });
   // openSheet has already opened the modal; deferred focus can override the user's next keypress.
-  (d.querySelector('[aria-checked="true"]') || d.querySelector("[data-design-card]"))?.focus({ preventScroll: true });
+  (d.querySelector('[aria-checked="true"]') || cards[0])?.focus();
 }
 
 // This sheet edits one draft, including its saved-look library. Only Keep writes it.
@@ -311,6 +326,18 @@ export async function loadSettings() {
   refreshTools();
 }
 
+function paintSensorStatus() {
+  const status = $("#s-lhm-status");
+  if (!status) return;
+  if (!S.state?.sensors?.online) {
+    setHTML(status, "LibreHardwareMonitor isn't responding. Open it and turn on Options → Remote Web Server → Run.");
+  } else if (S.state.fans?.failsafe) {
+    setHTML(status, 'Connected. The fan curve is waiting for its temperature reading. Check the selected source in <a href="#settings/fans">Fan settings</a>.');
+  } else {
+    setHTML(status, "Connected to LibreHardwareMonitor.");
+  }
+}
+
 export function renderSettings() {
   const v = S.settings;
   if (!v) return;
@@ -319,13 +346,12 @@ export function renderSettings() {
   else if (pendingDesign) setPresentation({ ...s, design: pendingDesign });
   else setPresentation(s, true);
   const designName = DESIGNS.find((d) => d.id === s.design)?.name || "Graphite";
-  const sensorsOk = S.state?.sensors?.online;
   setHTML($("#settings"), `
     <section class="set-group" id="set-general"><h2>General</h2>
       ${row("Start with Windows", "Opens quietly in the tray when you sign in, so lighting and fan curves apply right away.", sw("s-startup", v.start_with_windows, "Start with Windows"))}
       ${row("Temperature unit", "", `<div class="seg" id="s-unit" role="radiogroup" aria-label="Temperature unit"><button role="radio" data-v="C" aria-checked="${s.temp_unit === "C"}">°C</button><button role="radio" data-v="F" aria-checked="${s.temp_unit === "F"}">°F</button></div>`)}
-      ${row("Interface design", "Changes how Airglow looks, not what it does. Your lights keep their real colours in every design.",
-        `<span class="design-current"><span class="dsg-preview" data-design="${esc(s.design)}" aria-hidden="true">${previewHTML()}</span><button type="button" class="btn" id="s-design" aria-label="Change interface design (currently ${esc(designName)})">Change</button></span>`)}
+      ${row("Interface design", `Current design · ${esc(designName)}`,
+        `<span class="design-current"><span class="dsg-preview" data-design="${esc(s.design)}" aria-hidden="true">${previewHTML()}</span><button type="button" class="btn" id="s-design" aria-label="Change interface design (currently ${esc(designName)})">Change design</button></span>`)}
       ${row("Personal look", esc(appearanceName(s.appearance)), `<button type="button" class="btn" id="s-appearance">Customize</button>`)}
       ${row("Electricity price", "Feeds the Cost per hour tile. It starts at the German household average of 37.97 ct/kWh (Destatis, first half of 2026); Hamburg tariffs run from about 35 ct to 45 ct. Only the processor and graphics card power Airglow already reads is counted.",
         `<input class="text num" id="s-price" type="number" min="0.01" max="5" step="0.01" value="${s.energy_price}" aria-label="Electricity price per kilowatt hour" style="width:110px"><span class="hint">€/kWh</span>`)}
@@ -353,7 +379,7 @@ export function renderSettings() {
       <div class="tools-box" data-tools="full"></div>
     </section>
     <section class="set-group" id="set-sensors"><h2>Sensors</h2>
-      ${row("LibreHardwareMonitor address", sensorsOk ? "Connected. Temperatures and power are coming through." : "Not responding. Open LibreHardwareMonitor and turn on Options, Remote Web Server, Run.", `<input class="text" id="s-lhm" aria-label="LibreHardwareMonitor address" value="${esc(s.lhm_url)}" spellcheck="false">`)}
+      ${row("LibreHardwareMonitor address", '<span id="s-lhm-status"></span>', `<input class="text" id="s-lhm" aria-label="LibreHardwareMonitor address" aria-describedby="s-lhm-status" value="${esc(s.lhm_url)}" spellcheck="false">`)}
     </section>
     <section class="set-group" id="set-devices"><h2>More devices</h2>
       ${row("Scene transitions", "Fade between lighting scenes once the next effect is ready. Off always takes effect immediately.", `<select class="select" id="s-transition" aria-label="Scene transitions">${[[0, "Instant"], [200, "Quick · 200 ms"], [350, "Smooth · 350 ms"], [700, "Gentle · 700 ms"], [1200, "Slow · 1.2 s"]].map(([ms, label]) => `<option value="${ms}"${(s.lighting_transition_ms ?? 350) === ms ? " selected" : ""}>${label}</option>`).join("")}</select>`)}
@@ -375,8 +401,19 @@ export function renderSettings() {
       ${row("Reset settings", "Puts the settings on this page back to how they start on a new PC. Your zones, presets, fan curves and overview tiles are kept.", `<button class="btn quiet" id="s-reset">Reset</button>`)}
     </section>`);
   $$("#settings input[type=range]").forEach(rangeFill);
+  paintSensorStatus();
   paintTools();
   paintNav();
+}
+
+export function focusSettingsSection(id) {
+  if (!SECTIONS.some(([key]) => key === id)) return;
+  const section = document.getElementById(`set-${id}`);
+  const heading = section?.querySelector("h2");
+  if (!heading) return;
+  section.scrollIntoView({ block: "start", behavior: "instant" });
+  heading.tabIndex = -1;
+  heading.focus({ preventScroll: true });
 }
 
 let navWired = false;
@@ -387,16 +424,7 @@ function paintNav() {
     nav.innerHTML = SECTIONS.map(([id, label]) => `<button type="button" data-set="${id}">${esc(label)}</button>`).join("");
     nav.addEventListener("click", (e) => {
       const b = e.target.closest("[data-set]");
-      if (!b) return;
-      const sec = document.getElementById(`set-${b.dataset.set}`);
-      sec?.scrollIntoView({ block: "start", behavior: "smooth" });
-      const h = sec?.querySelector("h2");
-      if (h) {
-        h.tabIndex = -1;
-        h.focus({ preventScroll: true });
-      } else {
-        b.focus({ preventScroll: true });
-      }
+      if (b) focusSettingsSection(b.dataset.set);
     });
     navWired = true;
   }
@@ -436,10 +464,10 @@ async function saveSettings(patch, label, propagate, path) {
   // Rebuilding the page is what the server's answer is; keep the scroll position and the focused control where they
   // were instead of dropping the user at the top after every change.
   const view = $('[data-view="settings"]');
-  const scrollTop = view?.scrollTop || 0;
-  const focused = document.activeElement?.id;
   try {
     S.settings = await writeSettings({ path, patch });
+    const scrollTop = view?.scrollTop || 0;
+    const focused = view?.contains(document.activeElement) ? document.activeElement.id : "";
     renderSettings();
     if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
     if (view) {
@@ -518,6 +546,7 @@ export function initSettings() {
     }
   });
   on("state", paintUpdate);
+  on("state", paintSensorStatus);
   on("rig:imported", loadSettings);
   const view = $('[data-view="settings"]');
   let navRaf = 0;

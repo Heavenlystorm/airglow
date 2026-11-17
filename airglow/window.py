@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 # design id -> (window/caption ground, caption text, dark title bar). The palette's ground, so a light design doesn't
 # sit in a black frame. test_designs keeps these ids in step with the design lists.
 TITLEBAR = {
+    "firefly": ("#221d30", "#fff4e4", True),
     "graphite": ("#111315", "#f2f0e9", True),
     "ascii": ("#060806", "#d9ffd9", True),
     "paper": ("#e8e4db", "#1c1d19", False),
@@ -34,7 +35,7 @@ def _colorref(hex_color):
 
 
 class Window:
-    def __init__(self, url, start_hidden=False, on_first_hide=None, design="graphite"):
+    def __init__(self, url, start_hidden=False, on_first_hide=None, design="firefly"):
         self.design = design if design in TITLEBAR else "graphite"
         self.quitting = False
         self._native_shown = False

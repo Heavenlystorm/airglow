@@ -168,6 +168,10 @@ h1 { font: 600 27px/1.1 var(--display); font-variation-settings: "wdth" var(--wd
 .notice { flex: none; display: flex; align-items: center; gap: 14px; padding: 9px 20px; background: var(--notice-bg); border-bottom: 1px solid var(--notice-edge); color: var(--notice-ink); font-size: 13px; }
 .notice .btn { padding: 4px 11px; font-size: 13px; }
 .notice .spacer { flex: 1; }
+.fan-alert { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 20px; background: var(--notice-bg); color: var(--notice-ink); border-bottom: 1px solid var(--notice-edge); font-size: 13px; }
+.fan-alert strong { font-weight: 650; }
+.fan-alert .text-link { flex-shrink: 0; padding-block: 4px; color: inherit; text-decoration: underline; text-underline-offset: .2em; }
+@media (max-width: 600px) { .fan-alert { padding-inline: 14px; } }
 
 /* why the lights or fans are not behaving like the last thing you set */
 .why { flex: none; display: flex; align-items: center; gap: 10px; padding: 7px 20px; background: var(--why-bg); border-bottom: 1px solid var(--line-soft); color: var(--ink-2); font-size: 13px; }
@@ -411,7 +415,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px va
 .stage .zone .hit { fill: transparent; stroke: transparent; }
 .stage .zone .ring { fill: none; stroke: rgba(255, 255, 255, .05); }
 .stage .zone .hub-dot { fill: #111112; stroke: rgba(255, 255, 255, .06); }
-.stage .zone .label { fill: #77746b; font: 400 22px var(--text); font-variation-settings: "wdth" var(--wdth-condensed); letter-spacing: .02em; pointer-events: none; }
+.stage .zone .label { fill: #77746b; font: 400 var(--stage-label-size, 22px) var(--text); font-variation-settings: "wdth" var(--wdth-condensed); letter-spacing: .02em; pointer-events: none; }
 .stage .zone.off .label { fill: #4a4841; }
 .stage .zone .label.clash { visibility: hidden; }
 .stage .zone:hover .label.clash, .stage .zone.selected .label.clash { visibility: visible; }
