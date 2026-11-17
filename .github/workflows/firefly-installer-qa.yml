@@ -1,0 +1,82 @@
+name: Airglow 1.17.0 installer qualification
+on:
+  push:
+    branches: [codex/firefly-installer-qa]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [clean, portable, upgrade]
+    name: Windows / ${{ matrix.scenario }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        if: matrix.scenario == 'clean'
+        with:
+          repository: Heavenlystorm/winget-pkgs
+          ref: 5bd485821d2d447bf9746bcfb02b467b33e8d80e
+          path: manifest-source
+          sparse-checkout: manifests/h/Heavenlystorm/Airglow/1.17.0
+          persist-credentials: false
+      - name: Prepare WinGet on Windows Server
+        if: matrix.scenario == 'clean'
+        shell: pwsh
+        run: |
+          $pkg = Get-AppxPackage Microsoft.DesktopAppInstaller
+          if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue) -and -not $pkg) {
+            Install-Module Microsoft.WinGet.Client -Repository PSGallery -Scope CurrentUser -Force
+            Repair-WinGetPackageManager -AllUsers -Latest
+          }
+      - name: Download and verify published packages
+        if: matrix.scenario != 'clean'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCENARIO: ${{ matrix.scenario }}
+        run: |
+          function Get-ReleaseAsset($version,$name,$hash) {
+            $dir = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/assets/$version"
+            gh release download "v$version" --repo Heavenlystorm/airglow --pattern $name --dir $dir.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Could not download $name" }
+            $path = Join-Path $dir.FullName $name
+            if ((Get-FileHash -LiteralPath $path).Hash -ne $hash) { throw "Hash mismatch for $name" }
+          }
+          if ($env:SCENARIO -eq 'portable') {
+            Get-ReleaseAsset '1.17.0' 'Airglow-stable-Portable.zip' 'C4C6A8E5C9DA3A9F39A8A2F84804F88F553F5D9C9AA5EC184E17837E42FC5D4F'
+          } else {
+            Get-ReleaseAsset '1.16.1' 'Airglow-stable-Setup.exe' '6CFFC0B5B61CC6AAA7F7BA39027118907C9CAD9A0DE63FF69234D8161316AF94'
+            Get-ReleaseAsset '1.17.0' 'Airglow-stable-Setup.exe' '525D74214D0D69E07E299E8BB8A09C0D66C0CABFCD217EC37CD3097E9D958980'
+          }
+      - name: Exercise the packaged application
+        shell: pwsh
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          SCENARIO: ${{ matrix.scenario }}
+        run: |
+          $options = @{Scenario=$env:SCENARIO;Version='1.17.0'}
+          switch ($env:SCENARIO) {
+            clean { $options.Manifest = 'manifest-source/manifests/h/Heavenlystorm/Airglow/1.17.0' }
+            portable { $options.Portable = "$env:RUNNER_TEMP/assets/1.17.0/Airglow-stable-Portable.zip" }
+            upgrade {
+              $options.Setup = "$env:RUNNER_TEMP/assets/1.17.0/Airglow-stable-Setup.exe"
+              $options.PreviousSetup = "$env:RUNNER_TEMP/assets/1.16.1/Airglow-stable-Setup.exe"
+              $options.PreviousVersion = '1.16.1'
+            }
+          }
+          ./tools/test-windows-package.ps1 @options
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-1.17.0-${{ matrix.scenario }}-lifecycle
+          path: output/installer-smoke
+          if-no-files-found: warn
