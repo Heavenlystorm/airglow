@@ -1,44 +1,30 @@
-<p align="center"><img src="docs/airglow-icon.png" width="96" alt=""></p>
+# ![Airglow — RGB lighting and fan control for Windows](docs/firefly-banner.png)
 
-# Airglow
+Airglow brings your case lighting, fan curves and sensor readings into one free, open-source Windows app. Build a
+music-reactive effect, pair it with a fan curve, and save both as a profile. Your settings stay on your PC, with no
+account or telemetry.
+
+**[Download for Windows](https://github.com/Heavenlystorm/airglow/releases/latest)** ·
+[Installation guide](#installing) · [Supported hardware](#supported-hardware) · [Website](https://airglowrgb.com)
 
 [![Latest release](https://img.shields.io/github/v/release/Heavenlystorm/airglow)](https://github.com/Heavenlystorm/airglow/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Heavenlystorm/airglow/total?cachebust=3)](https://github.com/Heavenlystorm/airglow/releases)
 [![Tests](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml/badge.svg)](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml)
-![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4)
 [![MIT licence](https://img.shields.io/github/license/Heavenlystorm/airglow)](LICENSE)
-[![r/AirglowRGB on Reddit](https://img.shields.io/badge/Reddit-r%2FAirglowRGB-ff4500?logo=reddit&logoColor=white)](https://www.reddit.com/r/AirglowRGB/)
 
-**Your lights, your fans, your kind of setup.**
+## Firefly development preview
 
-Hey, welcome! Airglow is a free, open-source Windows app for bringing RGB lighting, fan control and PC readings
-together. If you've ever spent longer picking a colour than picking a wallpaper, you're in good company. If you just
-want your lights to behave and your PC to stay cool, you're welcome here too.
+Firefly gives the workspace a lantern-carrying companion and a softer palette. This preview shows four simulated
+devices. The 1.16.1 stable installer defaults to [Graphite](docs/screenshots/overview.png).
 
-**[Download Airglow](https://github.com/Heavenlystorm/airglow/releases/latest)** ·
-[Visit the website](https://airglowrgb.com) ·
-[Check your hardware](#supported-hardware) ·
-[Say hello on Reddit](https://www.reddit.com/r/AirglowRGB/)
+![Firefly workspace with a lighting canvas, saved profiles, fan speeds and CPU and GPU readings](docs/screenshots/firefly-preview.png)
 
-![The Overview: your lights, temperatures, load, power and fans on one screen](docs/screenshots/overview.png)
+- **Set up your lights.** Arrange fans and strips to match your case, then change the whole rig or one zone. [Lighting](#lighting)
+- **Make an effect.** Stack layers, set a palette or write code. Try it on a sample rig before applying it to your lights. [Studio](#the-studio)
+- **Tune your cooling.** Follow a temperature with a fan curve or switch profiles when a game starts. [Fans and automations](#fans-and-automations)
 
-Here's what you can do:
-
-- **Make it yours.** Set up the lights in your case, try the built-in effects, and save a look for every mood.
-- **Play in the Studio.** Make an effect from layers, follow the music, or press **Surprise me** and see what happens.
-  You can even try it on a sample case before setting up your lights.
-- **Keep an eye on things.** See temperatures, load, power and fans together, with twelve interface designs to choose
-  from. Your lights keep their real colours in every design.
-- **Set it and get on with your day.** Shape a fan curve or make an automation for game time, quiet time or bedtime.
-
-No account and no telemetry. Just a little more room to make your setup feel like yours.
-
-Made something you like? We'd love to see it. Share your setup, ask a question or show off an effect on
-[r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/) or in
-[GitHub Discussions](https://github.com/Heavenlystorm/airglow/discussions).
-
-**A quick heads-up:** the Windows installer isn't signed yet, so Windows may show a warning. You can read
-[why and how Airglow works](#is-it-safe) before deciding whether to install it.
+Share a setup or ask a question in [GitHub Discussions](https://github.com/Heavenlystorm/airglow/discussions) or
+[r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/).
 
 ## Installing
 
@@ -112,8 +98,8 @@ This is the fun bit if you like to tinker. Start with a template, press **Surpri
 own by stacking layers: gradients, plasma, waves, sparkles, scanners, comets, chases and beat-driven pulses. Mix them
 together, choose which part of the case they light, and watch as you go.
 
-Don't have your lights set up yet? There's a sample case to play with. When you're ready, turn on **Also on my
-lights** to see your creation on the real hardware.
+Don't have your lights set up yet? There's a sample case to play with. When you're ready, turn on **Live draft
+preview** to see your creation on the real hardware.
 
 The palette, speed, brightness and music reactivity are shared across an effect, so anyone who installs it can make
 it their own. You can expose individual settings as controls, including the palette; controls stay with their layers
