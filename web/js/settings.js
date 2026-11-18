@@ -156,7 +156,8 @@ export async function openAppearance() {
     d.removeEventListener("cancel", onCancel);
     d.removeEventListener("close", onClose);
   };
-  const onCancel = (event) => { if (tx.saving) event.preventDefault(); };
+  // Esc (the dialog's cancel) puts the saved look back at once, before the sheet fades out; close covers the rest.
+  const onCancel = (event) => { if (tx.saving) event.preventDefault(); else restore(); };
   const onClose = () => restore();
   // Replacing a shared sheet is also a Cancel, even without a native close event.
   const observer = new MutationObserver(() => { if (!d.contains(form)) restore(); });
