@@ -4,7 +4,10 @@
 .btn, .select, .text { min-height: var(--control-min-height); }
 .btn-row { gap: var(--control-gap); }
 .compact-nav { display: none; }
-.mutation-status { flex: none; max-height: 28vh; overflow-y: auto; border-bottom: 1px solid var(--line); background: var(--panel); }
+.mutation-status { flex: none; max-height: 28vh; overflow-y: auto; border-bottom: 1px solid var(--line); background: var(--panel);
+  transition: opacity var(--dur-2) var(--ease), display var(--dur-2) allow-discrete; }
+.mutation-status[hidden] { opacity: 0; }
+@starting-style { .mutation-status:not([hidden]) { opacity: 0; } }
 .mutation-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px; padding: 10px var(--page-inline); font-size: 13px; }
 .mutation-line > span { flex: 1 1 300px; min-width: 0; overflow-wrap: anywhere; }
 .mutation-line[data-error] b { color: var(--warm); }
@@ -84,7 +87,8 @@
 :where([data-design="graphite"]) .ports .bar i { border-radius: inherit; background: var(--data-spark); }
 
 /* Rules read in priority order, with a clear active state and quieter templates. */
-.auto-view > :is(.page-head, .rules, .starters) { max-width: 1120px; margin-left: auto; margin-right: auto; }
+/* Automations and Settings share one reading width, so moving between them does not shift the page edge. */
+.auto-view > :is(.page-head, .rules, .rules-empty, .starters) { max-width: var(--page-max); margin-left: auto; margin-right: auto; }
 .rules { gap: 12px; }
 .rule { padding: 18px; gap: 16px; }
 .rule .state { margin-top: 5px; }
@@ -200,9 +204,11 @@
 [data-design="firefly"] .starter:hover { border-color: var(--brass); background: var(--raised); }
 [data-design="firefly"] .inspector { border-color: var(--line-soft); }
 @media (min-width: 961px) {
+  /* the inspector card is as tall as what it holds, instead of an empty panel running to the window's foot */
   [data-design="firefly"] .inspector {
     margin: 22px 24px 22px 16px; padding: 20px 16px;
     border: 1px solid var(--line-soft); border-radius: var(--r-panel);
+    align-self: start; max-height: calc(100% - 44px);
   }
   [data-design="firefly"] .fx .name { min-height: 1.3em; }
 }

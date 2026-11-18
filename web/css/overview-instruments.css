@@ -7,6 +7,9 @@
 .tile-presets .pname { padding-right: 9px; box-sizing: border-box; }
 .profile-artwork { display: flex; flex-direction: column; gap: 5px; height: 100%; min-height: 0; }
 .profile-artwork svg { display: block; width: 100%; flex: 1; min-height: 32px; height: 64px; border-radius: 3px; background: #080a0c; }
+/* in a short Profiles tile the artwork gives way before it reaches the name below it */
+.tile-presets .pswatch { overflow: hidden; }
+.tile-presets .profile-artwork svg { min-height: 0; }
 .profile-artwork svg rect { shape-rendering: crispEdges; }
 .profile-rhythm { fill: none; stroke: #ffffff; stroke-opacity: .8; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .profile-art-caption { display: flex; flex-wrap: wrap; justify-content: space-between; column-gap: 6px; color: var(--ink-2); font: 11px/1.25 var(--text); }

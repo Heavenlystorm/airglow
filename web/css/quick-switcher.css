@@ -26,6 +26,7 @@
   border-radius: var(--r-ctl);
   cursor: pointer;
 }
+.quick-launch { transition: color var(--dur-1), background-color var(--dur-1), border-color var(--dur-1), scale var(--dur-1) var(--ease); }
 .quick-launch:hover { color: var(--ink); background: var(--hover); }
 .quick-launch svg, .qs-field svg { width: 18px; height: 18px; }
 .quick-launch kbd { font: 500 11px/1 var(--text); white-space: nowrap; }
@@ -54,6 +55,7 @@
   border-radius: var(--r-ctl);
   cursor: pointer;
 }
+.qs-filters button { transition: color var(--dur-1), background-color var(--dur-1); }
 .qs-filters button:hover { background: var(--hover); color: var(--ink); }
 .qs-filters button[aria-pressed="true"] {
   color: var(--brass-hi);
@@ -76,22 +78,25 @@
   overflow-wrap: anywhere;
   cursor: pointer;
 }
+.qs-option { transition: background-color var(--dur-1), box-shadow var(--dur-1), scale var(--dur-1) var(--ease); }
 .qs-option:hover { background: var(--hover); }
 .qs-option[aria-selected="true"] {
   background: var(--raised);
   box-shadow: inset 0 0 0 1px var(--focus-color);
 }
 .qs-option[aria-disabled="true"] { cursor: wait; }
-.qs-option .qs-type { width: 17px; height: 17px; color: var(--ink-2); }
+.qs-option .qs-type { width: 17px; height: 17px; color: var(--ink-2); transition: color var(--dur-1); }
 .qs-option[aria-selected="true"] .qs-type { color: var(--brass-hi); }
 .qs-option small { color: var(--ink-2); font-size: 12px; }
 .qs-status { color: var(--ink-2); overflow-wrap: anywhere; }
 .qs-group-title { padding: 8px 12px 2px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
 .qs-manage { align-self: start; justify-self: start; min-height: 32px; }
-.favorite-button { display: inline-grid; place-items: center; min-width: 28px; min-height: 28px; padding: 4px; border-radius: 7px; color: var(--ink-2); background: var(--panel); border: 1px solid var(--line-soft); cursor: pointer; }
+.favorite-button { display: inline-grid; place-items: center; min-width: 28px; min-height: 28px; padding: 4px; border-radius: var(--r-ctl); color: var(--ink-2); background: var(--panel); border: 1px solid var(--line-soft); cursor: pointer; }
 .favorite-button svg { width: 15px; height: 15px; pointer-events: none; }
 .favorite-button[aria-pressed="true"] { color: var(--brass-hi); --favorite-fill: currentColor; }
+.favorite-button { transition: color var(--dur-1), background-color var(--dur-1), opacity var(--dur-2) var(--ease), scale var(--dur-1) var(--ease); }
 .favorite-button:hover { color: var(--brass-hi); background: var(--raised); }
+.favorite-button:active { scale: .9; }
 .fx-choice { position: relative; display: grid; min-width: 0; }
 .fx-choice > .fx { width: 100%; height: 100%; }
 .fx-choice > .favorite-button { position: absolute; top: 6px; right: 6px; opacity: 0; }

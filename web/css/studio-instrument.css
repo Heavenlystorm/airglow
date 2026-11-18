@@ -36,7 +36,7 @@
 .st-home .st-cap > span { line-height: 1.5; color: var(--ink-2); }
 .st-home .st-acts { flex-wrap: wrap; padding: 14px 12px 0; gap: 6px; }
 .st-home .st-card.is-playing { border-color: var(--brass); }
-.st-home .st-card:focus-within { outline: 2px solid var(--brass); outline-offset: 3px; }
+.st-home .st-card:has(:focus-visible) { outline: var(--focus-w) solid var(--focus-color); outline-offset: 3px; }
 .st-home .st-scene-play { font-size: 12px; }
 .st-home .st-scene-play[aria-pressed="true"] { color: var(--brass-hi); }
 .st-edit:not(.is-code) .st-mid { overflow-y: auto; }
@@ -75,7 +75,7 @@
 .st-macro .field { margin-bottom: 12px; }
 .st-lock { position: absolute; right: 0; top: 0; border: 1px solid var(--line-soft); border-radius: var(--r-ctl); padding: 3px 8px; color: var(--ink-2); background: var(--well); font: 11px var(--text); cursor: pointer; }
 .st-lock[aria-pressed="true"] { color: var(--ink); border-color: var(--brass); background: color-mix(in srgb, var(--brass) 12%, var(--well)); }
-.st-lock:focus-visible, .st-variation-recall:focus-visible, .st-ab > summary:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+.st-lock:focus-visible, .st-variation-recall:focus-visible, .st-ab > summary:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: var(--focus-offset); }
 [data-design="contrast"] .st-instrument, [data-design="contrast"] .st-variation-tray li, [data-design="contrast"] .st-lock { border-color: var(--ink); }
 [data-design="contrast"] .st-lock[aria-pressed="true"] { text-decoration: underline; }
 @media (min-width: 901px) and (max-height: 800px) {
@@ -91,7 +91,5 @@
   .st-variation-tray { grid-auto-columns: minmax(145px, 62%); }
   .st-instrument-head .btn { min-height: 36px; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .st-home .st-card, .st-variation-tray { transition: none; scroll-behavior: auto; }
-}
-[data-motion="reduced"] .st-home .st-card, [data-motion="reduced"] .st-variation-tray { transition: none; scroll-behavior: auto; }
+@media (prefers-reduced-motion: reduce) { .st-variation-tray { scroll-behavior: auto; } }
+[data-motion="reduced"] .st-variation-tray { scroll-behavior: auto; }

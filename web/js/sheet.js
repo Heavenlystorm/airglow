@@ -1,11 +1,16 @@
 // One reusable modal sheet for dialogs and the first-run guide.
 import { $ } from "./core.js";
+import { animateMotion } from "./motion.js";
 
 let wired = false;
 
-export function openSheet(html) {
+export function openSheet(html, { step = false } = {}) {
   const d = $("#sheet");
+  const swapping = d.open;
   d.innerHTML = html;
+  // A guide that moves to its next step slides the new content in, so the change reads as progress. A sheet that
+  // just repaints in place (a row deleted, a value saved) stays put.
+  if (step && swapping && d.firstElementChild) animateMotion(d.firstElementChild, [{ opacity: 0, transform: "translateX(8px)" }, { opacity: 1, transform: "none" }], 180);
   const h = d.querySelector("h2");
   if (h) {
     if (!h.id) h.id = "sheet-title";

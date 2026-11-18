@@ -57,7 +57,6 @@
 .workbench .wb-recovery { background: var(--well); padding: 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; color: var(--hot); }
 .workbench .wb-recovery p { flex: 1 1 250px; }
 .workbench .wb-delete { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.workbench [hidden] { display: none !important; }
 @media (max-width: 600px) {
   .sheet:has(.workbench) { width: calc(100vw - 20px); max-height: calc(100dvh - 24px); }
   .sheet .body.workbench { padding: 16px; gap: 14px; }

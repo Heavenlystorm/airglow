@@ -82,3 +82,4 @@ export function undoLightingScene(options = {}) {
   return result.then((reply) => reply.scene_status?.status === "pending"
     ? waitForLightingScene(reply.scene_status.desired_revision, reply.scene_status.session) : reply);
 }
+

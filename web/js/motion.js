@@ -1,8 +1,8 @@
 // Motion follows the Windows animation setting and Airglow's Reduce preference.
 
-const mq = matchMedia("(prefers-reduced-motion: reduce)");
-export const reduced = () => mq.matches || document.documentElement.dataset.motion === "reduced";
-const inactive = (el) => document.hidden || el.isConnected === false || el.closest?.("[hidden]");
+const mq = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)") ?? { matches: false };
+export const reduced = () => mq.matches || globalThis.document?.documentElement?.dataset?.motion === "reduced";
+const inactive = (el) => globalThis.document?.hidden || el.isConnected === false || el.closest?.("[hidden]");
 const active = new Map();
 
 export function stopMotion(el) {
@@ -17,19 +17,19 @@ function stopInactiveMotion() {
   for (const el of active.keys()) if (reduced() || inactive(el)) stopMotion(el);
 }
 
-document.addEventListener?.("appearancechange", stopInactiveMotion);
-document.addEventListener?.("visibilitychange", stopInactiveMotion);
+globalThis.document?.addEventListener?.("appearancechange", stopInactiveMotion);
+globalThis.document?.addEventListener?.("visibilitychange", stopInactiveMotion);
 mq.addEventListener?.("change", stopInactiveMotion);
 
 // DOM rectangles use rendered pixels; CSS transforms use pixels before interface zoom.
 const uiScale = () => Number(document.documentElement?.dataset.scale || 100) / 100;
 
-export const EASE = "cubic-bezier(.2, .7, .2, 1)";
+export const EASE = "cubic-bezier(.2, .7, .2, 1)";   // the --ease token in app.css
 
 export function animateMotion(el, frames, duration) {
   stopMotion(el);
   if (reduced() || inactive(el)) return;
-  const animation = el.animate(frames, { duration, easing: EASE });
+  const animation = el.animate?.(frames, { duration, easing: EASE });
   if (!animation) return;
   active.set(el, animation);
   const forget = () => { if (active.get(el) === animation) active.delete(el); };
@@ -78,7 +78,10 @@ export function flip(container, mutate, { skip = null } = {}) {
 export function moveMarker(marker, target, instant = false) {
   if (!marker || !target) return;
   const nav = marker.parentElement.getBoundingClientRect(), r = target.getBoundingClientRect();
-  const x = (r.left - nav.left) / uiScale() + 12, w = r.width / uiScale() - 24;
+  // An underline sits inside its tab; a pill (--ink-inset: 0) covers the whole tab.
+  const inset = parseFloat(globalThis.getComputedStyle?.(marker)?.getPropertyValue?.("--ink-inset"));
+  const pad = Number.isFinite(inset) ? inset : 12;
+  const x = (r.left - nav.left) / uiScale() + pad, w = r.width / uiScale() - pad * 2;
   const immediate = instant || reduced() || document.hidden;
   if (immediate) marker.style.transition = "none";
   marker.style.transform = `translateX(${x}px)`;

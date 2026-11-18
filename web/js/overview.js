@@ -3,7 +3,8 @@
 // flashing, and dragging never fights the 2-second refresh.
 
 import { $, $$, S, clamp, curveLabel, effectName, emit, esc, fail, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
-import { applyLightingScene, waitForLightingScene } from "./scene-commands.js";
+import { applyLightingScene } from "./scene-commands.js";
+import { applyProfile, profileToast } from "./profile-undo.js";
 import { R, WINDOW, ensureHistory, fmt, fmtText, level, loadCatalog, range, resample, sensorName, thresholds, value } from "./readings.js";
 import { animateMotion, countTo, flip, reduced, stopMotion } from "./motion.js";
 import { accentPalette } from "./appearance.js";
@@ -469,7 +470,7 @@ function updateSensor(el, t) {
     setPath(el.querySelector(".spark .line"), p.d);
     setPath(el.querySelector(".spark .area"), p.area);
     const samples = (R.series[id] || []).map((p) => p[1]).filter(Number.isFinite);
-    setHTML(el.querySelector(".minmax"), samples.length > 3 ? `<span>${esc(fmtText(meta, Math.min(...samples)))}–${esc(fmtText(meta, Math.max(...samples)))}</span> over 10 min` : "");
+    setHTML(el.querySelector(".minmax"), samples.length > 3 ? rangeCaption(fmtText(meta, Math.min(...samples)), fmtText(meta, Math.max(...samples))) : "");
   } else if (t.style === "ring") {
     el.querySelectorAll(".num").forEach((n) => countTo(n, f.num));
     el.querySelectorAll(".unit").forEach((u) => setHTML(u, esc(f.unit)));
@@ -523,6 +524,11 @@ function updateSensor(el, t) {
     }
     if (!t.label) setHTML(el.querySelector(".tile-name"), esc(t.sensors.length > 1 ? `${metas[0]?.short || ""} and ${metas[1]?.short || ""}`.trim() : name));
   }
+}
+
+// "46°C – 63°C over 10 min", or "Steady at 44°C" when nothing moved. Thin spaces keep the dash from reading as minus.
+function rangeCaption(lo, hi) {
+  return lo === hi ? `Steady at <span>${esc(lo)}</span> for 10 min` : `<span>${esc(lo)} – ${esc(hi)}</span> over 10 min`;
 }
 
 function updateInstrument(el, t, meta, v, lo, hi) {
@@ -1096,11 +1102,7 @@ export async function initOverview(layout) {
     if (p) {
       const preset = S.presets.find((x) => x.id === p.dataset.preset);
       try {
-        const r = await post(`/api/presets/${encodeURIComponent(preset.id)}/apply`);
-        if (r.scene_status?.status === "pending") r.scene_status = (await waitForLightingScene(r.scene_status.desired_revision, r.scene_status.session)).scene_status;
-        const failed = r.steps.filter((s) => !s.ok);
-        if (failed.length) toast(`${preset.name} is on, but ${failed[0].step} didn't apply: ${failed[0].error}`, true);
-        else toast(r.scene_status?.overridden ? `${preset.name} saved. An automation controls the lights.` : `${preset.name} is on`);
+        profileToast(preset, await applyProfile(preset));
         emit("refresh");
       } catch (err) { fail(err); }
     }

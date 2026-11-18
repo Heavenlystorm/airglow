@@ -1,6 +1,7 @@
 // Two saved effects, one independent screen preview. Saving never starts a hardware trial.
 import { $, emit, esc, post, rangeFill, toast } from "./core.js";
 import { openSheet, closeSheet } from "./sheet.js";
+import { reduced } from "./motion.js";
 import { litZones, paintRig } from "./stage.js";
 import { ledPoints, sampleZones, testAudio, zoneFrames } from "./fxrun.js";
 import { PreviewRunner } from "./fxpreview.js";
@@ -33,8 +34,7 @@ export function openBlend(effects, { onSaved = () => {} } = {}) {
   </div>`);
   const root = $("#st-crossblend", sheet), find = id => root.querySelector(`#st-crossblend-${id}`);
   const active = () => alive && sheet.open && root.isConnected;
-  const motionReduced = () => document.hidden || document.documentElement.dataset.motion === "reduced"
-    || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const motionReduced = () => document.hidden || reduced();
   function status() {
     if (!active()) return;
     find("status").textContent = [error, storageError ? "Recovery storage is unavailable. Save before closing this window." : "",

@@ -47,7 +47,10 @@
   padding: 13px 2px; cursor: pointer; color: var(--ink);
   font-weight: 600;
 }
-.onb-found summary:focus-visible { outline: 2px solid var(--focus-color); outline-offset: 2px; }
+.onb-found summary:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: var(--focus-offset); }
+/* the welcome list draws its own top rule; the device summary right under it must not draw a second one */
+.welcome-sheet .onb-found { margin-top: 0; }
+.welcome-sheet .onb-list > .onb-found:first-child { border-top: 0; }
 .zone-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 16px; }
 .zone-summary { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .zone-summary .switch { flex: none; }
@@ -56,9 +59,9 @@
 .zone-summary > div > span { color: var(--ink-2); font-size: 12px; }
 .zone-configure { gap: 6px; }
 .zone-configure svg { width: 13px; height: 13px; }
+.zone-configure svg { transition: transform var(--dur-2) var(--ease); }
 .zone-configure[aria-expanded="true"] svg { transform: rotate(180deg); }
 .zone-wiring { grid-column: 1 / -1; display: grid; gap: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
-.zone-wiring[hidden] { display: none; }
 .zone-wiring .zfields { align-items: end; }
 .zone-wiring [data-f="name"] { width: min(180px, 100%); }
 .dev-detail .zone-card .zstrip { min-width: 0; }

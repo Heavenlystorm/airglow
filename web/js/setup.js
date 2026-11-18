@@ -162,7 +162,7 @@ function frame({ title, lede = "", body = "", back = true, primary = "", seconda
     <p class="hint" data-probe-status role="alert" hidden></p>
     ${body}
     <div class="actions">${back ? `<button class="btn quiet" id="su-back">Back</button>` : ""}<span class="spacer"></span>${secondary}${primary}</div>
-  </div>`);
+  </div>`, { step: true });
   $("#su-back")?.addEventListener("click", goBack);
   paintProbeStatus();
   ($("#sheet [data-autofocus]") || $("#sheet .btn.primary"))?.focus();
@@ -204,7 +204,7 @@ function home() {
     ${coolerNote()}
     <div class="actions"><button class="btn quiet" data-close>${G.done || !pending.length ? "Done" : "Not now"}</button><span class="spacer"></span>
       <button class="btn primary" id="su-run"${pending.length ? "" : " disabled"}>${pending.length ? `Set up ${pending.length} new light${pending.length === 1 ? "" : "s"}` : "Everything is set up"}</button></div>
-  </div>`);
+  </div>`, { step: true });
   $$("#sheet [data-task]").forEach((b) => b.addEventListener("click", () => run([tasks[+b.dataset.task]])));
   $("#su-run")?.addEventListener("click", () => run(pending));
   ($("#su-run:not(:disabled)") || $("#sheet [data-task]"))?.focus();
@@ -247,8 +247,8 @@ function next() {
 
 async function finished() {
   stopProbe();
-  openSheet(`<div class="body" id="su-checking"><h2>Checking your setup</h2>
-    <p role="status">Checking which lights still need setup…</p><button class="btn quiet" data-close>Close</button></div>`);
+  openSheet(`<div class="body wide setup" id="su-checking"><h2>Checking your setup</h2>
+    <p role="status">Checking which lights still need setup…</p><button class="btn quiet" data-close>Close</button></div>`, { step: true });
   const checking = $("#su-checking"), sheet = $("#sheet");
   let remaining = null;
   try { remaining = (await get("/api/state")).setup_pending; } catch (err) { fail(err); }
@@ -265,7 +265,7 @@ async function finished() {
     <h2>${complete ? "Your lights are set up" : "Setup progress saved"}</h2>
     <p class="lede" style="margin:0">${message}</p>
     <div class="actions"><button class="btn quiet" id="su-list">Back to the list</button><span class="spacer"></span><button class="btn primary" id="su-show">Show me</button></div>
-  </div>`);
+  </div>`, { step: true });
   $("#su-list").addEventListener("click", home);
   $("#su-show").addEventListener("click", () => { closeSheet(); location.hash = "#lighting"; });
   $("#su-show").focus();

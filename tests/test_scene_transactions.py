@@ -43,6 +43,17 @@ class SceneTransactionsTests(unittest.TestCase):
         self.host.frames({"frames": {iid: base64.b64encode(bytes(color) * len(inst.points)).decode()
                                       for iid, inst in self.host.instances.items()}})
 
+    def test_scene_patch_can_restore_or_clear_profile_areas(self):
+        # Undo after a profile puts the earlier look back exactly, per-area effects included.
+        areas = {"front": {"effect": "solid", "params": {"color": "#00ff00"}}}
+        self.ctrl.set_scene({"effect": "solid", "params": {"color": "#0000ff"}, "areas": areas})
+        self.assertEqual(self.ctrl.base_scene["areas"]["front"]["effect"], "solid")
+        self.ctrl.set_scene({"effect": "solid", "params": {"color": "#ff0000"}, "areas": None})
+        self.assertNotIn("areas", self.ctrl.base_scene)
+        with self.assertRaises(ValueError):
+            self.ctrl.set_scene({"effect": "solid", "areas": {"nowhere": {"effect": "solid"}}})
+        self.assertNotIn("areas", self.ctrl.base_scene)
+
     def test_100_rapid_changes_reclaim_slots_without_black(self):
         before = self.engine.frames["d/z1"]
         for n in range(100):

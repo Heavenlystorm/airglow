@@ -223,9 +223,17 @@ function declutter() {
     t.setAttribute("y", t.dataset.y);
     let b = t.getBBox();
     if (!b.width) return;
-    if (!st.arranging && st.view.w && st.view.s > 0) {
-      const left = (8 - st.view.ox) / st.view.s;
-      const right = (st.view.w - 8 - st.view.ox) / st.view.s;
+    if (st.view.w && st.view.s > 0) {
+      // Keep each name inside what frames it: the case outline when one is drawn, the workspace while arranging,
+      // and always the visible stage. A name near the edge slides back in instead of running over the border.
+      const { s: k, ox } = st.view;
+      let left = (8 - ox) / k, right = (st.view.w - 8 - ox) / k;
+      const pb = st.arranging ? { x0: 0, x1: VB_W } : framed() ? st.portrait : null;
+      if (pb) {
+        const margin = st.arranging ? VB_M : Math.max(15, Math.min(32, 45 * k)) / k;
+        left = Math.max(left, pb.x0 - margin + 10 / k);
+        right = Math.min(right, pb.x1 + margin - 10 / k);
+      }
       t.setAttribute("x", clamp(Number(t.dataset.x), left, Math.max(left, right - b.width)));
       b = t.getBBox();
     }
@@ -248,6 +256,7 @@ export function renderOverlay() {
   rig3d?.setZones(zones); rig3d?.select(st.selected);
   const visible = zones.filter((z) => z.device.online && (z.config.enabled || st.arranging || (st.mode === "2d" && z.key === st.selected)));
   camera = stageCamera(visible);
+  st.portrait = portraitBounds(visible);
   s.setAttribute("viewBox", `${camera.x} ${camera.y} ${camera.width} ${camera.height}`);
   if (st.view.w && st.view.h) projectCamera(st.view.w, st.view.h);
   const identity = $("#stage-identity");

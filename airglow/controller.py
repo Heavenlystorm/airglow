@@ -115,7 +115,8 @@ class Controller:
                     base = self._scene_pending["before"][0]
                 scene = {**base, "on": False}
             else:
-                merged = {**base, **{k: v for k, v in patch.items() if k in ("effect", "params", "brightness", "on")}}
+                # "areas" is only sent to put back an earlier look exactly (Undo after a profile); null clears them.
+                merged = {**base, **{k: v for k, v in patch.items() if k in ("effect", "params", "brightness", "on", "areas")}}
                 if "effect" in patch and patch["effect"] != base["effect"] and "params" not in patch:
                     merged["params"] = {}                 # new effect starts from its defaults
                 scene = validate_scene(merged)

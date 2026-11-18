@@ -7,7 +7,7 @@
 .rig-3d { position: absolute; inset: 52px 0 0; background: #080c11; color: #d9e2ec; }
 .stage .rig-3d canvas { inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 .stage .rig-3d canvas.dragging { cursor: grabbing; }
-.stage .rig-3d canvas:focus-visible { outline: 2px solid var(--brass); outline-offset: -3px; }
+.stage .rig-3d canvas:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -3px; }
 .rig-3d-top { position: absolute; inset: 13px 15px auto; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; pointer-events: none; }
 .rig-3d-top > span { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; line-height: 1.5; text-shadow: 0 1px 4px #000; }
 .rig-3d-top small { display: block; color: #8e9dad; font-size: 10px; letter-spacing: .01em; text-transform: none; }

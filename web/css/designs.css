@@ -217,11 +217,16 @@
 }
 [data-design="firefly"] .appbar { background: #292335; box-shadow: none; }
 [data-design="firefly"] .tabs a { border-radius: 100px; letter-spacing: 0; }
-[data-design="firefly"] .tabs a[aria-current="page"] {
-  background: color-mix(in srgb, var(--brass) 13%, var(--panel));
-  color: var(--brass-hi);
+[data-design="firefly"] .tabs a[aria-current="page"] { background: transparent; color: var(--brass-hi); }
+/* Firefly's current-tab pill is the moving marker: it slides from tab to tab instead of jumping. */
+[data-design="firefly"] .tab-ink {
+  --ink-inset: 0px; top: 50%; bottom: auto; height: 40px; translate: 0 -50%; border-radius: 100px;
+  background: color-mix(in srgb, var(--brass) 13%, var(--panel)); box-shadow: none;
 }
-[data-design="firefly"] .tab-ink { display: none; }
+[data-design="firefly"] .tabs a { z-index: 1; }
+@media (min-width: 1600px) and (min-height: 1000px) { [data-design="firefly"] .tab-ink { height: clamp(40px, 3.6vh, 78px); } }
+/* narrow windows scroll the tabs and drop the marker: the current tab keeps its own pill */
+@media (max-width: 960px) { [data-design="firefly"] .tabs a[aria-current="page"] { background: color-mix(in srgb, var(--brass) 13%, var(--panel)); } }
 [data-design="firefly"] :is(.chip-btn, .tile-tools) { backdrop-filter: none; }
 [data-design="firefly"] :is(.ambient, .seg, .text, select.select) { box-shadow: none; }
 [data-design="firefly"] .chip-btn { border-radius: 100px; }
@@ -251,7 +256,7 @@
   box-shadow: 0 1px 3px #17131f55;
 }
 [data-design="firefly"] input[type="range"]:focus-visible::-webkit-slider-thumb {
-  outline: 2px solid var(--focus-color);
+  outline: var(--focus-w) solid var(--focus-color);
   outline-offset: 1px;
 }
 [data-design="firefly"] .sheet { border-radius: var(--r-stage); }

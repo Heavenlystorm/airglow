@@ -21,6 +21,7 @@ import { VARIATION_LIMIT, documentKey, captureVariation, restoreVariation, inter
   varyMaster, addVariation, createVariationStore, canPlayScene } from "./studio-variations.js";
 import { PAINT_LIMIT, paintPoints, cleanPaint, invertMask, setLedMask, bindPaintCanvas, drawPaintOverlay } from "./studio-paint.js";
 import { openBlend, closeBlend } from "./studio-blend.js";
+import { animateMotion, enter, reduced } from "./motion.js";
 
 const AREAS = { all: "Whole case", front: "Front", top: "Top", rear: "Rear", bottom: "Bottom", side: "Side panel",
   cooler: "CPU cooler", ram: "Memory", board: "Motherboard", gpu: "Graphics card", desk: "Desk" };
@@ -42,6 +43,12 @@ let pending = null;                             // something Lighting asked the 
 let sheetEffect = null;                         // the effect a sheet's buttons act on
 
 const box = () => $("#studio");
+// The home and the editor take turns in one box. Fade the newcomer in when the turn changes, not on every repaint.
+let shownSurface = "";
+function arrive(surface) {
+  if (shownSurface && shownSurface !== surface && box().firstElementChild) enter(box().firstElementChild);
+  shownSurface = surface;
+}
 const gallery = createStudioGallery({ H, E, box, remember, save, queueStills, addStill, effectRunnable });
 const { renderCommunity, paintCommunity, shareIt, galleryDetail } = gallery;
 const draftStore = createDraftStorage({
@@ -376,7 +383,7 @@ export function initStudio() {
       pump();
     }
   });
-  window.matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", refreshSceneMotion);
+  window.matchMedia?.("(prefers-reduced-motion: reduce)").addEventListener("change", refreshSceneMotion);
   new MutationObserver(refreshSceneMotion).observe(document.documentElement, { attributes: true, attributeFilter: ["data-motion"] });
 }
 
@@ -717,7 +724,7 @@ function renderHome(pickStart) {
     ${rig ? "" : `<div class="banner"><span>No lights are set up yet, so previews use a sample case. <a href="#devices">Set up your lights</a> to see your own.</span></div>`}
     <p id="st-motion-note" class="hint" hidden></p>
     ${mine.length ? savedEffects : ""}
-    <section class="st-sec${pickStart ? " flash" : ""}" id="st-start"><div class="st-library-head"><h2 class="st-h">Effect templates</h2>
+    <section class="st-sec" id="st-start"><div class="st-library-head"><h2 class="st-h">Effect templates</h2>
       <button class="btn quiet" data-st="surprise">Surprise me</button></div>
       <div class="st-grid">${LAYER_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="${t.id}">${cardMedia(t.id)}
         <div class="st-cap"><strong>${esc(t.name)}</strong><span>${esc(t.description)}</span></div>
@@ -737,7 +744,16 @@ function renderHome(pickStart) {
       <span class="hint">An effect is one HTML file. Drop one anywhere on this page to open it.</span>
       <input type="file" id="st-import" accept=".html,text/html" hidden></div></section>
   </div>`);
-  if (pickStart) $("#st-start")?.scrollIntoView({ block: "start" });
+  arrive("home");
+  if (pickStart) {
+    $("#st-start")?.scrollIntoView({ block: "start" });
+    // point at the templates: the heading glows in the accent once and settles back
+    const heading = $("#st-start .st-h");
+    if (heading) {
+      const style = getComputedStyle(heading), accent = style.getPropertyValue("--brass-hi").trim();
+      if (accent) animateMotion(heading, [{ color: accent }, { color: accent, offset: .35 }, { color: style.color }], 1200);
+    }
+  }
   wireDraft();
   paintWorkflow();
   $("#st-pack-file")?.addEventListener("change", ev => {
@@ -817,8 +833,7 @@ function sceneBlurred(e) {
 const cardCanvas = (key) => $(`[data-card="${CSS.escape(key)}"] .st-live`, box());
 
 function cardMotionEnabled() {
-  return canPlayScene({ reducedSystem: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-    motion: document.documentElement.dataset.motion });
+  return canPlayScene({ reducedSystem: reduced(), motion: document.documentElement.dataset.motion });
 }
 
 function sceneMotionAllowed() { return !document.hidden && galleryActive() && cardMotionEnabled(); }
@@ -995,6 +1010,7 @@ function renderEditor() {
   stopPainting();
   const restoreFocus = preserveEditorFocus();
   const d = E.doc;
+  queueMicrotask(() => arrive("edit"));
   setHTML(box(), `<div class="st-edit ${d.mode === "code" ? "is-code" : ""}">
     <header class="st-top">
       <a class="icon-btn" href="#studio" aria-label="Back to the Studio"><svg><use href="#i-back"/></svg></a>

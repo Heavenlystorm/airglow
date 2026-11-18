@@ -1,7 +1,8 @@
 // Lighting screen: effect deck, inspector (scene or a selected zone), profiles.
 
 import { $, $$, QUICK, S, coalesce, curveLabel, effectName, emit, esc, fail, fmtTemp, get, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
-import { applyLightingScene, undoLightingScene, waitForLightingScene } from "./scene-commands.js";
+import { applyLightingScene, undoLightingScene } from "./scene-commands.js";
+import { applyProfile, profileToast } from "./profile-undo.js";
 import { select } from "./stage.js";
 import { openSheet, closeSheet } from "./sheet.js";
 import { editProfilesSheet, openGallery, saveProfileSheet } from "./profiles.js";
@@ -320,11 +321,7 @@ $("#inspector").addEventListener("click", async (e) => {
   if (p) {
     const preset = S.presets.find((x) => x.id === p.dataset.preset);
     try {
-      const r = await post(`/api/presets/${encodeURIComponent(preset.id)}/apply`);
-      if (r.scene_status?.status === "pending") r.scene_status = (await waitForLightingScene(r.scene_status.desired_revision, r.scene_status.session)).scene_status;
-      const failed = r.steps.filter((s) => !s.ok);
-      if (failed.length) toast(`${preset.name} is on, but ${failed[0].step} didn't apply: ${failed[0].error}`, true);
-      else toast(r.scene_status?.overridden ? `${preset.name} saved. An automation controls the lights.` : `${preset.name} is on`);
+      profileToast(preset, await applyProfile(preset));
       emit("refresh");
     } catch (err) { fail(err); }
     return;

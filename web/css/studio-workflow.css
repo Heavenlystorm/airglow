@@ -10,7 +10,7 @@
 .st-details { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
 .st-details > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; font-weight: 600; padding: 4px 0 8px; }
 .st-details[open] > summary { color: var(--ink); margin-bottom: 8px; }
-.st-details > summary:focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
+.st-details > summary:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: 3px; }
 .st-palette-save { display: flex; flex-wrap: wrap; gap: 8px; }
 .st-palette-save .text { min-width: 120px; flex: 1; }
 .st-palettes { list-style: none; margin: 12px 0 0; padding: 0; }
@@ -31,7 +31,6 @@
 .st-pack-history li { margin: 8px 0; overflow-wrap: anywhere; }
 .st-pack-history .hint { overflow-wrap: anywhere; }
 .st-menu { position: static; width: 100%; margin-top: 8px; max-height: min(420px, 55vh); box-shadow: none; }
-.st-menu[hidden] { display: none; }
 .st-menu button { white-space: normal; }
 @media (max-width: 900px) {
   .st-edit, .st-edit.is-code { position: relative; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto auto auto auto; overflow: visible; }

@@ -11,6 +11,7 @@ const categories = [
   { kind: "workspace", label: "Workspaces", icon: "workspace" },
 ];
 const icons = Object.fromEntries(categories.map(({ kind, icon }) => [kind, icon]));
+const SECTION_ICONS = { overview: "workspace", lighting: "bulb", studio: "effect", fans: "fan", automations: "bolt", devices: "chip", settings: "gear" };
 
 function commands(sections, ready) {
   const navigation = sections.map(id => ({ kind: "section", id, name: cap(id), action: `Open ${cap(id)}` }));
@@ -60,6 +61,8 @@ async function activate(item) {
     emit("refresh");
     return { message: confirmedMessage(result.scene_status, item.name, "Effect", result.scene?.on) };
   }
+  const { profileUndoPoint } = await import("./profile-undo.js");
+  const undoPoint = profileUndoPoint(S.presets.find(preset => preset.id === item.id) || { id: item.id });
   const result = await post(`/api/presets/${encodeURIComponent(item.id)}/apply`);
   emit("refresh");
   const steps = result.steps || [];
@@ -81,7 +84,7 @@ async function activate(item) {
     const detail = status?.overridden ? "Lighting is currently overridden." : status?.status === "ready" ? "Lighting applied." : "";
     return { error: [item.name, detail, ...(failed.length ? failed : ["Profile could not apply."])].filter(Boolean).join(" · ") };
   }
-  return { message: confirmedMessage(status, item.name, "Profile") };
+  return { message: confirmedMessage(status, item.name, "Profile"), undo: status?.overridden ? null : undoPoint() };
 }
 
 export function initQuickSwitcher(sections, catalogState) {
@@ -155,7 +158,7 @@ export function initQuickSwitcher(sections, catalogState) {
         const action = editingFavorites ? isFavorite(item.kind, item.id) ? "Unpin favorite" : "Pin favorite" :
           item.kind === "section" ? "Open section" : item.action;
         return `<div id="qs-option-${i}" class="qs-option" role="option" data-index="${i}" aria-disabled="${!!busy}">
-        <svg class="qs-type" aria-hidden="true"><use href="#i-${icons[item.kind]}"/></svg>
+        <svg class="qs-type" aria-hidden="true"><use href="#i-${item.kind === "section" && SECTION_ICONS[item.id] || icons[item.kind]}"/></svg>
         <span>${esc(item.name)}</span><small>${esc(action)}${item.detail ? ` · ${esc(item.detail)}` : ""}</small></div>`;
       }
       const body = groups.map(([label, entries]) => {
@@ -219,7 +222,10 @@ export function initQuickSwitcher(sections, catalogState) {
         closeSheet();
       } else refresh();
       if (outcome.route) location.hash = `#${outcome.route}`;
-      if (outcome.message || outcome.error) toast(outcome.message || outcome.error, !!outcome.error);
+      if (outcome.undo && outcome.message) {
+        const { undoAction } = await import("./profile-undo.js");
+        toast(outcome.message, { action: undoAction(outcome.undo) });
+      } else if (outcome.message || outcome.error) toast(outcome.message || outcome.error, !!outcome.error);
     }
 
     function refilter(nextKind) {

@@ -43,12 +43,12 @@ export function sentence(r, html = true, names = {}) {
 const gameProfile = () => S.presets.find(p => p.id === "gaming") || S.presets[0];
 
 const STARTERS = [
-  { title: "Lights off at night", text: "Between 23:00 and 07:00, the lights go dark.", rule: { when: { type: "time", start: "23:00", end: "07:00" }, then: { type: "lights_off" } } },
-  { title: "Dim when you step away", text: "After 10 idle minutes, lights drop to 15%.", rule: { when: { type: "idle", minutes: 10 }, then: { type: "dim", brightness: 15 } } },
-  { title: "Game mode", text: () => gameProfile() ? `While your game runs, use ${gameProfile().name}.` : "Choose what happens while your game runs.", rule: { when: { type: "app_running", exe: "" }, then: { type: "preset", preset: "gaming" } } },
-  { title: "Quiet when idle", text: "After 15 idle minutes, the fans go Silent.", rule: { when: { type: "idle", minutes: 15 }, then: { type: "fan_curve", curve: "silent" } } },
-  { title: "Dark while locked", text: "Lights off whenever you lock the PC.", rule: { when: { type: "locked" }, then: { type: "lights_off" } } },
-  { title: "Cool down under load", text: () => `Above ${tempTxt(80)}, the fans switch to Performance.`, rule: { when: { type: "temp_above", temp: 80, source: "max" }, then: { type: "fan_curve", curve: "performance" } } },
+  { title: "Lights off at night", icon: "moon", text: "Between 23:00 and 07:00, the lights go dark.", rule: { when: { type: "time", start: "23:00", end: "07:00" }, then: { type: "lights_off" } } },
+  { title: "Dim when you step away", icon: "clock", text: "After 10 idle minutes, lights drop to 15%.", rule: { when: { type: "idle", minutes: 10 }, then: { type: "dim", brightness: 15 } } },
+  { title: "Game mode", icon: "game", text: () => gameProfile() ? `While your game runs, use ${gameProfile().name}.` : "Choose what happens while your game runs.", rule: { when: { type: "app_running", exe: "" }, then: { type: "preset", preset: "gaming" } } },
+  { title: "Quiet when idle", icon: "fan", text: "After 15 idle minutes, the fans go Silent.", rule: { when: { type: "idle", minutes: 15 }, then: { type: "fan_curve", curve: "silent" } } },
+  { title: "Dark while locked", icon: "lock", text: "Lights off whenever you lock the PC.", rule: { when: { type: "locked" }, then: { type: "lights_off" } } },
+  { title: "Cool down under load", icon: "temp", text: () => `Above ${tempTxt(80)}, the fans switch to Performance.`, rule: { when: { type: "temp_above", temp: 80, source: "max" }, then: { type: "fan_curve", curve: "performance" } } },
 ];
 
 const newId = () => "rule-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
@@ -109,6 +109,8 @@ export function renderAutomations() {
   const o = S.state.override || {};
   const active = new Set(o.active || []);
   const paused = !!o.paused_until;
+  const empty = $("#rules-empty");
+  if (empty) empty.hidden = rules.length > 0;
   setHTML($("#rules"), rules.map((r, i) => {
     const isActive = active.has(r.id) && r.enabled;
     const lights = r.id === o.lighting, fans = r.id === o.fans;
@@ -133,7 +135,7 @@ export function renderAutomations() {
   const starterIcon = { lights_off: "power", dim: "effect", fan_curve: "sliders", preset: "workspace" };
   const starters = STARTERS.filter((s) => !used.has(JSON.stringify([s.rule.when.type, s.rule.then.type])));
   setHTML($("#starters"), starters.length ? `<h2>${rules.length ? "More ideas" : "Start with one of these"}</h2>
-    <div class="starter-grid">${starters.map((s) => `<button class="starter" id="starter-${STARTERS.indexOf(s)}" data-starter="${STARTERS.indexOf(s)}" aria-haspopup="dialog"><svg class="starter-icon" aria-hidden="true"><use href="#i-${starterIcon[s.rule.then.type]}"/></svg><strong>${esc(s.title)}</strong><span>${esc(typeof s.text === "function" ? s.text() : s.text)}</span><svg class="starter-arrow" aria-hidden="true"><use href="#i-back"/></svg></button>`).join("")}</div>` : "");
+    <div class="starter-grid">${starters.map((s) => `<button class="starter" id="starter-${STARTERS.indexOf(s)}" data-starter="${STARTERS.indexOf(s)}" aria-haspopup="dialog"><svg class="starter-icon" aria-hidden="true"><use href="#i-${s.icon || starterIcon[s.rule.then.type]}"/></svg><strong>${esc(s.title)}</strong><span>${esc(typeof s.text === "function" ? s.text() : s.text)}</span><svg class="starter-arrow" aria-hidden="true"><use href="#i-back"/></svg></button>`).join("")}</div>` : "");
 }
 
 // ------------------------------------------------------------ builder

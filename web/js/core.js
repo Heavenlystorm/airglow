@@ -173,7 +173,17 @@ export function toast(msg, isErrorOrOptions = false) {
   const t = $("#toast");
   t.inert = false;
   t.replaceChildren();
+  if (document.createElementNS) {
+    const svgNS = "http://www.w3.org/2000/svg";
+    const icon = document.createElementNS(svgNS, "svg"), use = document.createElementNS(svgNS, "use");
+    icon.setAttribute("class", "toast-icon");
+    icon.setAttribute("aria-hidden", "true");
+    use.setAttribute("href", opts.isError ? "#i-alert" : "#i-check");
+    icon.append(use);
+    t.append(icon);
+  }
   const text = document.createElement("span");
+  text.className = "toast-text";
   text.textContent = msg;
   t.append(text);
   let actionButton = null;
@@ -192,6 +202,13 @@ export function toast(msg, isErrorOrOptions = false) {
   }
   t.classList.toggle("error", !!opts.isError);
   t.classList.toggle("has-action", !!opts.action);
+  // The toast is a manual popover: re-entering the top layer puts it above a sheet opened since the last message.
+  if (t.showPopover) {
+    try {
+      if (t.matches(":popover-open")) t.hidePopover();
+      t.showPopover();
+    } catch { /* not connected yet, or popover unsupported: it still shows in place */ }
+  }
   t.classList.add("show");
   if (actionButton) actionButton.focus({ preventScroll: true });
   clearTimeout(toastTimer);

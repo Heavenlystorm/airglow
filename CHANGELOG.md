@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.19.0
+- Switching profiles can be undone. The confirmation now offers Undo, which brings back the previous profile, or your
+  earlier lighting and fan curve when no profile was running. It works from Overview, Lighting and Quick Switch.
+- Selected and running states are clear again. Profile cards, chips, presets, switches and Studio layers had lost most
+  of their accent outline, and the running profile now glows faintly in its own colour.
+- Smoother, calmer motion: dialogs fade out as well as in and slide between setup steps, Firefly's tab pill glides to
+  the tab you pick, notices slide open and closed, gauges and bars ease to each reading, and buttons, cards and
+  switches respond to a press. Reduce motion and Windows' animation setting still keep everything still.
+- Toasts appear bottom right with an icon, stay above open dialogs and no longer cover Overview tiles.
+- Overview sparklines stay clear of their captions at every window size, ranges read "46°C – 62°C" or "Steady at
+  44°C", the lighting canvas glows softly in the running effect's colour, and Customize no longer covers tile links.
+- Zone names stay inside the case outline, the quick colours fit on one row, unavailable effects look unavailable,
+  and the Lighting inspector is only as tall as its contents.
+- Automations shows an empty state and its own icon for each idea, Quick Switch gives each section an icon, and
+  Automations and Settings share one page width. Fan curve actions look like buttons, the stall zone and grid are
+  easier to see, and Devices outlines channels with nothing connected.
+- Studio and Settings show a placeholder while loading, Studio fades between its home and the editor, the welcome
+  sheet lost a doubled divider, and focus rings follow each design, High contrast included.
+
 ## 1.18.0
 - Lighting shows which zone you are editing beside the effect deck. Choose Whole rig to change the shared effect. Undo can restore the previous zone or rig effect.
 - Pin effects and profiles from Lighting or Quick Switch. Open Quick Switch with Ctrl+K to see your favorites and the last eight effects and profiles you applied.

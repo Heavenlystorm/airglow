@@ -16,5 +16,5 @@
 .st-paint .hint { line-height: 1.55; }
 #st-paint-status { color: var(--ink-2); }
 #st-canvas.is-painting { cursor: crosshair; touch-action: none; }
-#st-canvas:focus-visible, .st-paint summary:focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
+#st-canvas:focus-visible, .st-paint summary:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: 3px; }
 [data-design="contrast"] .st-paint [aria-pressed="true"] { border-color: var(--ink); text-decoration: underline; }
