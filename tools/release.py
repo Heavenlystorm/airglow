@@ -53,7 +53,7 @@ def scoop_manifest(version, zip_path, url):
     return {
         "version": version,
         "description": "RGB lighting, fan curves and sensors for Windows PCs, in one app.",
-        "homepage": repo,
+        "homepage": "https://airglowrgb.com",
         "license": "MIT",
         "url": url,
         "hash": sha,

@@ -43,6 +43,7 @@ class ReleaseToolTests(unittest.TestCase):
             url = "https://github.com/Heavenlystorm/airglow/releases/download/v1.6.0/Airglow-stable-Portable.zip"
             m = release.scoop_manifest("1.6.0", z, url)
         self.assertEqual(m["hash"], hashlib.sha256(b"zip").hexdigest())
+        self.assertEqual(m["homepage"], "https://airglowrgb.com")
         self.assertEqual(m["autoupdate"]["url"],
                          "https://github.com/Heavenlystorm/airglow/releases/download/v$version/Airglow-stable-Portable.zip")
 
