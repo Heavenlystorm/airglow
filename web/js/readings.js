@@ -64,7 +64,8 @@ export function markReadingsStale() {
   R.stale = true;
 }
 
-export const value = (id) => R.stale ? null : reading(S.state?.readings && id in S.state.readings ? S.state.readings[id] : R.meta[id]?.value);
+// A tile or pin can be selected before its first tracked state arrives. Catalog values are picker snapshots.
+export const value = (id) => R.stale ? null : reading(S.state?.readings?.[id]);
 
 // ------------------------------------------------------------ formatting
 // Returns { num, unit } so the number and unit can be set in different sizes.
@@ -107,7 +108,14 @@ export function level(id, meta, v) {
   return v >= lv[1] ? "hot" : v >= lv[0] ? "warm" : "";
 }
 // These are Airglow's display warning levels, not a manufacturer's thermal limit.
-export const thresholds = (id, meta) => LEVELS[id] || (meta?.unit === "°C" ? [80, 95] : null);
+export function thresholds(id, meta) {
+  if (LEVELS[id]) return LEVELS[id];
+  // Picking a raw sensor must give it the same thresholds as its resolved shortcut.
+  for (const alias of Object.keys(LEVELS)) {
+    if (id && R.meta[alias]?.source_id === id) return LEVELS[alias];
+  }
+  return meta?.unit === "°C" ? [80, 95] : null;
+}
 
 const niceCeil = (v) => {
   if (v <= 0) return 1;

@@ -29,6 +29,12 @@
 }
 .overview-view .tile .g-fill, .overview-view .tile .hbar .fill { transition-duration: 160ms; }
 .overview-view .tile .lg-0 i { background: var(--instrument-ink); }
+.s-graph[data-compare-level="warm"] { --comparison-warning: var(--warm); --data-2: var(--warm); }
+.s-graph[data-compare-level="hot"] { --comparison-warning: var(--hot); --data-2: var(--hot); }
+.overview-view .s-graph .lg-1 .num { color: var(--comparison-warning, var(--ink)); }
+[data-design="kiln"] .s-graph[data-compare-level="warm"] { --data-2: var(--heat-4); }
+[data-design="kiln"] .s-graph[data-compare-level="hot"] { --data-2: var(--heat-6); }
+[data-design="kiln"] .overview-view .s-graph .lg-1 .num { color: var(--ink); }
 .overview-view .tile-lighting { border-color: var(--line); }
 .canvas-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: none; padding: 14px 18px 0; color: var(--ink-2); font-size: clamp(12px, 2.8cqh, 18px); }
 .canvas-heading > span { font-weight: 600; }

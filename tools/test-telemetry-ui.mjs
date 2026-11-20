@@ -47,6 +47,43 @@ async function pageFor(t, view, beforeNavigation = () => {}) {
 }
 async function frames(page) { await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))); }
 
+test("a delayed refresh cannot roll back a newer streamed temperature or mark it offline", async t => {
+  const page = await pageFor(t, "overview", async p => {
+    // Drive stream delivery explicitly so no real event can mask a stale refresh.
+    await p.addInitScript(() => {
+      window.EventSource = class extends EventTarget {
+        static CLOSED = 2;
+        readyState = 1;
+        constructor() { super(); window.fixtureStream = this; }
+        close() { this.readyState = 2; }
+      };
+    });
+  });
+  await page.waitForFunction(() => window.fixtureStream);
+  for (const failed of [false, true]) {
+    const result = await page.evaluate(async failed => {
+      const { S, emit } = await import("/js/core.js");
+      const { R } = await import("/js/readings.js");
+      const old = structuredClone(S.state), newer = structuredClone(old);
+      old.readings["auto/cpu_temp"] = 42;
+      newer.readings["auto/cpu_temp"] = 76;
+      const fetchOriginal = window.fetch;
+      let finish;
+      window.fetch = (url, ...options) => url === "/api/state"
+        ? new Promise(resolve => { finish = () => resolve(Response.json(old, { status: failed ? 503 : 200 })); })
+        : fetchOriginal(url, ...options);
+      try {
+        emit("refresh");
+        window.fixtureStream.dispatchEvent(new MessageEvent("state", { data: JSON.stringify(newer) }));
+        finish();
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return { temperature: S.state.readings["auto/cpu_temp"], stale: R.stale };
+      } finally { window.fetch = fetchOriginal; }
+    }, failed);
+    assert.deepEqual(result, { temperature: 76, stale: false });
+  }
+});
+
 test("fan failsafe stays visible across tabs without obscuring controls and links to Sensors", async (t) => {
   const state = await api("/api/state");
   state.fans.failsafe = true;
@@ -156,36 +193,46 @@ test("Studio shares one left edge at wide and narrow sizes in every theme", asyn
   writeFileSync(join(OUTPUT, "studio-geometry.json"), JSON.stringify(geometry, null, 2));
 });
 
-test("every addable sensor renders in all four tile styles without invalid values", async (t) => {
+test("every sensor tile style renders the selected catalog reading and unit", async (t) => {
   const page = await pageFor(t, "overview");
   await page.locator("#ov-grid .tile").first().waitFor();
   const captured = process.env.AIRGLOW_CATALOG_CAPTURE;
   const catalog = captured ? JSON.parse(readFileSync(captured, "utf8")).sensors : (await api("/api/sensors")).sensors;
-  const styles = ["spark", "ring", "bar", "graph"];
+  const styles = ["auto", "spark", "ring", "bar", "graph"];
+  const batchSize = Math.floor(24 / styles.length);
   const inventory = [];
   // Limit each layout to 24 tiles. This covers actual raw sensors as well as quick picks and app readings.
-  for (let start = 0; start < catalog.length; start += 6) {
-    const sensors = catalog.slice(start, start + 6);
+  for (let start = 0; start < catalog.length; start += batchSize) {
+    const sensors = catalog.slice(start, start + batchSize);
     const tiles = sensors.flatMap((m, i) => styles.map(style => ({ id: `audit-${i}-${style}`, type: "sensor",
       sensors: [m.id], style, w: style === "graph" ? 2 : 1, h: 1 })));
     await api("/api/overview", { tiles, pins: [] }); await page.reload();
     await page.waitForFunction(n => document.querySelectorAll("#ov-grid .tile-sensor").length === n, tiles.length);
     await frames(page);
-    if (captured) await page.evaluate(async entries => {
-      const { S } = await import("/js/core.js"), { R, pushReadings } = await import("/js/readings.js");
+    const { rendered, expected } = await page.evaluate(async entries => {
+      const { S } = await import("/js/core.js"), { R, fmt, pushReadings } = await import("/js/readings.js");
       const { renderOverview } = await import("/js/overview.js");
-      // Replay a read-only hardware capture into the isolated UI. No requests go to real controllers.
+      // Render and read one sample synchronously so a new stream event can't change the comparison.
       for (const m of entries) R.meta[m.id] = m;
       S.state.readings = Object.fromEntries(entries.map(m => [m.id, m.value]));
       pushReadings(S.state.readings); renderOverview();
+      return {
+        expected: entries.map(m => fmt(m, m.value)),
+        rendered: [...document.querySelectorAll("#ov-grid .tile-sensor")].map(el => ({
+          title: el.querySelector(".tile-name").textContent, text: el.innerText,
+          numbers: [...el.querySelectorAll(".num")].map(e => e.textContent),
+          units: [...el.querySelectorAll(".unit")].map(e => e.textContent),
+          paths: [...el.querySelectorAll("path")].map(p => p.style.d),
+        })),
+      };
     }, sensors);
-    const rendered = await page.evaluate(() => [...document.querySelectorAll("#ov-grid .tile-sensor")].map(el => ({
-      title: el.querySelector(".tile-name").textContent, text: el.innerText,
-      paths: [...el.querySelectorAll("path")].map(p => p.style.d),
-    })));
     assert.equal(rendered.length, tiles.length);
-    for (const tile of rendered) {
-      assert.ok(tile.title.trim()); assert.doesNotMatch(tile.text, /NaN|Infinity|undefined/);
+    for (const [index, tile] of rendered.entries()) {
+      const slot = Math.floor(index / styles.length), reading = expected[slot];
+      assert.equal(tile.title, sensors[slot].name);
+      assert.ok(tile.numbers.length && tile.numbers.every(n => n === reading.num), JSON.stringify({ tile, reading }));
+      assert.ok(tile.units.length && tile.units.every(u => u === reading.unit), JSON.stringify({ tile, reading }));
+      assert.doesNotMatch(tile.text, /NaN|Infinity|undefined/);
       for (const path of tile.paths) assert.doesNotMatch(path, /NaN|Infinity|undefined/);
     }
     inventory.push(...sensors.map(m => ({ id: m.id, name: m.name, unit: m.unit, source: m.source || m.group,
@@ -194,7 +241,7 @@ test("every addable sensor renders in all four tile styles without invalid value
   assert.ok(inventory.some(m => m.id === "auto/cpu_load"));
   assert.ok(inventory.some(m => m.id === "auto/ssd_temp"));
   writeFileSync(join(OUTPUT, "tile-inventory.json"), JSON.stringify(inventory, null, 2));
-  console.log(`Rendered ${catalog.length} catalog entries in ${styles.length} styles (${catalog.length * 4} tiles).`);
+  console.log(`Rendered ${catalog.length} catalog entries in ${styles.length} styles (${catalog.length * styles.length} tiles).`);
 });
 
 test("setup activates detected fans and Control center opens the selected channel", async (t) => {
@@ -260,4 +307,71 @@ test("mixed-unit graphs label both scales, missing values stay empty, and discon
   await page.screenshot({ path: join(OUTPUT, "disconnected-tiles.png") });
   await page.context().setOffline(false);
   await page.waitForFunction(() => document.querySelector('[data-id="cpu"] .num')?.textContent !== "–");
+});
+
+test("each temperature in a comparison graph shows its own warning color", async (t) => {
+  const ids = ["auto/cpu_temp", "auto/gpu_temp"];
+  await api("/api/overview", { tiles: [{ id: "heat", type: "sensor", sensors: ids, style: "graph", w: 2, h: 2 }], pins: [] });
+  const page = await pageFor(t, "overview");
+  await page.locator('[data-id="heat"] .lg-1 .num').waitFor();
+  const sample = (values) => page.evaluate(async ({ ids, values }) => {
+    const { S } = await import("/js/core.js");
+    const { renderOverview } = await import("/js/overview.js");
+    S.state.readings = Object.fromEntries(ids.map((id, i) => [id, values[i]]));
+    renderOverview();
+    return [...document.querySelectorAll('[data-id="heat"] .lg .num')].map(el => getComputedStyle(el).color);
+  }, { ids, values });
+  const cool = await sample([50, 40]);
+  const firstHot = await sample([92, 40]);
+  assert.notEqual(firstHot[0], cool[0]);
+  assert.equal(firstHot[1], cool[1]);
+  const secondHot = await sample([null, 88]);
+  assert.equal(secondHot[0], cool[0]);
+  assert.equal(secondHot[1], firstHot[0]);
+});
+
+test("a short or interrupted temperature history never claims ten steady minutes", async (t) => {
+  const id = "auto/ssd_temp";
+  await api("/api/overview", { tiles: [{ id: "drive", type: "sensor", sensors: [id], style: "spark", w: 1, h: 1 }], pins: [] });
+  const page = await pageFor(t, "overview");
+  await page.locator('[data-id="drive"] .num').waitFor();
+  const caption = (samples) => page.evaluate(async ({ id, samples }) => {
+    const { R } = await import("/js/readings.js");
+    const { renderOverview } = await import("/js/overview.js");
+    const now = Date.now() / 1000;
+    R.series[id] = samples.map(([age, value]) => [now - age, value]);
+    renderOverview();
+    return document.querySelector('[data-id="drive"] .minmax').textContent;
+  }, { id, samples });
+  for (const ages of [[6, 4, 2, 0], [599, 597, 2, 0]]) {
+    const text = await caption(ages.map(age => [age, 58]));
+    assert.match(text, /58°C/);
+    assert.doesNotMatch(text, /for 10 min/);
+  }
+});
+
+test("a changed probe on the same device updates the tile tooltip and a stalled sampler shows a waiting state", async (t) => {
+  const id = "auto/cpu_temp";
+  await api("/api/overview", { tiles: [{ id: "probe", type: "sensor", sensors: [id], style: "spark", w: 1, h: 1 }], pins: [] });
+  const page = await pageFor(t, "overview");
+  await page.locator('[data-id="probe"] .num').waitFor();
+  const shown = await page.evaluate(async id => {
+    const { S } = await import("/js/core.js");
+    const { R } = await import("/js/readings.js");
+    const { renderOverview } = await import("/js/overview.js");
+    const tile = document.querySelector('[data-id="probe"]');
+    R.meta[id] = { ...R.meta[id], source: "CPU", sensor_name: "CPU Package" };
+    renderOverview();
+    R.meta[id].sensor_name = "Core Max";
+    renderOverview();
+    const title = tile.querySelector(".tile-name").title;
+    S.state.telemetry_stale = true;
+    S.state.sensors.online = false;
+    S.state.readings[id] = null;
+    renderOverview();
+    return { title, value: tile.querySelector(".num").textContent, note: tile.querySelector(".tile-note")?.textContent };
+  }, id);
+  assert.match(shown.title, /Core Max/);
+  assert.equal(shown.value, "–");
+  assert.match(shown.note, /Waiting for current sensor readings/);
 });

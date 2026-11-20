@@ -10,12 +10,16 @@ import { animateMotion, countTo, flip, reduced, stopMotion } from "./motion.js";
 import { accentPalette } from "./appearance.js";
 import { createOverviewRig } from "./overview-rig.js";
 import { profileArtwork, fanInstrument } from "./overview-instruments.js";
-import { instrumentModel, peakBuckets, sensorFamily } from "./overview-sensors.js";
+import { instrumentModel, peakBuckets, sensorFamily, trendOf } from "./overview-sensors.js";
 import { closeSheet, openSheet } from "./sheet.js";
 import { editProfilesSheet, saveProfileSheet } from "./profiles.js";
 import { createLayoutHistory, createWorkspace, deleteWorkspace, exportWorkspace, importWorkspace, initializeWorkspaces, renameWorkspace, restoreOverview, starterWorkspace, switchWorkspace, syncWorkspace } from "./overview-workspaces.js";
+import { createLightGauge, createLightGraph, lightTokens, rgb } from "./light-graph.js";
+import { agoText, initPulse, renderPulse } from "./overview-pulse.js";
+import { openFocus, trendText } from "./overview-focus.js";
 
 const COLS = 4;
+const ROLL = { roll: true };            // Overview figures change digit by digit
 const STYLES = [
   { id: "auto", name: "Instrument" },
   { id: "spark", name: "Number" }, { id: "ring", name: "Gauge" }, { id: "graph", name: "Graph" }, { id: "bar", name: "Bar" },
@@ -237,7 +241,7 @@ function initWorkspaceToolbar() {
   $("#ov-undo").addEventListener("click", () => historyStep("undo"));
   $("#ov-redo").addEventListener("click", () => historyStep("redo"));
   document.addEventListener("keydown", (event) => {
-    if (!visible() || $("#sheet").open || !(event.ctrlKey || event.metaKey) || event.altKey || event.target.closest?.("input, textarea, select, [contenteditable]")) return;
+    if (!visible() || $("#sheet").open || $("#light-focus")?.open || !(event.ctrlKey || event.metaKey) || event.altKey || event.target.closest?.("input, textarea, select, [contenteditable]")) return;
     const key = event.key.toLowerCase();
     if (key !== "z" && key !== "y") return;
     event.preventDefault(); historyStep(key === "y" || event.shiftKey ? "redo" : "undo");
@@ -261,8 +265,55 @@ function shell(t) {
   el.innerHTML = `<div class="tile-inner"></div>
     <div class="tile-tools"><button class="icon-btn" data-act="edit" title="Tile settings" aria-label="Tile settings"><svg><use href="#i-sliders"/></svg></button>
       <button class="icon-btn" data-act="remove" title="Remove tile" aria-label="Remove tile"><svg><use href="#i-close"/></svg></button></div>
-    <span class="tile-resize" data-act="resize" title="Drag to resize" aria-hidden="true"></span>`;
+    <span class="tile-resize" data-act="resize" title="Drag to resize" aria-hidden="true"></span>
+    <output class="light-tip" aria-hidden="true" hidden></output>`;
+  el.addEventListener("pointermove", (e) => scrub(el, e));
+  el.addEventListener("pointerleave", () => scrub(el, null));
   return el;
+}
+
+// Moving the pointer along a tile's graph reads the value it showed at that moment.
+function scrub(el, e) {
+  const light = el._light, tip = el.querySelector(".light-tip"), t = tileById(el.dataset.id);
+  const box = e && light?.probe && t && !O.editing && e.pointerType !== "touch" ? light.canvas.getBoundingClientRect() : null;
+  if (e) {
+    // the tile's own light follows the pointer (overview-light.css)
+    const frame = el.getBoundingClientRect(), k = el.offsetWidth / (frame.width || 1);
+    el.style.setProperty("--mx", `${((e.clientX - frame.left) * k).toFixed(0)}px`);
+    el.style.setProperty("--my", `${((e.clientY - frame.top) * k).toFixed(0)}px`);
+  }
+  const inside = box?.width && e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
+  const k = inside ? light.canvas.clientWidth / box.width : 1;
+  const read = inside ? light.probe((e.clientX - box.left) * k) : null;
+  if (!read || read.values.every((v) => v == null)) {
+    light?.hover?.(null);
+    if (tip) tip.hidden = true;
+    return;
+  }
+  light.hover((e.clientX - box.left) * k);
+  const frame = el.getBoundingClientRect();
+  const parts = t.sensors.map((sid, i) => {
+    const m = R.meta[sid], text = fmtText(m, read.values[i]);
+    return t.sensors.length > 1 ? `<span class="tip-${i}">${esc(m?.short || sensorName(sid))} <b>${esc(text)}</b></span>` : `<b>${esc(text)}</b>`;
+  });
+  setHTML(tip, `${parts.join("")}<i>${agoText(read.ago)}</i>`);
+  tip.hidden = false;
+  tip.style.setProperty("--tx", `${((e.clientX - frame.left) * k).toFixed(1)}px`);
+  tip.style.setProperty("--ty", `${((box.top - frame.top) * k).toFixed(1)}px`);
+}
+
+function focusTile(id) {
+  const t = tileById(id), el = O.els.get(id);
+  if (!t || t.type !== "sensor" || !el) return;
+  scrub(el, null);
+  openFocus({ sensors: t.sensors, label: t.label, from: el, onSettings: () => tileSheet(id) });
+}
+
+// Tiles rise into place one after another when the Overview opens.
+function arrive(tiles) {
+  if (reduced() || document.hidden) return;
+  tiles.forEach((el, i) => el.animate?.([{ opacity: 0, transform: "translateY(16px) scale(.985)" }, { opacity: 1, transform: "none" }],
+    { duration: 460, delay: Math.min(i, 14) * 34, easing: "cubic-bezier(.16, 1, .3, 1)", fill: "backwards" }));
 }
 
 function sizeTile(el, t) {
@@ -287,19 +338,30 @@ function sizeTile(el, t) {
   el.style.setProperty("--tile-accent", tileAccents.get(accent));
 }
 
+// An arrow beside the figure: which way the reading moved over the last minute.
+const TREND = `<i class="trend" hidden><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h7.5M6.4 2.8 9.6 6 6.4 9.2"/></svg></i>`;
+function showTrend(el, meta, points) {
+  const arrow = el.querySelector(".trend");
+  if (!arrow?.setAttribute) return;
+  const moving = R.stale ? null : trendOf(meta, points, Date.now() / 1000);
+  arrow.hidden = !moving;
+  arrow.setAttribute("data-trend", moving?.state || "");
+  arrow.title = trendText(meta, moving) || "";
+}
+
 // Sensor tile markup per style. Values and paths are filled in by update().
 function sensorMarkup(t) {
   const head = `<header class="tile-head"><span class="tile-name"></span><span class="tile-src"></span></header>`;
-  if (t.style === "auto") return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span></div>
+  if (t.style === "auto") return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span>${TREND}</div>
     <div class="instrument-meter"><div class="instrument-track" aria-hidden="true"><i></i><b class="thermal-marker"></b><b class="threshold-tick warning" title="Airglow warning"></b><b class="threshold-tick critical" title="Airglow high"></b></div><div class="instrument-scale"><span class="scale-lo"></span><span class="scale-hi"></span></div></div>
-    <div class="instrument-history"><div class="history-caption"><span></span><span class="history-range"></span></div><svg viewBox="0 0 400 100" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/><g class="network-bins"/></svg><span class="history-empty">Collecting history</span></div>
+    <div class="instrument-history"><div class="history-caption"><span></span><span class="history-range"></span></div><div class="history-plot"><svg viewBox="0 0 400 100" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/><g class="network-bins"/></svg><div class="light-host"></div></div><span class="history-empty">Collecting history</span></div>
     <div class="instrument-detail"></div><div class="instrument-compare"></div>`;
   if (t.style === "ring") {
     return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span></div><div class="g-cap"></div><div class="gauge"><svg viewBox="0 0 120 120" aria-hidden="true">
         <path class="g-track" d="${arc(60, 60, 48, 135, 405)}" pathLength="100"/>
         <path class="g-fill" d="${arc(60, 60, 48, 135, 405)}" pathLength="100" stroke-dasharray="0 100"/>
         <text class="g-lo" x="26" y="114" text-anchor="middle"></text><text class="g-hi" x="94" y="114" text-anchor="middle"></text></svg>
-      <div class="g-read"><span class="num">–</span><span class="unit"></span></div></div>`;
+      <div class="light-host"></div><div class="g-read"><span class="num">–</span><span class="unit"></span></div></div>`;
   }
   if (t.style === "bar") {
     return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span><span class="of"></span></div>
@@ -311,11 +373,28 @@ function sensorMarkup(t) {
       <div class="chart"><svg viewBox="0 0 400 100" preserveAspectRatio="none" aria-hidden="true">
         <line class="gl" x1="0" x2="400" y1="0.5" y2="0.5"/><line class="gl" x1="0" x2="400" y1="50" y2="50"/><line class="gl" x1="0" x2="400" y1="99.5" y2="99.5"/>
         ${t.sensors.map((_, i) => `<path class="area a-${i}"/><path class="line l-${i}"/>`).join("")}</svg>
-        <span class="ax ax-hi"></span><span class="ax ax-mid"></span><span class="ax ax-hi ax-right" hidden></span><span class="ax ax-mid ax-right" hidden></span><span class="ax-time">10 min</span></div>`;
+        <div class="light-host"></div><span class="ax ax-hi"></span><span class="ax ax-mid"></span><span class="ax ax-hi ax-right" hidden></span><span class="ax ax-mid ax-right" hidden></span><span class="ax-time">10 min</span></div>`;
   }
-  return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span></div>
+  return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span>${TREND}</div>
     <div class="minmax"></div>
-    <svg class="spark" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/></svg>`;
+    <svg class="spark" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/></svg>
+    <div class="light-host light-spark"></div>`;
+}
+
+// The canvas a sensor tile draws its light on. The SVG paths beside it stay as the forced-colours fallback.
+function mountLight(el, t) {
+  const host = el.querySelector(".light-host");
+  if (!host || !globalThis.ResizeObserver) return null;
+  try {
+    if (t.style === "ring") return createLightGauge(host);
+    return createLightGraph(host, { pad: t.style === "spark" ? [12, 14, 0, 0] : t.style === "graph" ? [8, 12, 1, 0] : [8, 10, 1, 0] });
+  } catch { return null; }                 // no 2D canvas: the SVG paths remain
+}
+
+function lightModel(el, series, extra = {}) {
+  const tokens = el._tokens;
+  return { window: WINDOW, glow: tokens.glow, curve: tokens.curve, text: tokens.text, track: tokens.track, ...extra,
+    series: series.map((s, i) => ({ warm: tokens.warm, hot: tokens.hot, color: i ? tokens.second : tokens.ink, ...s })) };
 }
 
 function controlMarkup(t) {
@@ -337,15 +416,17 @@ function controlMarkup(t) {
 
 function mount(t) {
   let el = O.els.get(t.id);
-  if (el && el._type !== t.type) { el._rig?.dispose(); el.remove(); O.els.delete(t.id); el = null; }
+  if (el && el._type !== t.type) { el._rig?.dispose(); el._light?.dispose(); el.remove(); O.els.delete(t.id); el = null; }
   const sig = t.type === "sensor" ? `${t.style}|${t.sensors.length}` : t.type;
   if (!el) { el = shell(t); el._type = t.type; O.els.set(t.id, el); }
   if (el._sig !== sig) {
     el._rig?.dispose(); el._rig = null;
+    el._light?.dispose(); el._light = null;
     el._sig = sig;
     el.className = `tile tile-${t.type}${t.type === "sensor" ? ` s-${t.style}` : ""}`;
     el.querySelector(".tile-inner").innerHTML = t.type === "sensor" ? sensorMarkup(t) : controlMarkup(t);
     el._paths = null;
+    if (t.type === "sensor") { el._light = mountLight(el, t); el.classList.toggle("lit", !!el._light); }
     if (t.type === "lighting") {
       wireLighting(el);
       el._rig = createOverviewRig(el.querySelector(".overview-rig-host"), {
@@ -409,7 +490,9 @@ function setPath(el, d) {
 // ------------------------------------------------------------ updating
 function unavailable(id) {
   if (R.stale) return "Waiting for Airglow to reconnect";
+  if (S.state?.telemetry_stale) return "Waiting for current sensor readings";
   const meta = R.meta[id];
+  if (meta && !Object.hasOwn(S.state?.readings || {}, id)) return "Waiting for current sensor readings";
   const needsLhm = meta?.needs_lhm ?? !/^(sys\/|app\/|auto\/(ram_load|ram_used|net_|disk_))/.test(id);
   if (needsLhm && !S.state?.sensors?.online) return "Needs LibreHardwareMonitor";
   if (!meta) return "Not found on this PC";
@@ -433,7 +516,7 @@ function updateSensor(el, t) {
   // Measuring (scrollWidth) makes the browser lay the grid out again, so only do it when the words changed or the
   // window was resized, not on every two-second update of every tile.
   const nameEl = el.querySelector(".tile-name");
-  const fitKey = `${measureRev}|${name}|${srcText}`;
+  const fitKey = `${measureRev}|${name}|${srcText}|${meta?.sensor_name || ""}`;
   if (nameEl._fitKey !== fitKey) {
     nameEl._fitKey = fitKey;
     src.hidden = false;
@@ -453,11 +536,13 @@ function updateSensor(el, t) {
   el.dataset.level = lvl;
   const f = fmt(meta, v);
   const [lo, hi] = range(id, meta);
+  const limits = thresholds(id, meta);
+  if (el._light) el._tokens = lightTokens(el);
 
   if (t.style === "auto") {
     updateInstrument(el, t, meta, v, lo, hi);
   } else if (t.style === "spark") {
-    countTo(el.querySelector(".num"), f.num);
+    countTo(el.querySelector(".num"), f.num, ROLL);
     setHTML(el.querySelector(".unit"), esc(f.unit));
     const pts = resample(R.series[id]);
     const vals = pts.filter((x) => x != null);
@@ -469,18 +554,28 @@ function updateSensor(el, t) {
     const p = vals.length ? seriesPath(pts, mid - span * 0.6, mid + span * 0.6, 300, 60, 4) : { d: "", area: "" };
     setPath(el.querySelector(".spark .line"), p.d);
     setPath(el.querySelector(".spark .area"), p.area);
+    el._light?.update(lightModel(el, [{ points: vals.length ? R.series[id] : [], lo: vals.length ? mid - span * 0.6 : lo,
+      hi: vals.length ? mid + span * 0.6 : hi, thresholds: limits, fill: .34 }], { fade: .22 }));
+    showTrend(el, meta, R.series[id]);
     const samples = (R.series[id] || []).map((p) => p[1]).filter(Number.isFinite);
     setHTML(el.querySelector(".minmax"), samples.length > 3 ? rangeCaption(fmtText(meta, Math.min(...samples)), fmtText(meta, Math.max(...samples))) : "");
   } else if (t.style === "ring") {
-    el.querySelectorAll(".num").forEach((n) => countTo(n, f.num));
+    el.querySelectorAll(".num").forEach((n) => countTo(n, f.num, ROLL));
     el.querySelectorAll(".unit").forEach((u) => setHTML(u, esc(f.unit)));
     const k = v == null ? 0 : clamp((v - lo) / (hi - lo || 1), 0, 1);
     setHTML(el.querySelector(".g-cap"), meta?.unit === "%" ? "" : `of ${esc(fmtText(meta, hi))}`);
     el.querySelector(".g-fill").style.strokeDasharray = `${(k * 100).toFixed(2)} 100`;
     el.querySelector(".g-lo").textContent = fmtText(meta, lo);
     el.querySelector(".g-hi").textContent = fmtText(meta, hi);
+    if (el._light) {
+      const fill = getComputedStyle(el.querySelector(".g-fill")), tokens = el._tokens;
+      const seen = (R.series[id] || []).map((p) => p[1]).filter(Number.isFinite).map((x) => clamp((x - lo) / (hi - lo || 1), 0, 1));
+      el._light.update({ fraction: k, missing: v == null, range: seen.length > 3 ? [Math.min(...seen), Math.max(...seen)] : null,
+        color: lvl === "hot" ? tokens.hot : lvl === "warm" ? tokens.warm : tokens.ink, text: tokens.text, glow: tokens.glow,
+        track: rgb(getComputedStyle(el.querySelector(".g-track")).stroke), width: parseFloat(fill.strokeWidth) || 7, cap: fill.strokeLinecap });
+    }
   } else if (t.style === "bar") {
-    countTo(el.querySelector(".num"), f.num);
+    countTo(el.querySelector(".num"), f.num, ROLL);
     setHTML(el.querySelector(".unit"), esc(f.unit));
     setHTML(el.querySelector(".of"), meta?.max ? `of ${esc(fmtText(meta, meta.max))}` : "");
     const k = v == null ? 0 : clamp((v - lo) / (hi - lo || 1), 0, 1);
@@ -495,24 +590,30 @@ function updateSensor(el, t) {
     setHTML(el.querySelector(".peak-txt"), peak == null ? "" : `peak ${esc(fmtText(meta, peak))}`);
   } else if (t.style === "graph") {
     const metas = t.sensors.map((i) => R.meta[i]);
+    const second = t.sensors[1];
+    el.dataset.compareLevel = second ? level(second, metas[1], value(second)) : "";
     // one scale for both lines when they share a unit, so they can be compared
     let [glo, ghi] = range(id, meta);
     if (t.sensors[1] && metas[1]?.unit === meta?.unit) {
       const [l2, h2] = range(t.sensors[1], metas[1]);
       glo = Math.min(glo, l2); ghi = Math.max(ghi, h2);
     }
+    const lines = [];
     t.sensors.forEach((sid, i) => {
       const m = metas[i], sv = value(sid), sf = fmt(m, sv);
       const lg = el.querySelector(`.lg-${i}`);
       setHTML(lg.querySelector(".lg-name"), esc(m?.short && m.short !== m?.name ? m.short : (m?.name || sensorName(sid))));
-      countTo(lg.querySelector(".num"), sf.num);
+      countTo(lg.querySelector(".num"), sf.num, ROLL);
       setHTML(lg.querySelector(".unit"), esc(sf.unit));
       const [l, h] = i === 0 || metas[1]?.unit === meta?.unit ? [glo, ghi] : range(sid, m);
       const pts = resample(R.series[sid]);
       const p = pts.filter((x) => x != null).length ? seriesPath(pts, l, h, 400, 100, 3) : { d: "", area: "" };
       setPath(el.querySelector(`.l-${i}`), p.d);
       setPath(el.querySelector(`.a-${i}`), p.area);
+      // the second line stays dashed: colour is never the only thing telling the two apart
+      lines.push({ points: R.series[sid] || [], lo: l, hi: h, thresholds: thresholds(sid, m), dash: i ? [5, 4] : null, fill: i ? .12 : .24 });
     });
+    el._light?.update(lightModel(el, lines, { fade: .34, guides: [glo, (glo + ghi) / 2, ghi] }));
     setHTML(el.querySelector(".ax-hi"), esc(fmtText(meta, ghi)));
     setHTML(el.querySelector(".ax-mid"), esc(fmtText(meta, (glo + ghi) / 2)));
     const differentUnits = metas.length > 1 && metas[1]?.unit !== meta?.unit;
@@ -526,9 +627,9 @@ function updateSensor(el, t) {
   }
 }
 
-// "46°C – 63°C over 10 min", or "Steady at 44°C" when nothing moved. Thin spaces keep the dash from reading as minus.
+// Describe the observed samples. The window may contain gaps or only a few seconds since startup.
 function rangeCaption(lo, hi) {
-  return lo === hi ? `Steady at <span>${esc(lo)}</span> for 10 min` : `<span>${esc(lo)} – ${esc(hi)}</span> over 10 min`;
+  return lo === hi ? `Steady at <span>${esc(lo)}</span>` : `<span>${esc(lo)} – ${esc(hi)}</span> in last 10 min`;
 }
 
 function updateInstrument(el, t, meta, v, lo, hi) {
@@ -540,8 +641,9 @@ function updateInstrument(el, t, meta, v, lo, hi) {
   const family = el.dataset.family;
   const hasCapacity = family !== "capacity" || meta.unit === "%" || Number.isFinite(meta.max) && meta.max > 0;
   el.dataset.capacityKnown = String(hasCapacity);
-  countTo(el.querySelector(".readout .num"), f.num);
+  countTo(el.querySelector(".readout .num"), f.num, ROLL);
   setHTML(el.querySelector(".readout .unit"), esc(f.unit));
+  showTrend(el, meta, points);
   const fill = el.querySelector(".instrument-track i"), position = `${model.fraction * 100}%`;
   fill.style.width = family === "load" ? "" : position;
   if (family === "load") fill.style.setProperty("--load-fill", position);
@@ -564,6 +666,8 @@ function updateInstrument(el, t, meta, v, lo, hi) {
   const historyHi = network ? Math.max(v ?? 0, model.stats?.max ?? 0) : hi;
   setPath(el.querySelector(".instrument-history .line"), p.d);
   setPath(el.querySelector(".instrument-history .area"), p.area);
+  // network throughput keeps its 30-second peak columns; every other family is a line of light
+  el._light?.update(lightModel(el, network ? [] : [{ points, lo, hi, thresholds: limits, fill: family === "power" ? .4 : .26 }], { fade: .3 }));
   setHTML(el.querySelector(".network-bins"), bins.map((peak, i) => {
     if (!Number.isFinite(peak)) return "";
     const geometry = Math.max(1, (peak - lo) / (historyHi - lo || 1) * 94);
@@ -587,15 +691,20 @@ function updateInstrument(el, t, meta, v, lo, hi) {
 function updateLighting(el, t) {
   const sc = S.state.scene, eff = S.state.effective;
   const preset = S.presets.find((p) => p.id === S.state.active_preset);
-  setHTML(el.querySelector(".lt-effect"), esc(eff.on ? effectName(eff.effect) : "Lights off"));
-  const o = S.state.override;
-  const sub = o?.locked ? "Off while the PC is locked" : o?.lighting ? "An automation is in control" : preset ? `${preset.name} profile` : "Your own settings";
+  const status = S.state.scene_status, o = S.state.override;
+  const starting = status?.status === "pending";
+  const label = R.stale ? "Lighting status unavailable" : starting ? `Starting ${effectName(eff.effect)}…`
+    : !eff.on ? "Lights off" : eff.brightness === 0 ? "Brightness at 0%" : effectName(eff.effect);
+  setHTML(el.querySelector(".lt-effect"), esc(label));
+  const sub = R.stale ? "Waiting for Airglow to reconnect" : status?.status === "failed" ? status.error || "Lighting change failed"
+    : o?.locked ? "Off while the PC is locked" : o?.lighting ? `Automation${eff.on ? ` · ${eff.brightness}% brightness` : " is in control"}`
+    : S.state.trial ? `Previewing ${S.state.trial.name}` : preset ? `${preset.name} profile` : "Your own settings";
   setHTML(el.querySelector(".lt-sub"), esc(sub));
   const bri = el.querySelector(".lt-bri"), on = el.querySelector(".lt-on");
   if (document.activeElement !== bri && Date.now() - (bri._t || 0) > 1500) { bri.value = sc.brightness; rangeFill(bri); }
   el.querySelector(".lt-percent").textContent = bri.value + "%";
   on.checked = sc.on;
-  el.style.setProperty("--scene", sceneColor(eff));
+  el.style.setProperty("--scene", !R.stale && !starting && eff.on && eff.brightness > 0 ? sceneColor(eff) : "transparent");
   el._rig?.update({ zones: S.zones?.zones || [], frames: overviewFrames, view: t?.view || "2d" });
 }
 
@@ -618,32 +727,40 @@ function updatePresets(el) {
   const active = S.state.active_preset;
   setHTML(el.querySelector(".chips"), S.presets.length
     ? S.presets.map((p) => `<button class="pcard" data-preset="${esc(p.id)}" aria-pressed="${p.id === active}" style="--pc:${sceneColor(p)};--ps:${sceneSwatch(p)}">
-        <span class="pswatch">${profileArtwork(p)}</span><span class="pname">${esc(p.name)}</span><span class="pmeta">${esc(effectName(p.effect))}${p.id === active ? " · On" : ""}</span></button>`).join("")
+        <span class="pswatch">${profileArtwork(p)}</span><span class="pname">${esc(p.name)}</span><span class="pmeta">${esc(effectName(p.effect))}${p.id === active ? (R.stale ? " · Last selected" : " · Selected") : ""}</span></button>`).join("")
     : `<div class="profile-empty"><span>No saved profiles</span><button class="text-link" data-save-profile>Save current settings</button></div>`);
 }
 
 function fanSummary(fans) {
   const managed = [...(fans.ports || []), ...(fans.channels || []).filter((c) => ["curve", "steady"].includes(c.mode) && !c.pump)];
   const duties = managed.map((c) => c.duty).filter(Number.isFinite), rpms = managed.map((c) => c.rpm).filter(Number.isFinite);
+  const spinning = rpms.filter(rpm => rpm > 0), zero = rpms.filter(rpm => rpm === 0).length;
   const average = (values) => values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : null;
-  return { duty: average(duties), rpm: average(rpms), reporting: rpms.length, count: managed.length,
+  return { duty: average(duties), rpm: average(spinning) ?? (zero ? 0 : null), spinning: spinning.length, zero, count: managed.length,
     error: managed.some((c) => !!c.error) };
 }
 
 function updateFans(el) {
   const F = S.state.fans, reported = fanSummary(F);
-  el.classList.toggle("missing", R.stale || reported.duty == null);
-  countTo(el.querySelector(".num"), R.stale || reported.duty == null ? "–" : String(reported.duty));
-  el.querySelector(".readout").title = "Average reported speed of Airglow-controlled fans";
-  setHTML(el.querySelector(".fan-sub"), R.stale ? "Waiting for Airglow to reconnect" : reported.error ? "Fan control needs attention (Fans tab)"
-    : reported.rpm != null ? `${reported.rpm.toLocaleString()} rpm average · ${reported.reporting} reporting`
-    : reported.count || F.hub_online ? "No RPM reading yet" : "No controlled fans detected (Fans tab)");
-  setHTML(el.querySelector(".fan-curve"), F.curve !== F.base_curve ? `${esc(curveLabel(F.curve))}, by automation` : esc(curveLabel(F.curve)));
+  const stale = R.stale || S.state.telemetry_stale;
+  const reading = stale ? null : reported.duty ?? reported.rpm;
+  el.classList.toggle("missing", reading == null);
+  countTo(el.querySelector(".num"), reading == null ? "–" : String(reading), ROLL);
+  el.querySelector(".unit").textContent = reading == null ? "" : reported.duty != null ? "% duty" : reported.spinning > 1 ? "rpm avg" : "rpm";
+  el.querySelector(".readout").title = reported.duty != null ? "Average reported duty of controlled fan channels" : "Reported fan RPM";
+  const speeds = [];
+  if (reported.spinning && reported.duty != null) speeds.push(`${reported.rpm.toLocaleString()} rpm avg`);
+  if (reported.spinning) speeds.push(`${reported.spinning} spinning`);
+  if (reported.zero) speeds.push(`${reported.zero} at 0 rpm`);
+  setHTML(el.querySelector(".fan-sub"), R.stale ? "Waiting for Airglow to reconnect" : stale ? "Waiting for current fan readings"
+    : reported.error ? "Fan control needs attention (Fans tab)" : speeds.length ? speeds.join(" · ")
+    : reported.count ? "No RPM reading" : S.state.sensors?.online === false ? "LibreHardwareMonitor is offline" : "No controlled fans detected (Fans tab)");
+  setHTML(el.querySelector(".fan-curve"), stale ? "" : F.failsafe ? "Failsafe" : F.curve !== F.base_curve ? `${esc(curveLabel(F.curve))}, by automation` : esc(curveLabel(F.curve)));
   setHTML(el.querySelector(".fan-seg"), Object.keys(S.curves?.curves || {}).map((c) =>
     `<button role="radio" data-curve="${c}" aria-checked="${c === F.base_curve}">${curveLabel(c)}</button>`).join(""));
   const curves = {...S.curves, curves: {...S.curves?.curves}};
   for (const p of S.presets) if (p.fan_points) curves.curves[`profile:${p.id}`] = p.fan_points;
-  setHTML(el.querySelector(".fan-instrument"), fanInstrument(F, curves, {stale: R.stale, tempUnit: S.state.temp_unit}));
+  setHTML(el.querySelector(".fan-instrument"), fanInstrument(F, curves, {stale, tempUnit: S.state.temp_unit}));
 }
 
 function update(el, t) {
@@ -673,7 +790,7 @@ export function renderOverview() {
   $("#ov-empty").hidden = O.editing || O.layout.tiles.length > 0;
   const wanted = O.layout.tiles.map((t) => mount(t));
   // drop removed tiles, keep the order of the layout
-  for (const [id, el] of O.els) if (!tileById(id)) { el._rig?.dispose(); el.remove(); O.els.delete(id); }
+  for (const [id, el] of O.els) if (!tileById(id)) { el._rig?.dispose(); el._light?.dispose(); el.remove(); O.els.delete(id); }
   if (!O.drag) wanted.forEach((el, i) => { if (g.children[i] !== el) g.insertBefore(el, g.children[i] || null); });
   let add = $("#ov-add");
   if (O.editing && !add) {
@@ -685,7 +802,10 @@ export function renderOverview() {
   if (O.editing) g.append(add); else add?.remove();
   for (const t of O.layout.tiles) update(O.els.get(t.id), t);
   g.classList.toggle("editing", O.editing);
-  $$(".tile", g).forEach((el) => { el.tabIndex = O.editing ? 0 : -1; });
+  // a sensor tile opens its detail view, so it is reachable by keyboard outside of Customize too
+  $$(".tile", g).forEach((el) => { el.tabIndex = O.editing || el._type === "sensor" ? 0 : -1; });
+  renderPulse(O.layout.pins || [], { editing: O.editing });
+  if (visible() && !O.shown) { O.shown = true; arrive(wanted); }
 }
 
 // Live preview frames arrive ~15 times a second while the Overview is open.
@@ -820,6 +940,11 @@ function onPointerUp() {
 }
 
 function onKey(e) {
+  if (!O.editing && (e.key === "Enter" || e.key === " ") && e.target.matches?.(".tile-sensor")) {
+    e.preventDefault();
+    focusTile(e.target.dataset.id);
+    return;
+  }
   if (resetting || !O.editing) return;
   const el = e.target.closest?.(".tile:not(.tile-add)");
   if (!el || e.target !== el) return;
@@ -1079,6 +1204,9 @@ export async function initOverview(layout) {
   O.history = createLayoutHistory(layout);
   S.overview = layout;
   initWorkspaceToolbar();
+  initPulse({ after: $("#ov-workspaces"), open: (id, from, color) => openFocus({ sensors: [id], from, color }) });
+  // leaving the Overview arms the tile entrance for the next visit
+  new MutationObserver(() => { if (!visible()) O.shown = false; }).observe($('[data-view="overview"]'), { attributes: true, attributeFilter: ["hidden"] });
   const g = grid();
   g.addEventListener("pointerdown", onPointerDown);
   g.addEventListener("pointermove", onPointerMove);
@@ -1111,6 +1239,7 @@ export async function initOverview(layout) {
       try { await post("/api/fan_curve", { name: c.dataset.curve }); toast(`Fans now follow the ${curveLabel(c.dataset.curve)} curve`); emit("refresh"); }
       catch (err) { fail(err); }
     }
+    if (e.target.closest(".tile-sensor") && !e.target.closest("button, a, input, select, label")) focusTile(tile);
   });
   g.addEventListener("dblclick", (e) => {
     const el = e.target.closest(".tile-sensor");
@@ -1130,9 +1259,9 @@ export async function initOverview(layout) {
     } catch (err) { fail(err); }
   });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && O.editing && !$("#sheet").open) setEditing(false); });
-  on("state", () => { if (visible()) renderOverview(); });
+  on("state", () => { if (R.stale) overviewFrames = {}; if (visible()) renderOverview(); });
   on("zones", () => { if (visible()) { renderOverview(); paintLightingTiles(); } });
-  on("frames:live", (frame) => { overviewFrames = frame.zones || {}; paintLightingTiles(); });
+  on("frames:live", (frame) => { if (!R.stale) { overviewFrames = frame.zones || {}; paintLightingTiles(); } });
   document.addEventListener("appearancechange", () => {
     measureRev++;
     accentSurfaces = null;

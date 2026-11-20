@@ -22,7 +22,7 @@ globalThis.document?.addEventListener?.("visibilitychange", stopInactiveMotion);
 mq.addEventListener?.("change", stopInactiveMotion);
 
 // DOM rectangles use rendered pixels; CSS transforms use pixels before interface zoom.
-const uiScale = () => Number(document.documentElement?.dataset.scale || 100) / 100;
+export const uiScale = () => Number(document.documentElement?.dataset.scale || 100) / 100;
 
 export const EASE = "cubic-bezier(.2, .7, .2, 1)";   // the --ease token in app.css
 
@@ -36,10 +36,31 @@ export function animateMotion(el, frames, duration) {
   animation.finished.then(forget, forget);
 }
 
-// Change the reading immediately. Only its opacity animates.
-export function countTo(el, text) {
+// The numeric value of a displayed reading, to tell a rise from a fall.
+const amount = (text) => parseFloat(String(text).replace(/[^\d.-]/g, ""));
+
+// Change the reading immediately. Only its opacity animates; with `roll`, each digit that changed slides in from
+// the direction the value moved, and digits that stayed do not move at all.
+export function countTo(el, text, { roll = false } = {}) {
   if (!el || el.textContent === text) return;
   const previous = el.textContent;
+  if (roll && el.replaceChildren && text !== "–" && previous !== "–" && previous && !reduced() && !inactive(el)) {
+    stopMotion(el);
+    const rising = amount(text) >= amount(previous), offset = previous.length - text.length;
+    el.replaceChildren(...[...text].map((character, i) => {
+      const digit = document.createElement("span");
+      digit.className = "digit";
+      digit.textContent = character;
+      if (previous[i + offset] !== character) digit.dataset.moved = rising ? "up" : "down";
+      return digit;
+    }));
+    for (const digit of el.children) {
+      if (!digit.dataset.moved) continue;
+      digit.animate?.([{ opacity: 0, transform: `translateY(${digit.dataset.moved === "up" ? ".34em" : "-.34em"})`, filter: "blur(3px)" },
+        { opacity: 1, transform: "none", filter: "blur(0)" }], { duration: 380, easing: "cubic-bezier(.16, 1, .3, 1)" });
+    }
+    return;
+  }
   el.textContent = text;
   if (text === "–" || previous === "–" || reduced() || inactive(el)) {
     stopMotion(el);

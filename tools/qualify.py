@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 UNIT_TOOLS = (
     "overview", "readings", "ui-races", "ui-state", "effect-runtime",
-    "studio-workflow", "workbenches", "personalization-motion",
+    "studio-workflow", "workbenches", "personalization-motion", "light-graph",
 )
 IMPORT_CHECK = """
 import pkgutil

@@ -26,6 +26,7 @@ let setupDismissed = 0;          // "Not now" on the new-lights notice: quiet un
 let updateDismissed = null;      // "Later" on the update notice, for that version
 let bootFailed = false;          // "Couldn't reach Airglow" is said once, not on every retry
 let lastStateAt = 0;             // when the last state arrived: a stream can die without ever reporting an error
+let stateGeneration = 0;         // a live event or a newer refresh supersedes an outstanding state request
 let probing = false;             // one watchdog fetch at a time
 let quickReady = false;
 const refreshQuickSwitcher = initQuickSwitcher(TABS, () => quickReady ? "ready" : bootFailed ? "unavailable" : "loading");
@@ -139,7 +140,7 @@ document.addEventListener("appearancechange", () => moveMarker($(".tab-ink"), $(
 // Ctrl+1..7 switch tabs
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key >= "1" && e.key <= "7") {
-    if ($("#sheet").open) return;            // a dialog describes the view it was opened from: don't change it under it
+    if ($("#sheet").open || $("#light-focus")?.open) return;   // a dialog describes the view it was opened from: don't change it under it
     e.preventDefault();
     location.hash = "#" + TABS[+e.key - 1];
   }
@@ -345,7 +346,11 @@ function lost() {
 
 async function refresh() {
   if (document.visibilityState === "hidden") return;   // closed to the tray: nothing to show
-  try { await applyState(await get("/api/state")); } catch { lost(); }
+  const generation = ++stateGeneration;
+  try {
+    const state = await get("/api/state");
+    if (generation === stateGeneration) await applyState(state);
+  } catch { if (generation === stateGeneration) lost(); }
 }
 on("refresh", refresh);
 on("catalog", () => { if (S.state) { renderBar(); emit("state"); } });
@@ -381,7 +386,10 @@ async function boot() {
   if (!S.state.onboarded) openWelcome();
   else if (!S.state.online_asked && S.state.update && S.state.update.kind !== "scoop") openOnlineQuestion();
   startLive({
-    state: (s) => applyState(s).then(syncLive).catch(lost),     // a lighting tile may have come or gone
+    state: (s) => {
+      const generation = ++stateGeneration;
+      applyState(s).then(syncLive).catch(() => { if (generation === stateGeneration) lost(); });
+    },
     lost,
     // views showing the live LED preview
     frames: () => !$('[data-view="lighting"]').hidden || !$('[data-view="devices"]').hidden

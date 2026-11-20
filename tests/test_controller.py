@@ -1,9 +1,10 @@
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
-from airglow import config, devices, hw, sensors
+from airglow import api, config, devices, hw, sensors
 from airglow.plugins import nzxt_hue2
 from airglow.controller import Controller
 from tests.fakes import FakeHidBackend, FakeHidDevice, FakeLightDevice, FakeManager, FakeNzxt, signals
@@ -136,6 +137,60 @@ class ControllerTests(unittest.TestCase):
         with mock.patch.object(self.ctrl._system, "read", return_value={"ram_total": 64}):
             self.ctrl._update_readings([])
         self.assertGreater(self.ctrl.snapshot()["catalog_rev"], first)
+
+    def test_dashboard_expires_a_stalled_sample_and_recovers_at_the_next_sample(self):
+        server = SimpleNamespace(ctrl=self.ctrl, store=self.store, hooks={}, updater=None)
+        def get(path):
+            return api.route(server, "GET", path, None)
+        def ram(catalog):
+            return next(m for m in catalog["sensors"] if m["id"] == "auto/ram_load")
+
+        with mock.patch.object(time, "monotonic", return_value=100) as clock, \
+             mock.patch.object(self.ctrl._system, "read", side_effect=[{"ram_load": 41}, {"ram_load": 0}]):
+            self.ctrl.tick()
+            live = get("/api/state")
+            first = get("/api/sensors")
+            self.assertEqual(live["readings"]["auto/ram_load"], 41)
+            self.assertEqual(live["sensors"]["cpu_temp"], 50)
+            self.assertGreater(live["fans"]["ports"][0]["rpm"], 0)
+            history = self.ctrl.readings_history.get(["auto/ram_load"])
+
+            clock.return_value += 7
+            self.ctrl.tick()  # a lightweight tick cannot refresh the last sample
+            stale = get("/api/state")
+            catalog = get("/api/sensors")
+            self.assertIsNone(stale["readings"]["auto/ram_load"])
+            self.assertTrue(stale["telemetry_stale"])
+            self.assertIsNone(stale["sensors"]["cpu_temp"])
+            self.assertIsNone(stale["fans"]["temp"])
+            self.assertIsNone(stale["fans"]["target"])
+            self.assertIsNone(stale["fans"]["duty"])
+            self.assertEqual(stale["fans"]["ports"], [])
+            self.assertEqual(ram(catalog), {**ram(first), "value": None})
+            self.assertEqual(catalog["revision"], first["revision"])
+            self.assertEqual(self.ctrl.readings_history.get(["auto/ram_load"]), history)
+            self.assertEqual(self.ctrl.sensors["cpu_temp"], 50)
+
+            self.ctrl.tick()
+            resumed = get("/api/state")
+            self.assertFalse(resumed["telemetry_stale"])
+            self.assertEqual(resumed["readings"]["auto/ram_load"], 0)
+            self.assertEqual(ram(get("/api/sensors"))["value"], 0)
+            self.assertEqual(resumed["sensors"]["cpu_temp"], 50)
+            self.assertGreater(resumed["fans"]["ports"][0]["rpm"], 0)
+
+    def test_overdue_fan_cycle_does_not_record_old_temperatures_as_a_new_sample(self):
+        self.ctrl._read_flat = lambda: [{"id": "/cpu/0/temperature/0", "hw": "cpu", "hw_name": "CPU",
+                                        "name": "CPU Package", "type": "temperature", "value": 50}]
+        with mock.patch.object(time, "monotonic", return_value=100) as clock:
+            with mock.patch.object(self.ctrl, "_run_fans", side_effect=lambda: setattr(clock, "return_value", 107)):
+                self.ctrl.tick()
+            self.assertTrue(self.ctrl.snapshot()["telemetry_stale"])
+            self.assertEqual(self.ctrl.readings_history.get(["auto/cpu_temp"])["series"]["auto/cpu_temp"], [None])
+            self.assertIsNone(self.ctrl.history[-1]["cpu"])
+            self.ctrl.tick()
+            self.ctrl.tick()
+            self.assertEqual(self.ctrl.readings_history.get(["auto/cpu_temp"])["series"]["auto/cpu_temp"], [None, 50])
 
     def test_set_scene_validates_and_clears_preset(self):
         self.ctrl.apply_preset(self.store.get_presets()[0])

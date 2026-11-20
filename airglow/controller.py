@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 class Controller:
     TICK = 1.0                 # automations; sensors and fans run every other tick
     HISTORY = 300              # samples kept (10 minutes at 2 s)
+    SAMPLE_STALE_AFTER = 5.0
 
     def __init__(self, store, manager=None, read_sensors=None, signals=None, start_power_events=False,
                  async_writes=True, read_flat=None, lhm_fans=None):
@@ -50,12 +51,13 @@ class Controller:
         self.fan_channels = []                   # what LHM can drive, with what Airglow does with each
         self._system = sensors.SystemSensors()
         self.sensors = dict(sensors.OFFLINE)
-        self.readings = {}                        # every sensor by id: {name, group, kind, unit, value}
+        self._readings = {}                       # every sensor by id: {name, group, kind, unit, value}
+        self._sampled_at = None
         self.catalog_rev = 0
         self._catalog_key = ()
         self.readings_history = SensorHistory(self.HISTORY)
         self.control = ControlStatus()
-        self.control.observe("controller", "Controller cycles", kind="component", stale_after=5.0)
+        self.control.observe("controller", "Controller cycles", kind="component", stale_after=self.SAMPLE_STALE_AFTER)
         self.control.observe("sensors", "Temperature samples", kind="component", online=False, stale_after=6.0)
         self.cooling = Recorder(store.dir)
         self._lhm_sample_seen = None
@@ -789,24 +791,47 @@ class Controller:
         cost_meta["needs_lhm"] = True
         return [*fan_readings, cost_meta]
 
-    def _update_readings(self, flat):
-        self.readings = sensors.build(flat, self._system.read(), self._app_readings())
+    def _update_readings(self, flat, sampled_at=None):
+        if sampled_at is None:
+            sampled_at = time.monotonic()
+        readings = sensors.build(flat, self._system.read(), self._app_readings())
         key = tuple((k, m["name"], m["unit"], m.get("source"), m.get("source_id"), tuple(m.get("source_ids") or []),
-                     m.get("sensor_name"), m.get("max")) for k, m in self.readings.items())
-        if key != self._catalog_key:
-            self._catalog_key = key
-            self.catalog_rev += 1
-        self.readings_history.add(time.time(), {k: m["value"] for k, m in self.readings.items()})
+                     m.get("sensor_name"), m.get("max")) for k, m in readings.items())
+        with self._lock:
+            if key != self._catalog_key:
+                self._catalog_key = key
+                self.catalog_rev += 1
+            self._readings, self._sampled_at = readings, sampled_at
+        stale = self._sample_stale(sampled_at)
+        self.readings_history.add(time.time(), {k: None if stale else m["value"] for k, m in readings.items()})
 
-    def readings_for(self, ids):
-        r = self.readings
-        return {i: (r[i]["value"] if i in r else None) for i in ids}
+    def _sample_stale(self, sampled_at):
+        return sampled_at is not None and time.monotonic() - sampled_at > self.SAMPLE_STALE_AFTER
+
+    def _current_readings(self):
+        with self._lock:
+            readings, revision = self._readings, self.catalog_rev
+            stale = self._sample_stale(self._sampled_at)
+            online = self.lhm.fresh_tree is not None if stale else bool(self.sensors.get("online"))
+        return stale, readings, revision, online
+
+    @property
+    def readings(self):
+        stale, readings, _, _ = self._current_readings()
+        return {i: {**m, "value": None} for i, m in readings.items()} if stale else readings
+
+    def sensor_catalog(self):
+        stale, readings, revision, online = self._current_readings()
+        return {"sensors": [{**m, "value": None} if stale else m for m in readings.values()],
+                "lhm_online": online, "revision": revision, "telemetry_stale": stale}
 
     # ------------------------------------------------------------ loop
-    def _record(self):
-        s = self.sensors
+    def _record(self, sampled_at=None):
+        stale = self._sample_stale(sampled_at)
+        s = {} if stale else self.sensors
         self.history.append({"t": round(time.time()), "cpu": s.get("cpu_temp"), "gpu": s.get("gpu_temp"),
-                             "cpu_w": s.get("cpu_power"), "gpu_w": s.get("gpu_power"), "duty": self.fan_duty})
+                             "cpu_w": s.get("cpu_power"), "gpu_w": s.get("gpu_power"),
+                             "duty": None if stale else self.fan_duty})
         if not self.cooling.active_summary():
             return
         try:
@@ -876,9 +901,10 @@ class Controller:
             self._engine_stall_logged = True
         if self._ticks % 2 == 1:
             flat = self._poll_sensors()
+            sampled_at = time.monotonic()  # slow fan I/O cannot renew an old sensor sample
             self._run_fans()
-            self._record()
-            self._update_readings(flat)
+            self._record(sampled_at)
+            self._update_readings(flat, sampled_at)
 
     def _loop(self):
         failures = 0
@@ -979,7 +1005,7 @@ class Controller:
             log.warning("cooling save is still pending after shutdown; the interrupted marker is retained")
 
     # ------------------------------------------------------------ views
-    def snapshot(self, devs=None):
+    def snapshot(self, devs=None, reading_ids=None):
         with self._lock:
             scene_status = self.scene_status()
             scene, effective, active_preset = self.base_scene, self.effective_scene, self.active_preset
@@ -990,6 +1016,12 @@ class Controller:
         if devs is None:                          # the API passes the list it already built for the same event
             devs = [d.info() for d in self.manager.all().values()]
         trial = self.trial                        # read once: the API thread can end the trial meanwhile
+        stale, readings, revision, online = self._current_readings()
+        summary, channels = self.sensors, self.fan_channels
+        if stale:
+            summary = {**sensors.OFFLINE, "online": online,
+                       "cpu_name": summary.get("cpu_name"), "gpu_name": summary.get("gpu_name")}
+            channels = [{**c, "rpm": None, "duty": None, "target": None} for c in channels]
         return {
             "scene": scene,
             "scene_status": scene_status,
@@ -1004,15 +1036,18 @@ class Controller:
                 "paused_until": a.paused_until if a.paused else None,
                 "locked": self.locked and self.store.settings()["lights_off_on_lock"],
             },
-            "fans": {"curve": self.effective_curve, "base_curve": self.base_curve, "temp": self.fan_temp,
-                     "target": self.fan_target, "duty": self.fan_duty,
-                     "failsafe": self.fan_temp is None,
-                     "ports": [{"port": i + 1, "device": d.name, **h.fans[i]}
+            "fans": {"curve": self.effective_curve, "base_curve": self.base_curve, "temp": None if stale else self.fan_temp,
+                     "target": None if stale else self.fan_target, "duty": None if stale else self.fan_duty,
+                     "failsafe": None if stale else self.fan_temp is None,
+                     "ports": [] if stale else [{"port": i + 1, "device": d.name, **h.fans[i]}
                                for d, h in fan_devs for i in h.connected_fans()],
                      "hub_online": bool(fan_devs),
-                     "channels": self.fan_channels},
-            "sensors": self.sensors,
-            "catalog_rev": self.catalog_rev,
+                     "channels": channels},
+            "sensors": summary,
+            "telemetry_stale": stale,
+            "catalog_rev": revision,
+            **({"readings": {i: readings[i]["value"] if not stale and i in readings else None for i in reading_ids}}
+               if reading_ids is not None else {}),
             "devices": devs,
             "openrgb": {"enabled": self.store.openrgb_enabled(), "status": self.manager.bridge.status,
                         "connected": bool(self.manager.bridge.client.connected),

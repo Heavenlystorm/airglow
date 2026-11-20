@@ -249,7 +249,9 @@ async function overview(t, tiles) {
       ["/js/overview.js", "/js/readings.js", "/js/core.js"].map(path => import(path))
     );
     R.meta = Object.fromEntries(sensors.map(sensor => [sensor.id, sensor]));
-    S.state = { scene: { on: true, brightness: 75 }, effective: { on: true, effect: "solid" } };
+    // live values come only from the state readings, never from sensor metadata
+    S.state = { scene: { on: true, brightness: 75 }, effective: { on: true, effect: "solid" },
+      readings: Object.fromEntries(sensors.map(sensor => [sensor.id, sensor.value])) };
     document.querySelector(".overview-view").hidden = false;
     document.querySelector('.tabs [data-tab="overview"]').setAttribute("aria-current", "page");
     await initOverview({ tiles, pins: [] });

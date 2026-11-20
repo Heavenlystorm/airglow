@@ -11,6 +11,7 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
 async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297px", paddingLeft: "28px", paddingRight: "28px" }, gridWidth = 1280, zoom = 1) {
   gridStyle = { gridAutoRows: "152px", columnGap: "12px", rowGap: "12px", ...gridStyle };
   const timers = new Map(), requests = [], errors = [];
+  const readings = { stale: false };
   let nextTimer = 0;
   const context = vm.createContext({
     window: { addEventListener() {} }, document: {}, structuredClone,
@@ -23,19 +24,22 @@ async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297
     $$: () => [],
     clamp: (v, lo, hi) => Math.max(lo, Math.min(hi, v)),
     S: {}, emit() {}, fail(error) { errors.push(error); },
+    esc: String, curveLabel: String, effectName: String, sceneColor: scene => scene.params.color,
+    setHTML: (el, html) => { el.innerHTML = html; },
     post(path, body) {
       return new Promise((resolve, reject) => requests.push({ path, body: plain(body), resolve, reject }));
     },
   };
   const imports = new Map([...source.matchAll(/import\s+\{([^}]+)\}\s+from\s+["']([^"']+)["']/g)]
     .map((m) => [m[2], m[1].split(",").map((name) => name.trim())]));
-  const module = new vm.SourceTextModule(source + "\nexport { save, O, cell, onKey, onPointerMove, seriesPath, fanSummary };", { context });
+  const module = new vm.SourceTextModule(source + "\nexport { save, O, cell, onKey, onPointerMove, seriesPath, update };", { context });
   await module.link((specifier) => {
     if (specifier === "./overview-workspaces.js") return new vm.SourceTextModule(readFileSync(new URL("../web/js/overview-workspaces.js", import.meta.url), "utf8"), { context });
     const names = imports.get(specifier);
     return new vm.SyntheticModule(names, function () {
       for (const name of names) this.setExport(name, specifier === "./core.js" && name in core ? core[name]
-        : name === "flip" ? (_el, mutate) => mutate() : () => {});
+        : name === "flip" ? (_el, mutate) => mutate() : name === "R" ? readings
+        : name === "countTo" ? (el, text) => { el.textContent = text; } : () => {});
     }, { context });
   });
   await module.evaluate();
@@ -48,17 +52,93 @@ async function harness(gridStyle = { gridTemplateColumns: "297px 297px 297px 297
     return callback();
   }
   return { save, O, requests, errors, timers, fire, cell, onKey, onPointerMove,
-    seriesPath: module.namespace.seriesPath, fanSummary: module.namespace.fanSummary };
+    seriesPath: module.namespace.seriesPath, update: module.namespace.update, state: core.S, readings };
 }
 
-test("Case fans uses reported speed and includes stopped and steady managed fans", async () => {
-  const h = await harness();
-  const summary = h.fanSummary({ duty: 80, ports: [{ duty: 40, rpm: 800 }], channels: [
+function tile() {
+  const parts = new Map();
+  return {
+    querySelector(selector) {
+      if (!parts.has(selector)) parts.set(selector, {});
+      return parts.get(selector);
+    },
+    style: { setProperty(key, v) { this[key] = v; } },
+    classList: { toggle(key, v) { this[key] = v; } },
+  };
+}
+
+test("Case fans separates spinning RPM from zero-RPM headers and reports measured duty", async () => {
+  const h = await harness(), el = tile();
+  const fans = { curve: "balanced", base_curve: "balanced", duty: 80, ports: [{ duty: 40, rpm: 800 }], channels: [
     { mode: "curve", duty: 20, rpm: 0 }, { mode: "steady", duty: 60, rpm: 1000 },
     { mode: "steady", duty: 100, rpm: 2200, pump: true }, { mode: null, duty: 100, rpm: 1000 },
-  ] });
-  assert.deepEqual(plain(summary), { duty: 40, rpm: 600, reporting: 3, count: 3, error: false });
-  assert.equal(h.fanSummary({ duty: 80, ports: [], channels: [{ mode: "curve", duty: null, rpm: null }] }).rpm, null);
+  ] };
+  Object.assign(h.state, { state: { fans }, presets: [] });
+  h.update(el, { type: "fans" });
+  assert.equal(el.querySelector(".num").textContent, "40");
+  assert.match(el.querySelector(".fan-sub").innerHTML, /900 rpm.*spinning/i);
+  assert.match(el.querySelector(".fan-sub").innerHTML, /1 at 0 rpm/i);
+  assert.match(el.querySelector(".unit").textContent, /duty/i);
+
+  fans.ports = [];
+  fans.channels = [{ mode: "curve", duty: null, rpm: 0 }, { mode: "curve", duty: null, rpm: null }];
+  h.update(el, { type: "fans" });
+  assert.equal(el.querySelector(".num").textContent, "0");
+  assert.match(el.querySelector(".unit").textContent, /rpm/i);
+  assert.match(el.querySelector(".fan-sub").innerHTML, /1 at 0 rpm/i);
+  assert.equal(el.classList.missing, false);
+  fans.channels[0].rpm = null;
+  h.update(el, { type: "fans" });
+  assert.equal(el.querySelector(".num").textContent, "–");
+  assert.equal(el.classList.missing, true);
+  fans.channels = []; fans.hub_online = false; h.state.state.sensors = { online: false };
+  h.update(el, { type: "fans" });
+  assert.match(el.querySelector(".fan-sub").innerHTML, /LibreHardwareMonitor.*offline/i);
+});
+
+test("a stalled sampler hides last fan values without reporting a connection loss", async () => {
+  const h = await harness(), el = tile();
+  Object.assign(h.state, { state: { telemetry_stale: true, fans: { ports: [{ duty: 47, rpm: 650 }] } }, presets: [] });
+  h.update(el, { type: "fans" });
+  assert.equal(el.querySelector(".num").textContent, "–");
+  assert.match(el.querySelector(".fan-sub").innerHTML, /current fan readings/i);
+  h.readings.stale = true;
+  h.update(el, { type: "fans" });
+  assert.match(el.querySelector(".fan-sub").innerHTML, /reconnect/i);
+});
+
+test("lighting canvas reflects effective power and labels pending, failed and disconnected states", async () => {
+  const h = await harness(), el = tile();
+  const effective = { on: false, brightness: 100, effect: "solid", params: { color: "#ff0000" } };
+  const state = { scene: { ...effective, on: true }, effective, override: { lighting: "night" }, scene_status: { status: "ready" } };
+  Object.assign(h.state, { state, presets: [] });
+  const render = () => h.update(el, { type: "lighting", view: "2d" });
+  render();
+  assert.equal(el.querySelector(".lt-effect").innerHTML, "Lights off");
+  assert.equal(el.style["--scene"], "transparent");
+  assert.equal(el.querySelector(".lt-on").checked, true, "manual switch keeps its saved value when overridden");
+  effective.on = true; state.override = {}; state.telemetry_stale = true;
+  render();
+  assert.equal(el.style["--scene"], "#ff0000", "stalled fan telemetry does not affect lighting");
+  effective.brightness = 0; render();
+  assert.equal(el.style["--scene"], "transparent");
+  effective.brightness = 100; state.scene_status.status = "pending"; render();
+  assert.match(el.querySelector(".lt-effect").innerHTML, /starting/i);
+  state.scene_status = { status: "failed", error: "Renderer unavailable" }; render();
+  assert.match(el.querySelector(".lt-sub").innerHTML, /Renderer unavailable/);
+  h.readings.stale = true; render();
+  assert.match(el.querySelector(".lt-effect").innerHTML, /reconnect|unavailable/i);
+  assert.equal(el.style["--scene"], "transparent");
+});
+
+test("a selected profile stays selected when the master lights are off", async () => {
+  const h = await harness(), el = tile();
+  Object.assign(h.state, { state: { active_preset: "night", effective: { on: false } },
+    presets: [{ id: "night", name: "Night", effect: "solid", params: { color: "#ccaa44" } }] });
+  h.update(el, { type: "presets" });
+  assert.match(el.querySelector(".chips").innerHTML, /aria-pressed="true"/);
+  assert.match(el.querySelector(".chips").innerHTML, /· Selected/);
+  assert.doesNotMatch(el.querySelector(".chips").innerHTML, /· On/);
 });
 
 test("Overview graph paths and filled areas break at missing readings", async () => {

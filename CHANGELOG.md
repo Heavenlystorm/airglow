@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+- Overview graphs are drawn as light. Lines are smooth curves with a soft glow and a bright head that glides between
+  readings instead of jumping every two seconds; older history fades toward the left like a trail, and a temperature
+  line turns amber and then rose where it climbed past Airglow's warning and high marks. Gauges settle with a small
+  spring, show the last ten minutes as a thin outer arc, and brighten toward the head.
+- A pulse beside the workspace title shows your pinned readings as one flowing graph over the last 1, 5 or 10 minutes.
+- Click a sensor tile (or press Enter on it) to open it large: the figure, the trend over the last minute, low,
+  average and peak, the warning marks, and a time span to choose. Double-click still opens the tile's settings.
+- Move the pointer along any graph to read what it showed at that moment.
+- Number tiles put the figure on the left and the graph on the right, with an arrow for rising, falling or steady.
+  Figures change digit by digit. Tiles rise into place when the Overview opens.
+- Every design keeps its character: ASCII steps, High contrast draws exact straight lines, Paper takes ink without
+  glow. Reduce motion draws every graph still, and forced-colours mode keeps the plain line graphs.
+
 ## 1.19.0
 - Switching profiles can be undone. The confirmation now offers Undo, which brings back the previous profile, or your
   earlier lighting and fan curve when no profile was running. It works from Overview, Lighting and Quick Switch.

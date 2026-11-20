@@ -382,17 +382,16 @@ def route(server, method, path, body, query=None):
         if path == "/api/state":
             devices = list(ctrl.manager.all().values())     # once: merging the three device sources is not free
             devs = [d.info() for d in devices]
-            return {**ctrl.snapshot(devs), "temp_unit": store.settings()["temp_unit"], "zones_rev": store.zones_rev,
+            return {**ctrl.snapshot(devs, reading_ids=store.tracked_sensors()),
+                    "temp_unit": store.settings()["temp_unit"], "zones_rev": store.zones_rev,
                     "onboarded": store.state.get("onboarded", False),
                     "online_asked": store.state.get("online_asked", False),
                     "update": server.updater.status() if server.updater else None,
                     "conflicts": conflicts.detect(_lit_vendors(store, devices)),
                     "studio": studio.HOST.status(),
-                    "setup_pending": lightsetup.pending_count(store, devs),
-                    "readings": ctrl.readings_for(store.tracked_sensors())}
+                    "setup_pending": lightsetup.pending_count(store, devs)}
         if path == "/api/sensors":
-            return {"sensors": list(ctrl.readings.values()), "lhm_online": bool(ctrl.sensors.get("online")),
-                    "revision": ctrl.catalog_rev}
+            return ctrl.sensor_catalog()
         if path == "/api/sensors/history":
             ids = [i for v in (query or {}).get("ids", []) for i in v.split(",") if i][:40]
             return ctrl.readings_history.get(ids)

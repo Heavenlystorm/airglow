@@ -95,3 +95,22 @@ test("binary byte units and temperature scales match the values plotted", async 
   assert.ok(scale[0] <= -5);
   assert.ok(h.range("x", { unit: "W", value: NaN }, [[1000, Infinity]]).every(Number.isFinite));
 });
+
+test("a newly selected tile waits for its tracked reading even if the picker cached a value", async () => {
+  const h = await harness();
+  const id = "auto/ssd_temp";
+  h.R.meta[id] = { unit: "°C", value: 58 };
+  assert.equal(h.value(id), null);
+  h.S.state.readings[id] = 0;
+  assert.equal(h.value(id), 0);
+});
+
+test("the same physical temperature has the same warning level in raw and quick-pick tiles", async () => {
+  const h = await harness();
+  const raw = "/nvme/0/temperature/0", other = "/nvme/0/temperature/1";
+  const drive = { unit: "°C", name: "Composite Temperature" };
+  h.R.meta["auto/ssd_temp"] = { ...drive, source_id: raw };
+  assert.equal(h.level(raw, drive, 72), "warm");
+  assert.equal(h.level(raw, drive, 82), "hot");
+  assert.equal(h.level(other, drive, 72), "");
+});
