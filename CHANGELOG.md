@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.20.0
 - Overview graphs are drawn as light. Lines are smooth curves with a soft glow and a bright head that glides between
   readings instead of jumping every two seconds; older history fades toward the left like a trail, and a temperature
   line turns amber and then rose where it climbed past Airglow's warning and high marks. Gauges settle with a small
@@ -13,6 +13,8 @@
   Figures change digit by digit. Tiles rise into place when the Overview opens.
 - Every design keeps its character: ASCII steps, High contrast draws exact straight lines, Paper takes ink without
   glow. Reduce motion draws every graph still, and forced-colours mode keeps the plain line graphs.
+- When sensor readings stop arriving, tiles say they are waiting for current readings instead of repeating the last
+  values, and the fan tile shows reported RPM when fans report speed but no duty.
 
 ## 1.19.0
 - Switching profiles can be undone. The confirmation now offers Undo, which brings back the previous profile, or your
