@@ -136,7 +136,7 @@ export function openFocus({ sensors, label = "", from = null, color = "", onSett
   dialog.showModal();
   F.openedAt = performance.now();
   dialog.querySelector(".focus-plot").addEventListener("pointerleave", () => scrub(null));
-  try { F.graph = createLightGraph(dialog.querySelector(".light-host"), { fps: 60, pad: [14, 18, 2, 0] }); } catch { F.graph = null; }
+  try { F.graph = createLightGraph(dialog.querySelector(".light-host"), { glide: 20, pad: [14, 18, 2, 0] }); } catch { F.graph = null; }
   render();
   dialog.querySelector("[data-close]").focus({ preventScroll: true });
 

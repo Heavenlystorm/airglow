@@ -36,7 +36,7 @@ export function initPulse({ after, open }) {
       <p class="pulse-empty">Pin a reading from a tile's settings and it flows here.</p></div>
     <div class="seg pulse-span" role="radiogroup" aria-label="Time shown in the pulse">${spanButtons(P.span)}</div>`;
   after.after(el);
-  try { P.graph = createLightGraph(el.querySelector(".light-host"), { fps: 60, pad: [12, 16, 2, 0] }); } catch { P.graph = null; }
+  try { P.graph = createLightGraph(el.querySelector(".light-host"), { pad: [12, 16, 2, 0] }); } catch { P.graph = null; }
 
   el.addEventListener("click", (e) => {
     const span = e.target.closest("[data-span]"), pin = e.target.closest("[data-pin]");

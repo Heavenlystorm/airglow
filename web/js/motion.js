@@ -56,8 +56,10 @@ export function countTo(el, text, { roll = false } = {}) {
     }));
     for (const digit of el.children) {
       if (!digit.dataset.moved) continue;
-      digit.animate?.([{ opacity: 0, transform: `translateY(${digit.dataset.moved === "up" ? ".34em" : "-.34em"})`, filter: "blur(3px)" },
-        { opacity: 1, transform: "none", filter: "blur(0)" }], { duration: 380, easing: "cubic-bezier(.16, 1, .3, 1)" });
+      // opacity and transform only, and brief: the compositor moves the digit without repainting it or its glow, but
+      // still presents the window on every refresh while it does
+      digit.animate?.([{ opacity: 0, transform: `translateY(${digit.dataset.moved === "up" ? ".34em" : "-.34em"})` },
+        { opacity: 1, transform: "none" }], { duration: 160, easing: "cubic-bezier(.16, 1, .3, 1)" });
     }
     return;
   }

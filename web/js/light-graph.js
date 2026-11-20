@@ -144,18 +144,37 @@ export function lightTokens(el) {
 // ------------------------------------------------------------ one shared clock
 // Every canvas answers frame(ts) with the milliseconds until it next needs drawing (0: next frame, -1: at rest).
 // The clock sleeps until the soonest of them, so a quiet Overview does not run a callback on every display refresh.
+// All canvases draw on one shared beat. Each canvas that redraws makes the whole window composite again, so eight
+// canvases drawing on eight different refreshes of a 240 Hz display cost eight times what one beat does.
+export const BEAT = 1000 / 30;
+const GLIDE_MIN = 2;                                // frames a second for the slowest line at rest
 const active = new Set();
-let raf = 0, timer = 0;
+let raf = 0, timer = 0, beat = -Infinity, refresh = 1000 / 60, chained = -1;
+// Wake just before the refresh the beat falls on. An animation-frame callback is a frame of work for the page even
+// when nothing is drawn, so the timer aims for one callback a beat; the display's refresh interval is learned from
+// callbacks that do follow each other.
+function sleep(ms, ts) {
+  const margin = clamp(refresh * .7, 2.5, 11);
+  if (ms <= margin + 1.5) { chained = ts; raf = requestAnimationFrame(tick); }
+  else timer = setTimeout(() => { timer = 0; raf = requestAnimationFrame(tick); }, ms - margin);
+}
+// Now and then a glint runs along every line at once.
+let glintAt = -Infinity, nextGlint = 0;
+const GLINT = 1500, RIPPLE = .5;                    // milliseconds a glint lasts; seconds the ring at the head does
 function tick(ts) {
   raf = 0;
+  if (chained >= 0 && ts - chained > 1) refresh = Math.min(refresh, ts - chained);
+  chained = -1;
+  if (ts - beat < BEAT - 3) return sleep(BEAT - (ts - beat), ts);
+  beat = ts;
+  if (ts >= nextGlint) { if (nextGlint) glintAt = ts; nextGlint = ts + 24000 + Math.random() * 20000; }
   let next = Infinity;
   for (const item of active) {
     const wait = item.frame(ts);
     if (wait >= 0 && wait < next) next = wait;
   }
   if (next === Infinity || document.hidden) return;
-  if (next <= 12) raf = requestAnimationFrame(tick);
-  else timer = setTimeout(() => { timer = 0; raf = requestAnimationFrame(tick); }, next - 6);
+  sleep(Math.max(next, BEAT), ts);
 }
 function wake() {
   if (document.hidden) return;
@@ -191,7 +210,9 @@ function surface(host, className) {
     const limit = Math.min(1, Math.sqrt(3.4e6 / (pw * ph)));
     canvas.width = Math.round(pw * limit); canvas.height = Math.round(ph * limit);
     s.scale = canvas.width / s.w;
-    s.dirty = true; s.onChange?.();
+    // setting a canvas size clears it: draw again now, in the same frame, or the tile shows a blank graph until the
+    // next beat
+    s.dirty = true; s.onResize?.(); s.onChange?.();
   });
   try { resize.observe(canvas, { box: "device-pixel-content-box" }); } catch { resize.observe(canvas); }
   const seen = new IntersectionObserver(([entry]) => { s.visible = entry.isIntersecting; s.dirty = true; s.onChange?.(); });
@@ -202,15 +223,15 @@ function surface(host, className) {
 
 // ------------------------------------------------------------ line graphs
 /**
- * createLightGraph(host, { fps, pad }) → { update(model), hover(x), probe(x), dispose() }
+ * createLightGraph(host, { fps, glide, pad }) → { update(model), hover(x), probe(x), dispose() }
  * model: { window, series: [{ points, lo, hi, color, thresholds: [warm, hot]?, warm, hot, dash, fill }],
  *          glow, curve, fade, guides: [value], marks: [{ value, color }], track }
  */
-export function createLightGraph(host, { fps = 30, pad = [10, 12, 2, 0], className = "light-canvas" } = {}) {
+export function createLightGraph(host, { fps = 30, glide = 6, pad = [10, 12, 2, 0], className = "light-canvas" } = {}) {
   const s = surface(host, className);
   const g = {
     model: null, series: [], reveal: 0, revealed: false, last: 0, hoverX: null, ripple: -1, rippleKey: 0,
-    shimmer: -1, nextShimmer: 0, dirty: true, busyUntil: 0, clock: () => Date.now() / 1000,
+    shimmer: -1, dirty: true, busyUntil: 0, clock: () => Date.now() / 1000,
   };
   const interval = 1000 / fps;
   const plot = () => ({ x: pad[3], y: pad[0], w: Math.max(1, s.w - pad[1] - pad[3]), h: Math.max(1, s.h - pad[0] - pad[2]) });
@@ -347,7 +368,8 @@ export function createLightGraph(host, { fps = 30, pad = [10, 12, 2, 0], classNa
         ctx.strokeStyle = paint(state.color); ctx.lineWidth = 1.8; ctx.beginPath(); ctx.arc(x, y, 3.6, 0, TAU); ctx.stroke();
       });
     }
-    s.canvas.dataset.series = String(heads.length);
+    // an attribute write restyles the tile, so only when the number changes
+    if (s.canvas.dataset.series !== String(heads.length)) s.canvas.dataset.series = String(heads.length);
   }
 
   // The head takes the colour of the level it is at, so a line that climbs past a warning arrives lit in it.
@@ -374,23 +396,32 @@ export function createLightGraph(host, { fps = 30, pad = [10, 12, 2, 0], classNa
       if (g.dirty || s.dirty) { g.reveal = 1; g.ripple = g.shimmer = -1; g.last = 0; draw(null); g.dirty = s.dirty = false; }
       return -1;
     }
-    // Full rate while something is happening. Otherwise only the slow glide remains, and a ten-minute line that
-    // moves half a pixel a second needs a fraction of the frames a one-minute line does.
-    const pace = () => (g.reveal < 1 || g.ripple >= 0 || g.shimmer >= 0 || g.hoverX != null || ts < g.busyUntil)
-      ? interval : 1000 / clamp(plot().w / g.model.window * 4, 12, fps);
+    // Every frame drawn makes the window composite again, which costs far more than the drawing. So: full rate only
+    // while the eye is on it (arriving, the ring at the head, a glint, the pointer), half rate while a range or
+    // colour eases, and at rest only the slow glide: two steps for each pixel the head travels, at most `glide`
+    // frames a second. A ten-minute line that moves a third of a pixel a second draws twice a second.
+    // A graph with nothing to show yet has nothing to move.
+    if (!g.revealed && g.hoverX == null) {
+      if (g.dirty || s.dirty) { g.last = 0; draw(null); g.dirty = s.dirty = false; }
+      return -1;
+    }
+    g.shimmer = ts - glintAt < GLINT ? (ts - glintAt) / GLINT : -1;
+    const pace = () => (g.reveal < 1 || g.ripple >= 0 || g.shimmer >= 0 || g.hoverX != null) ? interval
+      : ts < g.busyUntil ? Math.max(interval, BEAT * 2)
+      : 1000 / clamp(plot().w / g.model.window * 2, GLIDE_MIN, glide);
     const since = ts - g.last;
-    if (since < pace() - 2 && !s.dirty && !g.dirty) return pace() - since;
+    // due within half a beat counts as due: the clock only wakes on beats, and waking again for the rest is a frame
+    if (since < pace() - BEAT / 2 && !s.dirty && !g.dirty) return pace() - since;
     const dt = g.last ? Math.min(.25, (ts - g.last) / 1000) : null;
     g.last = ts;
-    if (g.revealed && g.reveal < 1) g.reveal = Math.min(1, g.reveal + (dt ?? 0) / .9);
-    if (g.ripple >= 0) { g.ripple += (dt ?? 0) / .95; if (g.ripple >= 1) g.ripple = -1; }
-    if (g.shimmer >= 0) { g.shimmer += (dt ?? 0) / 1.5; if (g.shimmer >= 1) g.shimmer = -1; }
-    else if (ts > g.nextShimmer) { if (g.nextShimmer) g.shimmer = 0; g.nextShimmer = ts + 7000 + Math.random() * 9000; }
+    if (g.reveal < 1) g.reveal = Math.min(1, g.reveal + (dt ?? 0) / .9);
+    if (g.ripple >= 0) { g.ripple += (dt ?? 0) / RIPPLE; if (g.ripple >= 1) g.ripple = -1; }
     draw(dt);
     g.dirty = s.dirty = false;
     return pace();
   };
   s.onChange = wake;
+  s.onResize = () => g.frame(performance.now());
   active.add(g);
 
   return {
@@ -407,7 +438,13 @@ export function createLightGraph(host, { fps = 30, pad = [10, 12, 2, 0], classNa
       if (g.rippleKey && newest > g.rippleKey && !still()) g.ripple = 0;
       g.rippleKey = newest;
       g.dirty = true;
-      g.busyUntil = performance.now() + 900;        // ranges and colours ease for a moment after each reading
+      // a range or colour that changed eases for a moment; an unchanged one needs no extra frames
+      const eases = model.series.some((def, i) => {
+        const state = g.series[i], span = Math.abs(def.hi - def.lo) || 1;
+        return Math.abs(state.lo - def.lo) > span * .002 || Math.abs(state.hi - def.hi) > span * .002
+          || def.color.some((v, c) => Math.abs(v - state.color[c]) > (c < 3 ? 2 : .02));
+      });
+      if (eases) g.busyUntil = performance.now() + 900;
       wake();
     },
     hover(x) { g.hoverX = x; g.dirty = true; if (still()) { s.dirty = true; } wake(); },
@@ -477,7 +514,7 @@ export function createLightGauge(host, { bleed = 14, className = "light-canvas l
       ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(hx, hy, reach, 0, TAU); ctx.fill();
       ctx.fillStyle = paint(blend(color, WHITE, .78)); ctx.beginPath(); ctx.arc(hx, hy, width * .26, 0, TAU); ctx.fill();
     }
-    s.canvas.dataset.fraction = k.toFixed(3);
+    if (s.canvas.dataset.fraction !== k.toFixed(2)) s.canvas.dataset.fraction = k.toFixed(2);
   }
 
   g.frame = (ts) => {
@@ -497,15 +534,17 @@ export function createLightGauge(host, { bleed = 14, className = "light-canvas l
     g.color = g.color ? blend(g.color, m.color, ease) : m.color;
     const [lo, hi] = m.range || [0, 0];
     g.lo = lerp(g.lo, lo, ease); g.hi = lerp(g.hi, hi, ease);
-    const settled = Math.abs(target - g.shown) < .0005 && Math.abs(g.speed) < .0005 && Math.abs(g.lo - lo) < .001 && Math.abs(g.hi - hi) < .001
-      && g.color.every((v, i) => Math.abs(v - m.color[i]) < 1);
-    if (settled) { g.shown = target; g.speed = 0; }
+    // at rest once nothing is a visible step away: a thousandth of the arc is a third of a pixel on a large gauge
+    const settled = Math.abs(target - g.shown) < .001 && Math.abs(g.speed) < .004 && Math.abs(g.lo - lo) < .003 && Math.abs(g.hi - hi) < .003
+      && g.color.every((v, i) => Math.abs(v - m.color[i]) < (i < 3 ? 2 : .02));
+    if (settled) { g.shown = target; g.speed = 0; g.color = m.color; g.lo = lo; g.hi = hi; }
     draw();
     g.dirty = s.dirty = false;
     if (settled) g.last = 0;
     return settled ? -1 : 0;
   };
   s.onChange = wake;
+  s.onResize = () => g.frame(performance.now());
   active.add(g);
 
   return {

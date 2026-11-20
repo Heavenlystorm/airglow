@@ -197,18 +197,40 @@ test("a tile opens its detail view by click or Enter, and a double click still o
   await focus.locator(".focus-panel").waitFor({ state: "detached" });
 });
 
+test("every graph draws on one shared beat, so the window is not presented once per canvas", async (t) => {
+  const page = await pageFor(t, { reducedMotion: "no-preference" });
+  await page.waitForFunction(() => document.querySelector('[data-id="cpu"] .light-canvas')?.dataset.series > 0);
+  // Each canvas that draws makes the whole window composite again. Count the display refreshes on which any canvas
+  // drew: staggered canvases would need one each, a shared beat needs at most 30 a second however many there are.
+  const SECONDS = 4;
+  await page.waitForTimeout(1200);                  // past the lines' arrival
+  const seen = await page.evaluate((ms) => new Promise((resolve) => {
+    const proto = CanvasRenderingContext2D.prototype, clear = proto.clearRect, frames = new Set();
+    let frame = 0, draws = 0, running = true;
+    const count = () => { frame++; if (running) requestAnimationFrame(count); };
+    requestAnimationFrame(count);
+    proto.clearRect = function (...box) { if (this.canvas.matches(".light-canvas")) { draws++; frames.add(frame); } return clear.apply(this, box); };
+    setTimeout(() => { running = false; proto.clearRect = clear; resolve({ draws, frames: frames.size, canvases: document.querySelectorAll(".light-canvas").length }); }, ms);
+  }), SECONDS * 1000);
+  assert.ok(seen.canvases >= 5, `several canvases are on screen: ${seen.canvases}`);
+  assert.ok(seen.draws > seen.frames, `canvases draw together: ${JSON.stringify(seen)}`);
+  assert.ok(seen.frames <= SECONDS * 30 + 4, `at most one beat's worth of frames: ${JSON.stringify(seen)}`);
+  // at rest most of the time: a reading every two seconds, a short ring at the head, then only the slow glide
+  assert.ok(seen.frames <= SECONDS * 24, `the graphs rest between readings: ${JSON.stringify(seen)}`);
+});
+
 test("Customize keeps a click for arranging, and tiles animate only when motion is allowed", async (t) => {
   const page = await pageFor(t, { reducedMotion: "no-preference" });
   await page.waitForFunction(() => document.querySelector('[data-id="cpu"] .light-canvas')?.dataset.series > 0);
-  // with motion the line keeps redrawing between readings; the head glides
+  // with motion the line keeps redrawing between readings; the head glides, a few frames a second at rest
   const redraws = await page.evaluate(() => new Promise((resolve) => {
     const canvas = document.querySelector("#ov-pulse .light-canvas"), context = canvas.getContext("2d");
     const clear = context.clearRect.bind(context);
     let count = 0;
     context.clearRect = (...box) => { count++; clear(...box); };
-    setTimeout(() => { context.clearRect = clear; resolve(count); }, 1200);
+    setTimeout(() => { context.clearRect = clear; resolve(count); }, 2400);
   }));
-  assert.ok(redraws > 10, `the pulse flows: ${redraws} frames in 1.2 s`);
+  assert.ok(redraws > 8, `the pulse flows: ${redraws} frames in 2.4 s`);
   await page.locator("#ov-edit").click();
   await page.locator('[data-id="load"] .tile-name').click();
   await page.locator('[data-id="load"]').focus();
