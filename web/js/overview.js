@@ -14,7 +14,7 @@ import { instrumentModel, peakBuckets, sensorFamily, trendOf } from "./overview-
 import { closeSheet, openSheet } from "./sheet.js";
 import { editProfilesSheet, saveProfileSheet } from "./profiles.js";
 import { createLayoutHistory, createWorkspace, deleteWorkspace, exportWorkspace, importWorkspace, initializeWorkspaces, renameWorkspace, restoreOverview, starterWorkspace, switchWorkspace, syncWorkspace } from "./overview-workspaces.js";
-import { createLightGauge, createLightGraph, lightTokens, rgb } from "./light-graph.js";
+import { createLightGauge, createLightGraph, lightTokens, rgb, setLightCalm } from "./light-graph.js";
 import { agoText, initPulse, renderPulse } from "./overview-pulse.js";
 import { openFocus, trendText } from "./overview-focus.js";
 
@@ -821,6 +821,7 @@ function paintLightingTiles() {
 function setEditing(on) {
   if (resetting) return;
   O.editing = on;
+  setLightCalm(on);
   $("#ov-edit").setAttribute("aria-pressed", String(on));
   $("#ov-edit").innerHTML = on ? "Done" : `<svg aria-hidden="true"><use href="#i-move"/></svg>Customize`;
   $("#ov-editbar").hidden = !on;

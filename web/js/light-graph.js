@@ -162,6 +162,15 @@ function wake() {
   if (timer) { clearTimeout(timer); timer = 0; }
   if (!raf) raf = requestAnimationFrame(tick);
 }
+// While tiles are being rearranged the graphs hold still and redraw only for new readings, so moving
+// a tile keeps the whole frame budget.
+let calm = false;
+export function setLightCalm(on) {
+  if (calm === !!on) return;
+  calm = !!on;
+  for (const item of active) item.dirty = true;
+  wake();
+}
 globalThis.document?.addEventListener?.("visibilitychange", wake);
 globalThis.document?.addEventListener?.("appearancechange", () => { for (const item of active) item.dirty = true; wake(); });
 
@@ -361,7 +370,10 @@ export function createLightGraph(host, { fps = 30, pad = [10, 12, 2, 0], classNa
 
   g.frame = (ts) => {
     if (!g.model || !s.visible || !s.w) return -1;
-    if (still()) { if (g.dirty || s.dirty) { g.reveal = 1; g.ripple = g.shimmer = -1; draw(null); g.dirty = s.dirty = false; } return -1; }
+    if (still() || calm) {
+      if (g.dirty || s.dirty) { g.reveal = 1; g.ripple = g.shimmer = -1; g.last = 0; draw(null); g.dirty = s.dirty = false; }
+      return -1;
+    }
     // Full rate while something is happening. Otherwise only the slow glide remains, and a ten-minute line that
     // moves half a pixel a second needs a fraction of the frames a one-minute line does.
     const pace = () => (g.reveal < 1 || g.ripple >= 0 || g.shimmer >= 0 || g.hoverX != null || ts < g.busyUntil)
@@ -472,8 +484,8 @@ export function createLightGauge(host, { bleed = 14, className = "light-canvas l
     const m = g.model;
     if (!m || !s.visible || !s.w) return -1;
     const target = m.missing ? 0 : clamp(m.fraction, 0, 1);
-    if (reduced()) {
-      if (g.dirty || s.dirty) { g.shown = target; g.speed = 0; g.color = m.color; [g.lo, g.hi] = m.range || [0, 0]; draw(); g.dirty = s.dirty = false; }
+    if (reduced() || calm) {
+      if (g.dirty || s.dirty) { g.last = 0; g.shown = target; g.speed = 0; g.color = m.color; [g.lo, g.hi] = m.range || [0, 0]; draw(); g.dirty = s.dirty = false; }
       return -1;
     }
     const dt = g.last ? Math.min(.05, (ts - g.last) / 1000) : .016;
