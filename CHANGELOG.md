@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.20.1
+- The Overview uses far less processor time, most of all on fast displays. In 1.20.0 every graph redrew on its own
+  schedule, so a 240 Hz display presented the whole window about 180 times a second. Graphs now share one beat,
+  rest between readings, and bars, markers, trend arrows and digits move in a few frames instead of easing for
+  most of a second.
+- A graph no longer goes blank for a moment while its tile is resized.
+
 ## 1.20.0
 - Overview graphs are drawn as light. Lines are smooth curves with a soft glow and a bright head that glides between
   readings instead of jumping every two seconds; older history fades toward the left like a trail, and a temperature
