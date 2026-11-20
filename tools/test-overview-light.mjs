@@ -96,10 +96,15 @@ test("sensor tiles draw on canvas, keep their SVG for forced colours, and stay i
 test("moving along a graph reads the value it showed, and leaving puts the reading away", async (t) => {
   const page = await pageFor(t);
   await page.waitForFunction(() => document.querySelector('[data-id="power"] .light-canvas')?.dataset.series > 0);
-  // the fixture has only seconds of history at first: wait until the line has some length to read from
-  await page.waitForFunction(async () => ((await import("/js/readings.js")).R.series["auto/cpu_power"] || []).length > 4);
+  // the fixture has only seconds of history at first: wait until the line reaches back to the point we hover
+  const chart = page.locator('[data-id="power"] .chart');
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-id="power"]'), chart = el.querySelector(".chart").getBoundingClientRect();
+    const canvas = el._light.canvas, box = canvas.getBoundingClientRect(), x = chart.left + chart.width - 56 - 18;
+    return el._light.probe((x - box.left) * canvas.clientWidth / box.width)?.values.some(Number.isFinite);
+  }, null, { timeout: 60000 });
   // hover() measures at the moment it acts, so a notice that opens above the grid cannot move the tile away
-  const chart = page.locator('[data-id="power"] .chart'), box = await chart.boundingBox();
+  const box = await chart.boundingBox();
   await chart.hover({ position: { x: box.width - 56 - 18, y: (box.height - 18) / 2 } });
   const tip = page.locator('[data-id="power"] .light-tip');
   await tip.waitFor({ state: "visible" });
@@ -215,6 +220,8 @@ test("Customize keeps a click for arranging, and tiles animate only when motion 
   await page.keyboard.press("Escape");
 
   await page.emulateMedia({ reducedMotion: "reduce" });
+  // leaving Customize and switching motion off each redraw once; count only after they have settled
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 800)));
   const still = await page.evaluate(() => new Promise((resolve) => {
     const canvas = document.querySelector('[data-id="cpu"] .light-canvas'), context = canvas.getContext("2d");
     const clear = context.clearRect.bind(context);
