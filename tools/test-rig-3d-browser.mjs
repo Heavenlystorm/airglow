@@ -36,6 +36,14 @@ async function pageFor(t, width = 1440, init = null) {
     if (r.url().endsWith("/rig-3d.js")) modules.push(r.url());
   });
   await page.addInitScript(() => {
+    // The camera checks compare exact pixels. With Skia's Graphite GPU backend (on in Edge 158, still off in
+    // Playwright's Chromium 145) two identical repaints of a GPU canvas differ by a brightness level or more in a few
+    // dozen pixels where the lights' translucent glows are drawn over the fan surfaces. So this canvas is rasterized
+    // in software, which repeats exactly. The app itself never reads this canvas back and keeps the GPU.
+    const context = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, options) {
+      return context.call(this, type, type === "2d" && this.id === "rig-3d-canvas" ? { ...options, willReadFrequently: true } : options);
+    };
     window.rigPaints = 0;
     const fill = CanvasRenderingContext2D.prototype.fillRect;
     CanvasRenderingContext2D.prototype.fillRect = function (...args) {
@@ -75,6 +83,18 @@ async function stableFrames(page, color = "ff0000") {
 }
 async function flush(page) { await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); }
 async function pixels(page) { await flush(page); return page.locator("#rig-3d-canvas").evaluate(c => c.toDataURL()); }
+// The reference picture for the exact comparisons: taken once an identical repaint reproduces it. If identical repaints
+// never matched, every "the picture changed" check below would pass without testing anything, so that fails here.
+async function settledPixels(page) {
+  let last = await pixels(page);
+  for (let i = 0; i < 8; i++) {
+    await stableFrames(page);                        // repaint with the same frames; never with Home, which is under test
+    const next = await pixels(page);
+    if (next === last) return next;
+    last = next;
+  }
+  assert.fail("The 3D picture does not settle: identical repaints keep differing");
+}
 
 test("3D is lazy; real orbit, zoom, pan and Reset change the rendered scene without hardware writes", async t => {
   const { page, posts, modules } = await pageFor(t);
@@ -84,7 +104,7 @@ test("3D is lazy; real orbit, zoom, pan and Reset change the rendered scene with
   await page.locator("#rig-3d-canvas").waitFor({ state: "visible" });
   await stableFrames(page);
   assert.equal(modules.length, 1);
-  const original = await pixels(page), canvas = page.locator("#rig-3d-canvas");
+  const original = await settledPixels(page), canvas = page.locator("#rig-3d-canvas");
   const red = await canvas.evaluate(c => {
     const p = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
     let count = 0; for (let i = 0; i < p.length; i += 4) if (p[i] === 255 && p[i + 1] === 0 && p[i + 2] === 0) count++;
@@ -99,12 +119,13 @@ test("3D is lazy; real orbit, zoom, pan and Reset change the rendered scene with
   const box = await canvas.boundingBox(), x = box.x + box.width * .65, y = box.y + box.height * .35;
   await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 70, y + 25, { steps: 4 }); await page.mouse.up();
   assert.notEqual(await pixels(page), original, "Pointer dragging orbits the scene");
-  await canvas.press("Home");
+  await canvas.press("Home"); assert.ok(await pixels(page) === original, "Home undoes a dragged orbit");
   await page.mouse.move(x, y); await page.mouse.down({ button: "right" }); await page.mouse.move(x - 45, y + 20, { steps: 3 }); await page.mouse.up({ button: "right" });
   assert.notEqual(await pixels(page), original, "Right dragging pans the scene");
-  await canvas.press("Home"); await page.mouse.wheel(0, -120);
+  await canvas.press("Home"); assert.ok(await pixels(page) === original, "Home undoes a dragged pan");
+  await page.mouse.wheel(0, -120);
   assert.notEqual(await pixels(page), original, "Wheel zoom changes perspective");
-  await canvas.press("Home");
+  await canvas.press("Home"); assert.ok(await pixels(page) === original, "Home undoes a wheel zoom");
   await page.screenshot({ path: `${OUTPUT}/lighting-3d.png`, fullPage: true });
   await page.locator("#arrange").click();
   assert.equal(await page.locator("#stage-view-2d").getAttribute("aria-pressed"), "true");
@@ -139,7 +160,7 @@ test("depth is local presentation state, survives reload, and does not change co
   const key = await page.locator("#rig-3d-zone option").nth(1).getAttribute("value");
   await page.locator("#rig-3d-zone").selectOption(key);
   await stableFrames(page);
-  const flat = await pixels(page);
+  const flat = await settledPixels(page);
   await page.locator("#rig-3d-depth").fill("35");
   await page.locator("#rig-3d-depth").dispatchEvent("input");
   assert.notEqual(await pixels(page), flat, "Depth changes projected geometry");

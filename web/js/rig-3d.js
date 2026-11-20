@@ -156,9 +156,12 @@ export function createRig3D(host, { onSelect, onUnavailable, isVisible, compact 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const pixelW = Math.round(w * dpr), pixelH = Math.round(h * dpr);
     if (canvas.width !== pixelW || canvas.height !== pixelH) { canvas.width = pixelW; canvas.height = pixelH; gradients.clear(); }
+    // Wipe the whole bitmap in its own pixels: the box is rarely a whole number of them, and a wipe in CSS pixels
+    // leaves the last row partly covered, so it would keep a trace of earlier paints.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (compact) ctx.clearRect(0, 0, pixelW, pixelH);
+    else { ctx.fillStyle = "#080c11"; ctx.fillRect(0, 0, pixelW, pixelH); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (compact) ctx.clearRect(0, 0, w, h);
-    else { ctx.fillStyle = "#080c11"; ctx.fillRect(0, 0, w, h); }
     hitPoints = [];
     if (!scene.bounds) return;
     // A reference lattice behind the layout, not a guessed enclosure or component.

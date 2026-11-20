@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- The 3D lighting view clears its whole canvas on every repaint. The bottom pixel row was only partly cleared and
+  could keep a faint trace of lights that had reached the edge.
+
 ## 1.20.1
 - The Overview uses far less processor time, most of all on fast displays. In 1.20.0 every graph redrew on its own
   schedule, so a 240 Hz display presented the whole window about 180 times a second. Graphs now share one beat,
