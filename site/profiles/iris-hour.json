@@ -1,0 +1,29 @@
+{
+  "airglow_profile": 1,
+  "id": "iris-hour",
+  "name": "Iris hour",
+  "description": "Indigo and lilac drift across the case. The cooler catches a slow silver breath.",
+  "author": "Airglow",
+  "lighting": {
+    "effect": "gradient",
+    "params": {
+      "colors": [
+        "#463e92",
+        "#9984de",
+        "#b8ccf3"
+      ],
+      "speed": 6,
+      "angle": 25
+    },
+    "brightness": 54
+  },
+  "areas": {
+    "cooler": {
+      "effect": "breathing",
+      "params": {
+        "color": "#c2d4ff",
+        "speed": 9
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "airglow_profile": 1,
+  "id": "meteor-watch",
+  "name": "Meteor watch",
+  "description": "A copper streak travels around each fan and along each strip against a deep blue night.",
+  "author": "Airglow",
+  "lighting": {
+    "effect": "comet",
+    "params": {
+      "color": "#ff9b52",
+      "background": "#16275d",
+      "speed": 21,
+      "tail": 56,
+      "reverse": false
+    },
+    "brightness": 72
+  }
+}

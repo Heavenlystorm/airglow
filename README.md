@@ -1,45 +1,63 @@
-# ![Airglow — RGB lighting and fan control for Windows](docs/firefly-banner.png)
+<h1>
+  <a href="https://heavenlystorm.github.io/airglow/">
+    <picture>
+      <source media="(max-width: 600px)" srcset="docs/firefly-banner-compact.webp">
+      <source type="image/webp" srcset="docs/firefly-banner.webp">
+      <img src="docs/firefly-banner.png" alt="Airglow — RGB lighting and fan control for Windows. Art from the lantern-lit Glasshouse in Desk Display.">
+    </picture>
+  </a>
+</h1>
 
-Airglow brings your case lighting, fan curves and sensor readings into one free, open-source Windows app. Build a
-music-reactive effect, pair it with a fan curve, and save both as a profile. Your settings stay on your PC, with no
-account or telemetry.
+**[Download for Windows](https://github.com/Heavenlystorm/airglow/releases/latest/download/Airglow-stable-Setup.exe)** ·
+[Explore the interactive tour](https://heavenlystorm.github.io/airglow/) ·
+[Supported hardware](#supported-hardware) · [Installation guide](#installing)
 
-**[Download for Windows](https://github.com/Heavenlystorm/airglow/releases/latest)** ·
-[Installation guide](#installing) · [Supported hardware](#supported-hardware) · [Website](https://airglowrgb.com)
+Airglow brings your case lights, fan curves, and sensors into one free, open-source Windows app.
+Make a rain-lit palette from a photo, set the fans to follow your GPU temperature, and save both as a profile.
+Your settings stay on your PC. No account or telemetry.
 
-[![Latest release](https://img.shields.io/github/v/release/Heavenlystorm/airglow)](https://github.com/Heavenlystorm/airglow/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/Heavenlystorm/airglow/total?cachebust=3)](https://github.com/Heavenlystorm/airglow/releases)
-[![Tests](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml/badge.svg)](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml)
-[![MIT licence](https://img.shields.io/github/license/Heavenlystorm/airglow)](LICENSE)
+## New in 1.21.0
 
-## The Firefly workspace
+### A lookbook for your lights
 
-Firefly welcomes new users with a lantern-carrying companion, plum work surfaces, and warm apricot controls.
-Upgrading keeps your saved design. Open **Settings → Appearance** to try a different look or adjust the scale.
-The screenshots show Firefly with sample hardware.
+Start with the honey glow of **Lamplight**, the drifting blues of **Iris hour**, or the music-reactive red of **Last set**.
+All six recipes work offline. Open **Lighting → Library → Lighting lookbook** to preview one on your rig or the sample layout.
+Adjust its brightness and area accents, compare it with a saved look, then keep a personal copy.
 
-![Firefly workspace with a lighting canvas, saved profiles, fan speeds and CPU and GPU readings](docs/screenshots/firefly-preview.png)
+[![The six illustrated lighting recipes in Airglow's Windows lookbook, with their palettes and brightness](docs/screenshots/lighting-lookbook.webp)](docs/screenshots/lighting-lookbook.webp)
 
-- **Set up your lights.** Arrange fans and strips to match your case, then change the whole rig or one zone. [Lighting](#lighting)
-- **Make an effect.** Stack layers, set a palette or write code. Try it on a sample rig before applying it to your lights. [Studio](#the-studio)
-- **Tune your cooling.** Follow a temperature with a fan curve or switch profiles when a game starts. [Fans and automations](#fans-and-automations)
-- **Find your favorites.** Pin frequently used effects and profiles. Press **Ctrl+K** to find them alongside your recent choices. Profiles that also change fans are labeled **Lighting and cooling**.
+### A window for your desk
 
-### Things to try in the workspace
+Put **Desk Display** on a second monitor or pin it above your work. Choose up to four readings, watch their one-minute
+traces, and start a focus timer that survives a restart. The illustrated Glasshouse can stay all evening, or the scenery
+can rotate daily. Press **Ctrl+K** and type **Desk Display** to open it.
 
-| Open | What you can do |
+<details>
+<summary>See Desk Display with sample CPU and GPU readings</summary>
+
+[![Desk Display in its Glasshouse setting with a clock, focus timer and two sensor traces. Readings are simulated.](docs/screenshots/desk-display.webp)](docs/screenshots/desk-display.webp)
+
+</details>
+
+### More to try
+
+| In the app | Try this |
 | --- | --- |
-| **Overview → Tools → Desk Display** | Put a clock and up to four live readings on a second screen. Pick a scene, start a focus timer, and pin the window above other apps. |
-| **Lighting → Library → Lighting lookbook** | Choose one of six illustrated lighting recipes, preview it on your layout, adjust it, and save a personal copy. The library can also compare two saved looks or exchange a local profile file. |
-| **Lighting → Light theatre** | Freeze a recent frame, choose a camera angle and background, and export a picture of your rig. |
-| **Overview → Tools → Recordings** | Record a workload with extra sensors and timestamped notes. Compare two runs at the same elapsed time, then save their readings or a chart. |
-| **Fans → Curve sandbox** | Move a simulated temperature through two curves and inspect expected fan duty. Bring the curve you prefer back to the editor for review. |
-| **Automations → Rehearse rules** | Try a time, temperature or foreground app and see which rules would win before changing a real setup. |
+| **Lighting → Arrange** | Select several zones, snap them to the grid, align their centres, and space them evenly. |
+| **Lighting → Light theatre** | Freeze the animation, scrub to a favourite frame, and export a transparent PNG. |
+| **Lighting → Edit palette** | Sample colours from a local photo, reorder them, and save the palette for Lighting and Studio. |
+| **Studio** | Keep several drafts, compare named checkpoints, or reopen an earlier version as a separate copy. |
+| **Overview → Tools → Recordings** | Mark when a workload starts, compare two runs at matching elapsed times, and export the chart or readings. |
+| **Fans → Curve sandbox** | Compare two curves against the same temperature sweep before editing the live curve. |
+| **Automations → Rehearse rules** | Try a time, temperature, or app and see which rule wins. |
+| **Ctrl+K → Wind down** | Fade the lighting over 5–120 minutes and keep the rig dark until you release it. |
 
-Press **F1** for the task guide. **Ctrl+K** can open the lookbook, recordings or **Wind down**, which fades the lights over a chosen interval and holds them dark until released.
+**F1** opens searchable tasks and shortcuts. Open **Settings → Appearance** to choose a different theme or adjust the scale.
+The application screenshots use sample hardware.
 
-Share a setup or ask a question in [GitHub Discussions](https://github.com/Heavenlystorm/airglow/discussions) or
-[r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/).
+[Release notes](https://github.com/Heavenlystorm/airglow/releases/tag/v1.21.0) ·
+[Firefly dashboard](docs/screenshots/firefly-preview.png) · [Project website](https://airglowrgb.com) ·
+[GitHub Discussions](https://github.com/Heavenlystorm/airglow/discussions) · [r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/)
 
 ## Installing
 
@@ -222,6 +240,9 @@ The installer isn't code-signed yet, so Windows may show a warning. Releases are
 repository, and you can also build Airglow yourself using the instructions below.
 
 ## Building from source
+
+[![Tests](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml/badge.svg)](https://github.com/Heavenlystorm/airglow/actions/workflows/tests.yml)
+
 ```
 pip install -r requirements-dev.txt
 npm install --no-save --package-lock=false playwright@1.58.2
