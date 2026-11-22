@@ -73,6 +73,31 @@ async function fits(page, selector = "body") {
   assert.ok(sizes.scroll <= sizes.width + 1, `${selector} overflows: ${JSON.stringify(sizes)}`);
 }
 
+test("Quick switch opens real setting and zone controls, even on a repeated destination", async t => {
+  const page = await pageFor(t, "overview");
+  const writes = [];
+  page.on("request", request => { if (request.method() === "POST") writes.push(request.url()); });
+  await page.locator("#ov-edit").focus();
+  await page.keyboard.press("Control+k");
+  const dialog = page.getByRole("dialog", { name: "Quick switch" });
+  const input = dialog.getByRole("combobox", { name: "Search actions" });
+  await input.fill("coolant ramp");
+  await input.press("Enter");
+  await page.waitForFunction(() => document.activeElement?.closest("#set-fans"));
+  const zones = (await api("/api/zones")).zones.filter(zone => zone.device.online);
+  assert.ok(zones.length);
+  for (let visit = 0; visit < 2; visit++) {
+    await page.keyboard.press("Control+k");
+    await dialog.getByRole("button", { name: "Zones", exact: true }).click();
+    await input.fill(zones[0].config.name);
+    await input.press("Enter");
+    await page.waitForFunction(key => document.activeElement?.id === "zone-pick" &&
+      document.activeElement.value === key, zones[0].key);
+    assert.equal(await page.locator("#inspector h2").first().innerText(), zones[0].config.name);
+  }
+  assert.deepEqual(writes, []);
+});
+
 test("narrow navigation reaches every section and curve points are keyboard editable drafts", async (t) => {
   const page = await pageFor(t, "overview", 390);
   for (const view of ["lighting", "devices", "automations", "settings", "studio", "fans", "overview"]) {

@@ -235,14 +235,15 @@ export function createLightGraph(host, { fps = 30, glide = 6, pad = [10, 12, 2, 
   };
   const interval = 1000 / fps;
   const plot = () => ({ x: pad[3], y: pad[0], w: Math.max(1, s.w - pad[1] - pad[3]), h: Math.max(1, s.h - pad[0] - pad[2]) });
-  const still = () => reduced();
+  const clock = () => g.model?.fixedAt ?? g.clock();
+  const still = () => Number.isFinite(g.model?.fixedAt) || reduced();
 
   function draw(dt) {
     const { ctx } = s, m = g.model;
     ctx.setTransform(s.scale, 0, 0, s.scale, 0, 0);
     ctx.clearRect(0, 0, s.w, s.h);
     if (!m) return;
-    const R = plot(), now = g.clock(), t1 = still() ? now : now - LAG, t0 = t1 - m.window;
+    const R = plot(), now = clock(), t1 = still() ? now : now - LAG, t0 = t1 - m.window;
     const glow = m.glow ?? 1, curve = m.curve || "smooth";
     const px = (t) => R.x + (t - t0) / m.window * R.w;
     const heads = [];
@@ -353,14 +354,17 @@ export function createLightGraph(host, { fps = 30, glide = 6, pad = [10, 12, 2, 
       ctx.beginPath(); ctx.arc(head.x, head.y, glow > 0 ? 2.6 : 2.2, 0, TAU); ctx.fill();
     }
 
-    if (g.hoverX != null && any) {
-      const x = clamp(g.hoverX, R.x, R.x + R.w), read = probeAt(x);
+    const cursorX = m.cursor ? px(m.cursor.time) : g.hoverX;
+    if (cursorX != null && any) {
+      const x = clamp(cursorX, R.x, R.x + R.w);
+      // A held cursor represents a recorded sample. Draw only values actually measured at its time.
+      const values = m.cursor ? m.cursor.values : probeAt(x).values;
       const line = ctx.createLinearGradient(0, R.y, 0, R.y + R.h);
       const tint = m.text || [255, 255, 255, 1];
       line.addColorStop(0, paint(tint, 0)); line.addColorStop(.25, paint(tint, .5)); line.addColorStop(1, paint(tint, .16));
       ctx.strokeStyle = line; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(Math.round(x) + .5, R.y - 4); ctx.lineTo(Math.round(x) + .5, R.y + R.h); ctx.stroke();
-      read.values.forEach((value, index) => {
+      values.forEach((value, index) => {
         const state = g.series[index];
         if (value == null || !state) return;
         const y = R.y + R.h - (clamp(value, state.lo, state.hi) - state.lo) / (state.hi - state.lo || 1) * R.h;
@@ -379,7 +383,7 @@ export function createLightGraph(host, { fps = 30, glide = 6, pad = [10, 12, 2, 
   }
 
   function probeAt(x) {
-    const m = g.model, R = plot(), now = g.clock(), t1 = still() ? now : now - LAG;
+    const m = g.model, R = plot(), now = clock(), t1 = still() ? now : now - LAG;
     const t = t1 - m.window + (clamp(x, R.x, R.x + R.w) - R.x) / R.w * m.window;
     return { t, ago: Math.max(0, now - t), values: m.series.map((def) => {
       for (const run of splitRuns(def.points, t1 - m.window, t1)) {

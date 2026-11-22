@@ -144,10 +144,10 @@
 .light-focus[data-closing]::backdrop { opacity: 0; transition: opacity .17s ease-in; }
 @keyframes focus-veil { from { opacity: 0; } }
 .focus-panel {
-  display: grid; grid-template-rows: auto auto minmax(180px, 1fr) auto; gap: 0;
+  display: grid; grid-template-rows: auto auto minmax(150px, 1fr) auto auto; gap: 0;
   height: min(640px, calc((100dvh - 48px) / var(--ui-scale, 1)));
   border: 1px solid var(--line); border-radius: var(--r-stage); background: var(--panel); box-shadow: var(--shadow-3);
-  overflow: hidden;
+  overflow: auto;
 }
 .focus-head { display: flex; align-items: center; gap: 10px; padding: 20px 20px 0 28px; }
 .focus-title { flex: 1; min-width: 0; }
@@ -174,6 +174,12 @@
 .focus-time { bottom: 4px; }
 .focus-then { left: 28px; }
 .focus-now { right: 82px; }
+.focus-inspection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 28px; border-top: 1px solid var(--line-soft); }
+.focus-sample-info { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.focus-inspection .btn-row { margin-left: auto; flex-wrap: wrap; }
+.focus-inspection .btn { min-height: 32px; }
+.focus-cursor { flex: 1 1 100px; min-width: 80px; accent-color: var(--light-ink); }
+.focus-copy-fallback { flex-basis: 100%; min-width: 0; color: var(--ink); background: var(--well); }
 .focus-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0; margin: 0; padding: 0 16px; border-top: 1px solid var(--line-soft); background: var(--well); }
 .focus-stats > div { padding: 14px 12px 16px; min-width: 0; }
 .focus-stats dt { display: flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -181,12 +187,18 @@
 .focus-stats [data-tone] dt::before { content: ""; flex: none; width: 10px; height: 2px; border-radius: 1px; background: var(--light-warm); }
 .focus-stats [data-tone="hot"] dt::before { background: var(--light-hot); }
 .focus-stats [data-tone="second"] dt::before { background: repeating-linear-gradient(90deg, var(--light-2) 0 4px, transparent 4px 6px); width: 14px; }
+.focus-stats [data-jump] { display: inline-flex; align-items: baseline; gap: 5px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.focus-stats [data-jump] > :last-child { font: 13px var(--text); color: var(--ink-3); }
+.focus-stats [data-jump]:hover:not(:disabled) > :first-child { text-decoration: underline; text-underline-offset: 3px; }
+.focus-stats [data-jump]:disabled { cursor: default; }
+.focus-stats [data-jump]:disabled > :last-child { visibility: hidden; }
 @media (max-width: 620px) {
   .focus-head { flex-wrap: wrap; padding: 16px 14px 0 18px; }
   .focus-title { flex-basis: calc(100% - 44px); }
   .focus-head [data-close] { order: -1; margin-left: auto; }
   .focus-head .focus-title { order: -2; }
   .focus-read { padding-inline: 18px; flex-wrap: wrap; }
+  .focus-inspection { padding-inline: 18px; }
   .focus-plot > .light-host { left: 18px; }
   .focus-then, .focus-plot > .light-tip { left: 18px; }
 }

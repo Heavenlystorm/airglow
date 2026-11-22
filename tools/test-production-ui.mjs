@@ -135,6 +135,142 @@ test("every automation starter previews before writing, saves once and permits r
   assert.equal(writes[1].rules.length, 1);
 });
 
+test("automation search keeps priority and edited copies save beside their source", async t => {
+  const writes = [];
+  const page = await staticPage(t, async (route, url) => {
+    if (url.pathname === "/api/apps") { await route.fulfill({ json: [] }); return true; }
+    if (url.pathname !== "/api/automations") return false;
+    const { rules } = route.request().postDataJSON();
+    writes.push(rules);
+    await route.fulfill({ json: rules });
+    return true;
+  });
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    S.state = { override: { active: ["night"], lighting: "night" } };
+    S.rules = [
+      { id: "lock", enabled: false, when: { type: "locked" }, then: { type: "lights_off" } },
+      { id: "night", enabled: true, when: { type: "time", start: "22:30", end: "06:00", days: [0] }, then: { type: "dim", brightness: 15 } },
+      { id: "game", enabled: true, when: { type: "app_running", exe: "Game.exe" }, then: { type: "lights_off" } },
+    ];
+    S.presets = []; S.curves = { curves: {} };
+    document.querySelector(".auto-view").hidden = false;
+    const auto = await import("/js/automations.js"); auto.initAutomations(); auto.renderAutomations();
+  });
+  const rows = page.locator("#rules li"), search = page.getByLabel("Search automations"), status = page.getByLabel("Filter rules by status");
+  await search.fill("GaMe.exe");
+  assert.equal(await rows.count(), 1);
+  assert.equal(await rows.first().getAttribute("value"), "3");
+  assert.ok(await rows.locator("[data-up]").isDisabled());
+  await status.selectOption("disabled");
+  assert.equal(await rows.count(), 0);
+  assert.equal(await page.locator("#rule-count").innerText(), "No matching rules");
+  await search.fill("");
+  assert.equal(await rows.first().getAttribute("data-id"), "lock");
+  await status.selectOption("active");
+  assert.equal(await rows.first().getAttribute("data-id"), "night");
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  assert.equal(await rows.count(), 3);
+  const duplicate = page.locator("#copy-night");
+  await duplicate.press("Enter");
+  const enabled = page.getByLabel("Enable rule");
+  assert.equal(await enabled.isChecked(), false);
+  await page.keyboard.press("Escape");
+  assert.equal(writes.length, 0);
+  await duplicate.press("Enter");
+  const detail = page.locator("#rb-schedule-detail");
+  assert.match(await detail.innerText(), /7h 30m.*following day/);
+  await page.getByRole("button", { name: "Weekends", exact: true }).click();
+  await page.getByRole("button", { name: "Sat", exact: true }).click();
+  await page.getByRole("button", { name: "Sun", exact: true }).click();
+  const save = page.getByRole("button", { name: "Add automation" });
+  await save.click();
+  assert.equal(writes.length, 0);
+  assert.match(await detail.innerText(), /at least one/);
+  await page.getByRole("button", { name: "Weekdays", exact: true }).click();
+  const end = page.getByLabel("End time");
+  await end.fill("22:30");
+  await save.click();
+  assert.equal(writes.length, 0);
+  assert.match(await detail.innerText(), /different start and end/);
+  await end.fill("23:15");
+  assert.match(await detail.innerText(), /45m on each selected day/);
+  await save.click();
+  await page.locator("#sheet").waitFor({ state: "hidden" });
+  assert.equal(writes.length, 1);
+  const [first, original, copy, last] = writes[0];
+  assert.deepEqual([first.id, original.id, last.id], ["lock", "night", "game"]);
+  assert.equal(original.enabled, true);
+  assert.equal(original.when.end, "06:00");
+  assert.notEqual(copy.id, original.id);
+  assert.equal(copy.enabled, false);
+  assert.deepEqual(copy.when.days, [0, 1, 2, 3, 4]);
+  assert.equal(copy.when.end, "23:15");
+  await status.selectOption("disabled");
+  await page.locator(`#enable-${copy.id}`).press("Space");
+  await page.locator(`#enable-${copy.id}`).waitFor({ state: "detached" });
+  assert.ok(await search.evaluate(el => el === document.activeElement), "focus remains in the rules view when a changed rule leaves the filter");
+  await page.getByRole("button", { name: "Clear filters", exact: true }).click();
+  await page.locator(`#edit-${copy.id}`).press("Enter");
+  assert.ok(await page.getByLabel("Enable rule").isChecked());
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 360, height: 780 });
+  assert.ok(await page.locator(".auto-view").evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+});
+
+test("automation numeric drafts stay invalid across unrelated selector changes", async t => {
+  const writes = [];
+  const page = await staticPage(t, async (route, url) => {
+    if (url.pathname === "/api/apps") { await route.fulfill({ json: [] }); return true; }
+    if (url.pathname !== "/api/automations") return false;
+    const { rules } = route.request().postDataJSON();
+    writes.push(rules);
+    await route.fulfill({ json: rules });
+    return true;
+  });
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    S.state = { temp_unit: "F" }; S.rules = []; S.presets = []; S.curves = { curves: {} };
+    document.querySelector(".auto-view").hidden = false;
+    const auto = await import("/js/automations.js"); auto.initAutomations(); auto.renderAutomations();
+  });
+  await page.locator("#auto-add").click();
+  const when = page.locator("#rb-when"), then = page.locator("#rb-then"), save = page.locator("#rb-save");
+  const brightness = page.getByLabel("Brightness"), temperature = page.getByLabel("Temperature", { exact: true });
+  const assertInvalid = async (input, raw, message) => {
+    assert.equal(await input.inputValue(), raw);
+    assert.equal(await input.evaluate(el => el.validity.valid), false);
+    assert.match(await page.locator("#rb-preview").innerText(), message);
+    await save.click();
+    assert.equal(writes.length, 0);
+  };
+  await then.selectOption("dim");
+  await brightness.fill("");
+  await when.selectOption("temp_above");
+  await assertInvalid(brightness, "", /brightness between 0 and 100/i);
+  await brightness.fill("0");
+  await temperature.fill("");
+  await then.selectOption("lights_off");
+  await assertInvalid(temperature, "", /temperature between 86 and 212/i);
+  await temperature.fill("250");
+  await then.selectOption("dim");
+  await assertInvalid(temperature, "250", /temperature between 86 and 212/i);
+  await temperature.fill("");
+  await temperature.press("-");
+  assert.ok(await temperature.evaluate(el => el.validity.badInput));
+  await then.selectOption("lights_off");
+  assert.ok(await temperature.evaluate(el => el.validity.badInput), "an unfinished number remains in the native input");
+  await assertInvalid(temperature, "", /temperature between 86 and 212/i);
+  await then.selectOption("dim");
+  await temperature.fill("176");
+  await brightness.fill("0");
+  await save.click();
+  await page.locator("#sheet").waitFor({ state: "hidden" });
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][0].when.temp, 80, "Fahrenheit input saves in whole Celsius");
+  assert.equal(writes[0][0].then.brightness, 0, "an explicit zero remains valid");
+});
+
 test("short Overview shares its section and reading row and keeps the lighting controls compact", async t => {
   const page = await overview(t, [{ id: "lighting", type: "lighting", w: 2, h: 2 }, tile(sensors[0], "auto", 0)]);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -818,6 +954,56 @@ test("Recents accepts only confirmed manual effects and profiles", async t => {
   ]);
 });
 
+test("Quick switch finds settings by topic and zones by unaccented device or zone name without a write", async t => {
+  const page = await switcher(t);
+  const writes = [];
+  page.on("request", request => { if (request.method() === "POST") writes.push(request.url()); });
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    S.zones = { zones: [
+      { key: "hub/desk #1", config: { name: "Café-strip" }, device: { name: "Desk hub", online: true } },
+      { key: "old", config: { name: "Café lamp" }, device: { name: "Desk hub", online: false } },
+    ] };
+  });
+  const input = page.getByRole("combobox", { name: "Search actions" });
+  const dialog = page.getByRole("dialog", { name: "Quick switch" });
+  await page.keyboard.press("Control+k");
+  await input.fill("coolant ramp");
+  assert.match(await dialog.getByRole("option", { selected: true }).textContent(), /Fans.*Open settings/);
+  await input.press("Enter");
+  await page.waitForURL("**/#settings/fans");
+  await page.keyboard.press("Control+k");
+  await dialog.getByRole("button", { name: "Zones", exact: true }).click();
+  await input.fill("desk cafe strip");
+  assert.equal(await dialog.getByRole("option").count(), 1);
+  assert.match(await dialog.getByRole("option").textContent(), /Café-strip.*Desk hub/);
+  await input.press("Enter");
+  await page.waitForFunction(() => decodeURIComponent(location.hash) === "#lighting/hub/desk #1");
+  assert.deepEqual(writes, []);
+});
+
+test("Pinned search includes only saved favorites and Page keys move a full screen without applying", async t => {
+  const page = await switcher(t);
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    S.settings = { settings: { quick_actions: { favorites: [{ kind: "effect", id: "solid" }], recents: [] } } };
+  });
+  await page.keyboard.press("Control+k");
+  const dialog = page.getByRole("dialog", { name: "Quick switch" });
+  const input = dialog.getByRole("combobox", { name: "Search actions" });
+  await dialog.getByRole("button", { name: "Pinned", exact: true }).click();
+  assert.equal(await dialog.getByRole("option").count(), 1);
+  assert.match(await dialog.getByRole("option").textContent(), /Solid/);
+  await input.fill("Movie");
+  await dialog.getByText("No matching actions.", { exact: true }).waitFor();
+  await dialog.getByRole("button", { name: "Show all actions" }).click();
+  await input.press("PageDown");
+  assert.ok(Number(await dialog.getByRole("option", { selected: true }).getAttribute("data-index")) > 1);
+  await input.press("PageUp");
+  assert.equal(await input.getAttribute("aria-activedescendant"), "qs-option-0");
+  await input.press("Escape");
+});
+
 test("Ctrl+K opens the search, arrows change only selection, and Escape restores focus", async (t) => {
   const page = await switcher(t);
   const requests = [];
@@ -1058,4 +1244,189 @@ test("quick switch reports effects saved under a lighting override or while ligh
     await page.locator("#toast").getByText(feedback).waitFor({ timeout: 1000 });
     overridden = false;
   }
+});
+
+async function colourEditorPage(t, mock) {
+  const page = await staticPage(t, mock);
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    const { initLighting, renderLighting } = await import("/js/lighting.js");
+    const colors = ["#112233", "#abcdef"];
+    S.state = { scene: { effect: "gradient", params: { colors, speed: 20 }, brightness: 60 },
+      scene_status: { status: "ready", desired_revision: 4, session: "fixture" } };
+    S.effects = [
+      { id: "gradient", name: "Gradient", needs: [], params: [{ id: "colors", type: "colors", label: "Colours",
+        min: 2, max: 4, default: ["#ff0000", "#0000ff"] }] },
+      { id: "solid", name: "Solid", needs: [], params: [{ id: "color", type: "color", label: "Colour", default: "#778899" }] },
+    ];
+    S.zones = { zones: [{ key: "hub/front", device: { name: "Desk hub", online: true }, positions: [[.4, .5]],
+      config: { name: "Front strip", enabled: true, layout: { shape: "strip", x: .4, y: .5, angle: 0, length: .2 },
+        override: { effect: "solid", params: { color: "#123456" } } } }] };
+    document.querySelector(".lighting-view").hidden = false;
+    (await import("/js/stage.js")).initStage();
+    initLighting(); renderLighting();
+  });
+  return page;
+}
+
+test("Lighting palette edits stay local until applied and share saved palettes with Studio", async t => {
+  const writes = [];
+  const page = await colourEditorPage(t, async (route, url) => {
+    if (url.pathname !== "/api/scene") return false;
+    const body = route.request().postDataJSON(); writes.push(body);
+    await route.fulfill({ json: { scene: { effect: "gradient", params: body.params, brightness: 60 },
+      scene_status: { desired_revision: 5, session: "fixture", status: "ready" } } });
+    return true;
+  });
+  await page.setViewportSize({ width: 360, height: 720 });
+  const opener = page.getByRole("button", { name: "Edit palette" });
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Edit palette" });
+  const input = dialog.getByLabel("Hex colours");
+  const apply = dialog.getByRole("button", { name: "Apply palette" });
+  await input.fill("#ggg");
+  assert.ok(await apply.isDisabled());
+  await dialog.getByRole("button", { name: "Polar night" }).click();
+  await dialog.getByRole("button", { name: "Reverse order" }).click();
+  assert.equal(await input.inputValue(), "#83e6cc #4473bd #10244d");
+  await dialog.getByRole("button", { name: "Use effect default" }).click();
+  assert.equal(await input.inputValue(), "#ff0000 #0000ff");
+  await input.fill("dca, #12e");
+  await dialog.locator("summary").click();
+  const name = dialog.getByLabel("Palette name");
+  await name.fill("My dusk");
+  await name.press("Enter");
+  assert.match(await dialog.getByRole("status").textContent(), /Saved My dusk/);
+  const shared = await page.evaluate(async () => {
+    const { PALETTE_KEY, cleanPalettes } = await import("/js/studio-document.js");
+    return cleanPalettes(JSON.parse(localStorage.getItem(PALETTE_KEY)));
+  });
+  assert.deepEqual(shared, [{ name: "My dusk", colors: ["#ddccaa", "#1122ee"] }]);
+  assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+  await page.keyboard.press("Escape");
+  assert.equal(writes.length, 0);
+  await opener.press("Enter");
+  await dialog.getByRole("button", { name: "My dusk" }).click();
+  await apply.press("Enter");
+  await dialog.waitFor({ state: "hidden" });
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].params, { colors: shared[0].colors, speed: 20 });
+  assert.equal(writes[0].expected_revision, 4);
+  assert.equal(writes[0].expected_effect, "gradient");
+  assert.ok(await opener.evaluate(el => document.activeElement === el));
+});
+
+test("Lighting colour tools remember picks and preserve zone scope through conflict and retry", async t => {
+  const writes = [];
+  const page = await colourEditorPage(t, async (route, url) => {
+    if (route.request().method() !== "POST") return false;
+    const body = route.request().postDataJSON(); writes.push([url.pathname, body]);
+    if (writes.length === 1) await route.fulfill({ status: 409, json: { error: "Zone changed" } });
+    else await route.fulfill({ json: { previous_override: body.expected_override,
+      config: { name: "Front strip", enabled: true, layout: { shape: "strip", x: .4, y: .5, angle: 0, length: .2 }, override: body.override } } });
+    return true;
+  });
+  await page.locator("#zone-pick").selectOption("hub/front");
+  const opener = page.getByRole("button", { name: "Edit colour" });
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Edit colour" }), input = dialog.getByLabel("Hex colour");
+  await input.fill("83f");
+  await dialog.getByRole("button", { name: "Apply colour" }).click();
+  await dialog.getByText("Zone changed", { exact: true }).waitFor();
+  assert.equal(await input.inputValue(), "83f");
+  await dialog.getByRole("button", { name: "Apply colour" }).click();
+  await dialog.waitFor({ state: "hidden" });
+  assert.deepEqual(writes.map(([url]) => url), ["/api/zones/hub%2Ffront", "/api/zones/hub%2Ffront"]);
+  assert.deepEqual(writes[1][1], { override: { effect: "solid", params: { color: "#8833ff" } },
+    expected_override: { effect: "solid", params: { color: "#123456" } } });
+  await opener.click();
+  await dialog.getByRole("button", { name: "Use effect default" }).click();
+  await dialog.getByRole("button", { name: "Use #8833ff" }).click();
+  assert.equal(await input.inputValue(), "#8833ff");
+  await page.evaluate(async () => { (await import("/js/core.js")).S.zones.zones[0].device.online = false; });
+  await input.fill("fed");
+  await dialog.getByRole("button", { name: "Apply colour" }).click();
+  await dialog.getByText("This zone is no longer available.").waitFor();
+  assert.equal(writes.length, 2);
+});
+
+test("Lighting keeps an in-flight palette draft through Escape, a failed write and renderer startup", async t => {
+  const writes = [], firstWrite = Promise.withResolvers(), failFirst = Promise.withResolvers();
+  const poll = Promise.withResolvers(), ready = Promise.withResolvers();
+  const page = await colourEditorPage(t, async (route, url) => {
+    if (url.pathname === "/api/scene") {
+      const body = route.request().postDataJSON();
+      writes.push(body);
+      if (writes.length === 1) {
+        firstWrite.resolve();
+        await failFirst.promise;
+        await route.fulfill({ status: 503, json: { error: "Fixture save failed" } });
+      } else {
+        await route.fulfill({ json: { scene: { effect: "gradient", params: body.params, brightness: 60 },
+          scene_status: { desired_revision: 5, session: "fixture", status: "pending" } } });
+      }
+      return true;
+    }
+    if (url.pathname !== "/api/state") return false;
+    poll.resolve();
+    await ready.promise;
+    await route.fulfill({ json: { scene_status: { desired_revision: 5, session: "fixture", status: "ready" } } });
+    return true;
+  });
+  const opener = page.getByRole("button", { name: "Edit palette" });
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Edit palette" });
+  const hex = dialog.getByLabel("Hex colours");
+  await hex.fill("abc 123");
+  await dialog.getByRole("button", { name: "Apply palette" }).click();
+  await firstWrite.promise;
+  await page.keyboard.press("Escape");
+  assert.ok(await dialog.isVisible());
+  failFirst.resolve();
+  await dialog.getByText("Fixture save failed").waitFor();
+  assert.equal(await hex.inputValue(), "abc 123");
+  await dialog.getByRole("button", { name: "Apply palette" }).press("Enter");
+  await poll.promise;
+  await page.keyboard.press("Escape");
+  assert.ok(await dialog.isVisible());
+  assert.ok(await dialog.getByRole("button", { name: "Applying…" }).isDisabled());
+  ready.resolve();
+  await dialog.waitFor({ state: "hidden" });
+  assert.equal(writes.length, 2);
+  assert.deepEqual(writes[0].params, writes[1].params);
+  await opener.click();
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden" });
+});
+
+test("a replaced colour sheet reports a late error and can retry its original draft", async t => {
+  const firstWrite = Promise.withResolvers(), failFirst = Promise.withResolvers(), writes = [];
+  const page = await colourEditorPage(t, async (route, url) => {
+    if (url.pathname !== "/api/scene") return false;
+    const body = route.request().postDataJSON();
+    writes.push(body);
+    if (writes.length === 1) {
+      firstWrite.resolve();
+      await failFirst.promise;
+      await route.fulfill({ status: 503, json: { error: "Palette save failed" } });
+    } else await route.fulfill({ json: { scene: { effect: "gradient", params: body.params, brightness: 60 },
+      scene_status: { desired_revision: 5, session: "fixture", status: "ready" } } });
+    return true;
+  });
+  await page.getByRole("button", { name: "Edit palette" }).click();
+  await page.getByLabel("Hex colours").fill("#abc #fed");
+  await page.getByRole("button", { name: "Apply palette" }).click();
+  await firstWrite.promise;
+  await page.evaluate(async () => (await import("/js/help.js")).openShortcuts());
+  const replacement = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await replacement.waitFor();
+  await page.keyboard.press("Escape");
+  await replacement.waitFor({ state: "hidden" });
+  failFirst.resolve();
+  const toast = page.locator("#toast");
+  await toast.getByText(/Palette save failed/).waitFor();
+  await toast.getByRole("button", { name: "Retry" }).click();
+  await toast.getByText("Palette applied").waitFor();
+  assert.equal(writes.length, 2);
+  assert.deepEqual(writes[1].params, writes[0].params);
 });

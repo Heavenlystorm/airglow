@@ -19,6 +19,20 @@ export const LAYER_TEMPLATES = [
     layers: [
       { id: "deep", type: "gradient", palette: true, params: { colors: ["#001a3a", "#0060c8", "#00b4ff"], speed: 18, angle: 90 } },
       { id: "crests", type: "wave", opacity: 55, blend: "add", params: { color: "#d8f4ff", speed: 30, width: 60, sharpness: 70, angle: 10 } }] },
+  { id: "lantern-walk", name: "Lantern Walk", description: "A gold lantern travels across the rig, casting an apricot glow over twilight plum.",
+    master: { palette: ["#2e193e", "#70436e", "#47274f"] }, expose: { palette: "Twilight colours", speed: "Walking pace" },
+    layers: [
+      { id: "twilight", type: "gradient", palette: true, params: { angle: 104, speed: 8, scale: 84 } },
+      { id: "halo", type: "scanner", blend: "screen", opacity: 86, params: { color: "#f58748", angle: 24, speed: 23, width: 48, bounce: true } },
+      { id: "wick", type: "scanner", blend: "screen", expose: { color: "Lantern colour", width: "Lantern width" },
+        params: { color: "#ffca66", angle: 24, speed: 23, width: 17, bounce: true } }] },
+  { id: "rain-glass", name: "Rain Glass", description: "Fine, slanting lines of rain slip across dark teal glass.",
+    master: { palette: ["#102a38", "#265454", "#283b4c"] }, expose: { palette: "Glass colours", speed: "Rainfall speed" },
+    layers: [
+      { id: "glass", type: "plasma", palette: true, params: { speed: 10, scale: 84 } },
+      { id: "mist", type: "wave", blend: "screen", opacity: 32, params: { color: "#8fbac9", angle: 27, speed: 34, width: 40, sharpness: 65 } },
+      { id: "rain", type: "wave", blend: "screen", opacity: 85, expose: { width: "Streak spacing", angle: "Rain direction" },
+        params: { color: "#c8f3f0", angle: 22, speed: 42, width: 15, sharpness: 90 } }] },
   { id: "police", name: "Lights and sirens", description: "Red and blue bars chasing each other.",
     master: { palette: ["#ff1040", "#2f5bff"] },
     layers: [

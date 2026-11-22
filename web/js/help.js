@@ -4,7 +4,8 @@ import { openSheet } from "./sheet.js";
 
 const ROWS = [
   [`<kbd>Ctrl</kbd> + <kbd>1</kbd>…<kbd>7</kbd>`, "Switch between the seven sections"],
-  [`<kbd>Ctrl</kbd> + <kbd>K</kbd>`, "Search and switch effects, profiles, workspaces or sections"],
+  [`<kbd>Ctrl</kbd> + <kbd>K</kbd>`, "Search and switch effects, profiles or workspaces, or find a zone or setting"],
+  [`<kbd>PgUp</kbd> / <kbd>PgDn</kbd>`, "Move one page through Quick switch results"],
   [`<kbd>Ctrl</kbd> + <kbd>S</kbd>`, "Save the effect you are editing in the Studio"],
   [`<kbd>?</kbd> or <kbd>F1</kbd>`, "Open this list"],
   [`<kbd>Esc</kbd>`, "Close a dialog, or leave Arrange and Customize"],

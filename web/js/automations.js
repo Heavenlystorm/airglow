@@ -1,9 +1,28 @@
 // Automations screen: rules as plain sentences, a builder, and editable starter rules.
 
-import { $, $$, S, curveLabel, emit, esc, fail, get, on, post, setHTML, toast, unitF } from "./core.js";
+import { $, S, curveLabel, emit, esc, fail, get, on, post, setHTML, toast, unitF } from "./core.js";
 import { closeSheet, openSheet } from "./sheet.js";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAY_GROUPS = { "Every day": [0, 1, 2, 3, 4, 5, 6], Weekdays: [0, 1, 2, 3, 4], Weekends: [5, 6] };
+
+function scheduleError(w) {
+  if (!w.start || !w.end) return "Choose a start and end time.";
+  if (w.start === w.end) return "Choose different start and end times.";
+  if (!w.days?.length) return "Choose at least one starting day.";
+  return "";
+}
+
+function scheduleDetail(w) {
+  const error = scheduleError(w);
+  if (error) return error;
+  const minutes = value => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
+  const difference = minutes(w.end) - minutes(w.start);
+  const length = (difference + 1440) % 1440;
+  const hours = Math.floor(length / 60), remainder = length % 60;
+  const duration = [hours ? `${hours}h` : "", remainder ? `${remainder}m` : ""].filter(Boolean).join(" ");
+  return difference < 0 ? `Runs for ${duration}, ending at ${w.end} the following day.` : `Runs for ${duration} on each selected day.`;
+}
 
 function daysText(days) {
   if (!days || days.length === 7) return "";
@@ -14,7 +33,7 @@ function daysText(days) {
 }
 
 const tempIn = (c) => (unitF() ? Math.round(c * 9 / 5 + 32) : c);      // rules keep whole °C; the box shows your unit
-const tempOut = (v) => Math.min(100, Math.max(30, Math.round(unitF() ? (v - 32) * 5 / 9 : v)));
+const tempOut = (v) => Math.round(unitF() ? (v - 32) * 5 / 9 : v);
 const tempTxt = (c) => `${tempIn(c)}°${unitF() ? "F" : "C"}`;
 
 // names: extra profile names by id (a shared profile's automations call it "self")
@@ -111,22 +130,43 @@ export function renderAutomations() {
   const paused = !!o.paused_until;
   const empty = $("#rules-empty");
   if (empty) empty.hidden = rules.length > 0;
-  setHTML($("#rules"), rules.map((r, i) => {
+  const query = $("#rule-search").value.trim().toLowerCase();
+  const status = $("#rule-status").value;
+  const filtered = !!query || status !== "all";
+  $("#rule-filters").hidden = !rules.length && !filtered;
+  $("#rule-clear").hidden = !filtered;
+  let matches = 0;
+  const list = $("#rules");
+  const focused = document.activeElement;
+  const focusId = list.contains(focused) ? focused.id : "";
+  setHTML(list, rules.map((r, i) => {
     const isActive = active.has(r.id) && r.enabled;
+    if ((status === "enabled" && !r.enabled) || (status === "disabled" && r.enabled) ||
+        (status === "active" && (!isActive || paused)) || (query && !sentence(r, false).toLowerCase().includes(query))) return "";
+    matches++;
     const lights = r.id === o.lighting, fans = r.id === o.fans;
     const winning = lights || fans;
     const control = lights && fans ? "In control of lights and fans now" : lights ? "In control of the lights now" : fans ? "In control of the fans now" : "";
     const state = !r.enabled ? "Switched off" : paused ? "Paused" : isActive ? (winning ? control : "Applies now, but a rule above it wins") : "Waiting";
-    return `<li class="rule${isActive && winning ? " active" : ""}${r.enabled ? "" : " disabled"}" data-id="${esc(r.id)}">
+    const id = esc(r.id);
+    return `<li class="rule${isActive && winning ? " active" : ""}${r.enabled ? "" : " disabled"}" data-id="${id}" value="${i + 1}">
       <div><div class="sentence">${sentence(r)}</div><div class="state">${state}</div></div>
       <div class="tools">
-        <label class="switch" title="${r.enabled ? "Switch off" : "Switch on"}"><input type="checkbox" data-toggle${r.enabled ? " checked" : ""} aria-label="Automation on"><span></span></label>
-        <button class="icon-btn" data-up ${i === 0 ? "disabled" : ""} title="Move up (higher priority)"><svg><use href="#i-up"/></svg></button>
-        <button class="icon-btn" data-down ${i === rules.length - 1 ? "disabled" : ""} title="Move down"><svg><use href="#i-down"/></svg></button>
-        <button class="btn quiet" data-edit>Edit</button>
-        <button class="icon-btn" data-del title="Delete"><svg><use href="#i-trash"/></svg></button>
+        <label class="switch" title="${r.enabled ? "Switch off" : "Switch on"}"><input type="checkbox" id="enable-${id}" data-toggle${r.enabled ? " checked" : ""} aria-label="Automation on"><span></span></label>
+        <button class="icon-btn" id="up-${id}" data-up ${filtered || i === 0 ? "disabled" : ""} aria-label="Move up (higher priority)" title="${filtered ? "Clear filters to reorder" : "Move up (higher priority)"}"><svg><use href="#i-up"/></svg></button>
+        <button class="icon-btn" id="down-${id}" data-down ${filtered || i === rules.length - 1 ? "disabled" : ""} aria-label="Move down (lower priority)" title="${filtered ? "Clear filters to reorder" : "Move down (lower priority)"}"><svg><use href="#i-down"/></svg></button>
+        <button class="btn quiet" id="edit-${id}" data-edit>Edit</button>
+        <button class="icon-btn" id="copy-${id}" data-copy title="Duplicate automation" aria-label="Duplicate automation"><svg aria-hidden="true"><use href="#i-copy"/></svg></button>
+        <button class="icon-btn" id="delete-${id}" data-del title="Delete"><svg><use href="#i-trash"/></svg></button>
       </div></li>`;
   }).join(""));
+  if (focusId && document.activeElement === document.body) {
+    const row = list.querySelector(`[data-id="${CSS.escape(focused.closest("[data-id]").dataset.id)}"]`);
+    const target = row?.querySelector(`#${CSS.escape(focusId)}:enabled`) || row?.querySelector("[data-edit]");
+    (target || (filtered ? $("#rule-search") : $("#auto-add"))).focus({ preventScroll: true });
+  }
+  const count = filtered ? (matches ? `${matches} of ${rules.length} ${rules.length === 1 ? "rule" : "rules"}` : "No matching rules") : "";
+  if ($("#rule-count").textContent !== count) $("#rule-count").textContent = count;
   const until = paused ? new Date(o.paused_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
   $("#auto-pause").textContent = `Resume automations (paused until ${until})`;
   $("#auto-pause").hidden = !rules.length || !paused;
@@ -139,32 +179,46 @@ export function renderAutomations() {
 }
 
 // ------------------------------------------------------------ builder
-function openBuilder(rule, isNew, title = "") {
+function triggerDraft(type) {
+  const defaults = {
+    time: { start: "23:00", end: "07:00", days: [...DAY_GROUPS["Every day"]] },
+    idle: { minutes: 10 }, temp_above: { temp: 80, source: "max" },
+  };
+  return { type, ...defaults[type] };
+}
+
+function openBuilder(rule, isNew, title = "", copyFrom = null) {
   const r = structuredClone(rule);
+  r.when = { ...triggerDraft(r.when.type), ...r.when };
   let apps = [], activeForm, saving = false;
   const curves = Object.keys(S.curves.curves);
   const previewText = () => {
     if (["app_running", "app_focused"].includes(r.when.type) && !r.when.exe)
       return "Type the program's file name, or pick one that's open right now, to finish this rule.";
+    if (r.when.type === "time" && scheduleError(r.when)) return "Choose the schedule for this automation.";
+    if (r.then.type === "preset" && !S.presets.some(p => p.id === r.then.preset))
+      return "Choose a saved profile or a different action.";
     try { return sentence(r); } catch { return "Fill in the details to see the rule."; }
   };
-  const render = () => {
+  const render = (keepNumber = null) => {
     const active = document.activeElement;
     const focusId = active?.closest?.("#rb-form") && active.id ? active.id : null;
     const w = r.when, t = r.then;
     const whenFields = {
       app_running: () => appField(w), app_focused: () => appField(w),
-      idle: () => `<span>for</span><input class="text" type="number" min="1" max="240" data-w="minutes" aria-label="Idle minutes" value="${w.minutes ?? 10}" style="width:80px"><span>minutes</span>`,
-      time: () => `<input class="text" type="time" data-w="start" aria-label="Start time" value="${w.start ?? "23:00"}" style="width:auto"><span>to</span><input class="text" type="time" data-w="end" aria-label="End time" value="${w.end ?? "07:00"}" style="width:auto">
-        <div class="days" role="group" aria-label="Days">${DAYS.map((d, i) => `<button type="button" data-day="${i}" aria-pressed="${(w.days ?? [0, 1, 2, 3, 4, 5, 6]).includes(i)}">${d}</button>`).join("")}</div>`,
+      idle: () => `<span>for</span><input class="text" type="number" required min="1" max="240" data-w="minutes" aria-label="Idle minutes" value="${w.minutes}" style="width:80px"><span>minutes</span>`,
+      time: () => `<input class="text" type="time" data-w="start" aria-label="Start time" value="${w.start}" required><span>to</span><input class="text" type="time" data-w="end" aria-label="End time" value="${w.end}" required>
+        <div class="rb-schedule"><div class="rb-day-groups" role="group" aria-label="Day shortcuts">${Object.keys(DAY_GROUPS).map(label => `<button type="button" class="text-link" data-days="${label}">${label}</button>`).join("")}</div>
+        <div class="days" role="group" aria-label="Starting days">${DAYS.map((d, i) => `<button type="button" data-day="${i}" aria-pressed="${w.days.includes(i)}">${d}</button>`).join("")}</div>
+        <p class="hint" id="rb-schedule-detail" role="status">${scheduleDetail(w)}</p></div>`,
       locked: () => "",
       temp_above: () => `<select class="select" data-w="source" aria-label="Temperature source" style="width:auto">${[["max", "Hotter part"], ["cpu", "Processor"], ["gpu", "Graphics card"], ["liquid", "Coolant"]].map(([v, l]) => `<option value="${v}"${(w.source ?? "max") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
-        <span>above</span><input class="text" type="number" min="${tempIn(30)}" max="${tempIn(100)}" data-w="temp" aria-label="Temperature" value="${tempIn(w.temp ?? 80)}" style="width:80px"><span>°${unitF() ? "F" : "C"}</span>`,
+        <span>above</span><input class="text" type="number" required min="${tempIn(30)}" max="${tempIn(100)}" data-w="temp" aria-label="Temperature" value="${tempIn(w.temp ?? 80)}" style="width:80px"><span>°${unitF() ? "F" : "C"}</span>`,
     }[w.type]();
     const thenFields = {
-      preset: () => `<select class="select" data-t="preset" aria-label="Profile" required style="width:auto">${S.presets.length ? S.presets.map((p) => `<option value="${esc(p.id)}"${p.id === t.preset ? " selected" : ""}>${esc(p.name)}</option>`).join("") : '<option value="">No saved profiles</option>'}</select>`,
+      preset: () => `<select class="select" data-t="preset" aria-label="Profile" required style="width:auto">${S.presets.some(p => p.id === t.preset) ? "" : `<option value="">${S.presets.length ? "Choose a profile" : "No saved profiles"}</option>`}${S.presets.map((p) => `<option value="${esc(p.id)}"${p.id === t.preset ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select>`,
       lights_off: () => "",
-      dim: () => `<span>to</span><input class="text" type="number" min="0" max="100" data-t="brightness" aria-label="Brightness" value="${t.brightness ?? 20}" style="width:80px"><span>%</span>`,
+      dim: () => `<span>to</span><input class="text" type="number" required min="0" max="100" data-t="brightness" aria-label="Brightness" value="${t.brightness ?? 20}" style="width:80px"><span>%</span>`,
       fan_curve: () => `<select class="select" data-t="curve" aria-label="Fan curve" style="width:auto">${curves.map((c) => `<option value="${c}"${c === t.curve ? " selected" : ""}>${curveLabel(c)}</option>`).join("")}</select>`,
     }[t.type]();
     openSheet(`<form id="rb-form"><h2>${esc(title || (isNew ? "New automation" : "Edit automation"))}</h2>
@@ -177,25 +231,64 @@ function openBuilder(rule, isNew, title = "") {
         <p class="hint">When the condition stops being true, your own lighting and fan settings come back by themselves.</p>
       </div>
       <p class="err" role="alert" hidden></p>
-      <div class="actions"><span class="spacer"></span><button type="button" class="btn quiet" data-close>Cancel</button><button class="btn primary" id="rb-save">${isNew ? "Add automation" : "Save automation"}</button></div></form>`);
+      <div class="actions"><label class="rb-enabled"><input type="checkbox" id="rb-enabled"${r.enabled ? " checked" : ""}>Enable rule</label><span class="spacer"></span><button type="button" class="btn quiet" data-close>Cancel</button><button class="btn primary" id="rb-save">${isNew ? "Add automation" : "Save automation"}</button></div></form>`);
     const form = activeForm = $("#rb-form");
-    const updatePreview = () => setHTML(form.querySelector("#rb-preview"), previewText());
-    form.querySelector("#rb-when").addEventListener("change", (e) => { r.when = { type: e.target.value }; render(); });
-    form.querySelector("#rb-then").addEventListener("change", (e) => { r.then = { type: e.target.value, ...(e.target.value === "preset" ? { preset: S.presets[0]?.id } : e.target.value === "fan_curve" ? { curve: "silent" } : {}) }; render(); });
-    form.querySelectorAll("[data-w]").forEach((el) => el.addEventListener(el.tagName === "INPUT" ? "input" : "change", () => {
-      const v = el.type === "number" ? +el.value : el.value;
-      r.when[el.dataset.w] = el.dataset.w === "temp" ? tempOut(v) : v; updatePreview();
-    }));
-    form.querySelectorAll("[data-t]").forEach((el) => el.addEventListener(el.tagName === "INPUT" ? "input" : "change", () => { r.then[el.dataset.t] = el.type === "number" ? +el.value : el.value; updatePreview(); }));
+    // A number input can display a partial number even when .value is empty. Keep the actual input
+    // when the other half of the rule changes, including its native validity and uncommitted text.
+    if (keepNumber) {
+      const field = keepNumber.hasAttribute("data-w") ? "data-w" : "data-t";
+      form.querySelector(`input[type="number"][${field}]`).replaceWith(keepNumber);
+    }
+    const updatePreview = () => {
+      const detail = form.querySelector("#rb-schedule-detail");
+      if (detail) {
+        detail.textContent = scheduleDetail(r.when);
+        form.querySelector('[data-w="end"]').setCustomValidity(scheduleError(r.when));
+      }
+      const number = form.querySelector('input[type="number"]:invalid');
+      setHTML(form.querySelector("#rb-preview"), number ? `Choose ${esc(number.getAttribute("aria-label").toLowerCase())} between ${number.min} and ${number.max}.` : previewText());
+    };
+    form.querySelector("#rb-enabled").addEventListener("change", e => { r.enabled = e.target.checked; });
+    form.querySelector("#rb-when").addEventListener("change", (e) => {
+      r.when = triggerDraft(e.target.value);
+      render(form.querySelector('input[type="number"][data-t]'));
+    });
+    form.querySelector("#rb-then").addEventListener("change", (e) => {
+      const type = e.target.value;
+      const defaults = { preset: { preset: S.presets[0]?.id }, fan_curve: { curve: curves.includes("silent") ? "silent" : curves[0] }, dim: { brightness: 20 } };
+      r.then = { type, ...defaults[type] };
+      render(form.querySelector('input[type="number"][data-w]'));
+    });
+    const updateField = (el) => {
+      if (el.type !== "number" || el.validity.valid) {
+        const value = el.type === "number" ? el.valueAsNumber : el.value;
+        if (el.hasAttribute("data-w")) r.when[el.dataset.w] = el.dataset.w === "temp" ? tempOut(value) : value;
+        else r.then[el.dataset.t] = value;
+      }
+      updatePreview();
+    };
+    form.addEventListener("input", e => {
+      if (e.target.matches("input[data-w], input[data-t]")) updateField(e.target);
+    });
     form.addEventListener("change", (e) => {
+      if (e.target.matches("select[data-w], select[data-t]")) updateField(e.target);
       if (!e.target.matches("[data-app-pick]")) return;
       if (e.target.value) { r.when.exe = e.target.value; form.querySelector('[data-w="exe"]').value = e.target.value; updatePreview(); }
     });
-    form.querySelectorAll("[data-day]").forEach((b) => b.addEventListener("click", () => {
-      const d = +b.dataset.day, days = new Set(r.when.days ?? [0, 1, 2, 3, 4, 5, 6]);
-      days.has(d) ? days.delete(d) : days.add(d);
-      r.when.days = [...days].sort(); b.setAttribute("aria-pressed", String(days.has(d))); updatePreview();
-    }));
+    form.addEventListener("click", e => {
+      const day = e.target.closest("[data-day]"), group = e.target.closest("[data-days]");
+      if (!day && !group) return;
+      const days = new Set(group ? DAY_GROUPS[group.dataset.days] : r.when.days);
+      if (day) {
+        const index = Number(day.dataset.day);
+        if (days.has(index)) days.delete(index); else days.add(index);
+      }
+      r.when.days = [...days].sort();
+      for (const button of form.querySelectorAll("[data-day]"))
+        button.setAttribute("aria-pressed", String(days.has(Number(button.dataset.day))));
+      updatePreview();
+    });
+    updatePreview();
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (saving) return;
@@ -206,13 +299,17 @@ function openBuilder(rule, isNew, title = "") {
       const sheet = $("#sheet");
       const preventClose = event => event.preventDefault();
       sheet.addEventListener("cancel", preventClose);
-      if (r.when.type === "time") { r.when.start ??= "23:00"; r.when.end ??= "07:00"; }
-      if (r.when.type === "idle") r.when.minutes ??= 10;
-      if (r.when.type === "temp_above") { r.when.temp ??= 80; r.when.source ??= "max"; }
-      if (r.then.type === "dim") r.then.brightness ??= 20;
-      const next = isNew ? [...currentRules(), r] : currentRules().map((x) => (x.id === r.id ? r : x));
       let saved = false;
       try {
+        const next = [...currentRules()];
+        if (isNew) {
+          const sourceIndex = copyFrom ? next.findIndex(x => x.id === copyFrom) : -1;
+          next.splice(sourceIndex < 0 ? next.length : sourceIndex + 1, 0, r);
+        } else {
+          const index = next.findIndex(x => x.id === r.id);
+          if (index < 0) throw new Error("This automation has been removed. Close the editor to see your current rules.");
+          next[index] = r;
+        }
         await writeRules(next);
         saved = true;
         if (activeForm === form && form.isConnected) closeSheet();
@@ -244,14 +341,27 @@ function openBuilder(rule, isNew, title = "") {
 
 // ------------------------------------------------------------ events
 export function initAutomations() {
+  $("#rule-search").addEventListener("input", renderAutomations);
+  $("#rule-status").addEventListener("change", renderAutomations);
+  $("#rule-clear").addEventListener("click", () => {
+    $("#rule-search").value = "";
+    $("#rule-status").value = "all";
+    renderAutomations();
+    ($("#rule-filters").hidden ? $("#auto-add") : $("#rule-search")).focus();
+  });
   $("#rules").addEventListener("click", async (e) => {
     const li = e.target.closest("[data-id]");
     if (!li) return;
     const i = currentRules().findIndex((r) => r.id === li.dataset.id);
+    if (i < 0) return;
     const rules = structuredClone(currentRules());
     if (e.target.closest("[data-up]") && i > 0) { [rules[i - 1], rules[i]] = [rules[i], rules[i - 1]]; saveRules(rules); }
     else if (e.target.closest("[data-down]") && i < rules.length - 1) { [rules[i + 1], rules[i]] = [rules[i], rules[i + 1]]; saveRules(rules); }
     else if (e.target.closest("[data-edit]")) openBuilder(rules[i], false);
+    else if (e.target.closest("[data-copy]")) {
+      const copy = { ...rules[i], id: newId(), enabled: false };
+      openBuilder(copy, true, "Duplicate automation", rules[i].id);
+    }
     else if (e.target.closest("[data-del]")) {
       const index = i;
       const removed = rules.splice(i, 1)[0];

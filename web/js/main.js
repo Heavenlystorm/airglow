@@ -75,10 +75,15 @@ async function route() {
     await m.loadSettings();
     if (arg && seq === routeSeq) m.focusSettingsSection(arg);
   }
-  else if (view === "lighting") { if (arg) m.showZone(decodeURIComponent(arg)); m.renderLighting(); }
+  else if (view === "lighting") {
+    if (arg) m.showZone(decodeURIComponent(arg));
+    m.renderLighting();
+    if (arg) $("#zone-pick")?.focus({ preventScroll: true });
+  }
   else if (view === "studio") await m.renderStudio(arg);
 }
 window.addEventListener("hashchange", () => { route().catch(fail); });
+on("route:revisit", () => { route().catch(fail); });
 on("studio:open", (req) => { loadView("studio").then((m) => m.openStudio(req)).catch(fail); });
 $("#nav-select")?.addEventListener("change", (e) => { location.hash = "#" + e.target.value; });
 document.addEventListener("click", (e) => {

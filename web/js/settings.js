@@ -10,8 +10,7 @@ import { DEFAULT_APPEARANCE, applyAppearance, normalizeAppearance, createAppeara
   serializeWrites, parseLookRecipe, encodeLookRecipe } from "./appearance.js";
 import { exportRig, openRigImport } from "./rig-migration.js";
 
-const SECTIONS = [["general", "General"], ["lighting", "Lighting"], ["fans", "Fans"], ["helpers", "Helper programs"],
-  ["sensors", "Sensors"], ["devices", "More devices"], ["migration", "Rig migration"], ["about", "About"]];
+import { SETTINGS_SECTIONS as SECTIONS } from "./settings-sections.js";
 
 const row = (label, help, ctl) => `<div class="set-row"><div><div class="label">${label}</div>${help ? `<p>${help}</p>` : ""}</div><div class="ctl">${ctl}</div></div>`;
 const sw = (id, on, label) => `<label class="switch"><input type="checkbox" id="${id}"${on ? " checked" : ""}${label ? ` aria-label="${esc(label)}"` : ""}><span></span></label>`;

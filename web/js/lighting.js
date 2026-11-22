@@ -4,7 +4,7 @@ import { $, $$, QUICK, S, coalesce, curveLabel, effectName, emit, esc, fail, fmt
 import { applyLightingScene, undoLightingScene } from "./scene-commands.js";
 import { applyProfile, profileToast } from "./profile-undo.js";
 import { select } from "./stage.js";
-import { openSheet, closeSheet } from "./sheet.js";
+import { openColourEditor, rememberColours } from "./lighting-colours.js";
 import { editProfilesSheet, openGallery, saveProfileSheet } from "./profiles.js";
 import { favoriteButton } from "./quick-preferences.js";
 
@@ -30,16 +30,17 @@ const stepNum = (v, spec) => {
 export function fieldHTML(spec, value, prefix, opts = {}) {
   const id = esc(`${prefix}-${spec.id}`);
   const param = esc(spec.id);
+  const colours = opts.colours ? `<button type="button" id="${id}-edit" data-edit-colour="${param}" class="text-link" aria-haspopup="dialog">${spec.type === "colors" ? "Edit palette" : "Edit colour"}</button>` : "";
   if (spec.type === "color") {
     value = /^#[0-9a-f]{6}$/i.test(value) ? value : "#ffffff";
-    return `<div class="field" data-param="${param}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
+    return `<div class="field" data-param="${param}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}${colours}</div>
       <div class="color-row"><label class="swatch" style="background:${esc(value)}"><input type="color" id="${id}" value="${esc(value)}" aria-label="${esc(spec.label)}"></label>
       <div class="quick">${QUICK.map((c) => `<button type="button" data-quick="${c}" style="background:${c}" aria-label="${c}" aria-pressed="${c === value}"></button>`).join("")}</div></div></div>`;
   }
   if (spec.type === "colors") {
     value = (Array.isArray(value) ? value : []).map(c => /^#[0-9a-f]{6}$/i.test(c) ? c : "#ffffff");
     const sw = value.map((c, i) => `<label class="swatch" style="background:${esc(c)}"><input type="color" data-stop="${i}" value="${esc(c)}" aria-label="Colour ${i + 1}"></label>`).join("");
-    return `<div class="field" data-param="${param}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}</div>
+    return `<div class="field" data-param="${param}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}${colours}</div>
       <div class="stops">${sw}
       ${value.length < spec.max ? `<button type="button" class="icon-btn" data-add-stop title="Add a colour"><svg><use href="#i-plus"/></svg></button>` : ""}
       ${value.length > spec.min ? `<button type="button" class="icon-btn" data-remove-stop title="Remove the last colour"><svg><use href="#i-trash"/></svg></button>` : ""}</div></div>`;
@@ -177,10 +178,10 @@ function paintZoneUndo(key) {
   notice.querySelector("button").disabled = zoneBusy.has(key);
 }
 
-async function writeZoneOverride(key, override, revision, chosenEffect = null, undo = null) {
+async function writeZoneOverride(key, override, revision, chosenEffect = null, undo = null, expected = undo?.after) {
   try {
     if (!zoneFor(key)?.device.online || revision !== zoneEdits.get(key)) return;
-    const patch = undo ? { override, expected_override: undo.after } : { override };
+    const patch = expected !== undefined ? { override, expected_override: expected } : { override };
     const result = await post(`/api/zones/${encodeURIComponent(key)}`, patch);
     const current = zoneFor(key);
     if (current) current.config = result.config;
@@ -189,6 +190,7 @@ async function writeZoneOverride(key, override, revision, chosenEffect = null, u
       zoneUndos.set(key, { before: result.previous_override, after: result.config.override });
     }
     if (chosenEffect && result.config.override?.effect === chosenEffect) emit("effect:applied", chosenEffect);
+    return result;
   } finally {
     if (revision === zoneEdits.get(key)) { zoneBusy.delete(key); paintZoneUndo(key); }
   }
@@ -277,7 +279,7 @@ function renderSceneInspector() {
     <div class="ins-block"><div class="ins-title"><h2>${esc(eff.name)}</h2></div>
       <p class="ins-desc">${esc(eff.description)}${eff.needs.includes("audio") ? " Plays from whatever your speakers or headphones are playing." : ""}${eff.needs.includes("screen") ? " Uses your main display. Nothing is recorded or saved." : ""}</p>
       ${studioButton(eff)}
-      <div class="ins-block" id="scene-fields">${eff.params.map((p) => fieldHTML(p, scene.params[p.id], "sp")).join("")}</div>
+      <div class="ins-block" id="scene-fields">${eff.params.map((p) => fieldHTML(p, scene.params[p.id], "sp", { colours: true })).join("")}</div>
       <div class="field"><label class="lab" for="bri"><span>Brightness</span><output id="bri-out">${scene.brightness}%</output></label>
         <input type="range" id="bri" min="0" max="100" step="1" value="${scene.brightness}"></div>
     </div>`;
@@ -296,7 +298,43 @@ function renderSceneInspector() {
   });
 }
 
+function editColour(id) {
+  const key = selectedZone;
+  const target = () => key ? zoneFor(key)?.config.override : S.state.scene;
+  const initial = target();
+  const effect = S.effects.find(e => e.id === initial?.effect);
+  const spec = effect?.params.find(p => p.id === id);
+  if (!spec) return;
+  const value = structuredClone(initial.params[id] ?? spec.default);
+  const scope = key ? zoneFor(key).config.name : "Whole rig";
+  openColourEditor(spec, value, `${scope} · ${effect.name} · ${spec.label}`, async changed => {
+    const latest = target();
+    const changedTarget = selectedZone !== key || latest?.effect !== effect.id ||
+      !sameOverride(latest.params[id] ?? spec.default, value);
+    if (changedTarget) throw new Error("The lighting changed while you were editing. Reopen the editor to use its current colours.");
+    const params = { ...latest.params, [id]: changed };
+    if (key) {
+      if (zoneBusy.has(key)) throw new Error("A zone edit is still saving. Try again in a moment.");
+      const result = await writeZoneOverride(key, { effect: effect.id, params }, nextZoneEdit(key), null, null, latest);
+      if (!result) throw new Error("This zone is no longer available.");
+    } else {
+      const status = S.state.scene_status;
+      await applyLightingScene({ params, expected_effect: effect.id, expected_revision: status?.desired_revision,
+        expected_session: status?.session }, { wait: true });
+      S.state.active_preset = null;
+    }
+    renderInspector(); renderDeck();
+  });
+}
+
+$("#inspector").addEventListener("change", (e) => {
+  if (e.target.matches("input[type=color]")) rememberColours([e.target.value]);
+});
 $("#inspector").addEventListener("click", async (e) => {
+  const pick = e.target.closest("[data-edit-colour]");
+  if (pick) return editColour(pick.dataset.editColour);
+  const quick = e.target.closest("[data-quick]");
+  if (quick) rememberColours([quick.dataset.quick]);
   if (e.target.closest("[data-zone-undo]")) {
     const key = selectedZone, undo = currentUndo(key);
     if (!undo || zoneBusy.has(key)) return;
@@ -359,7 +397,7 @@ function renderZoneInspector(key) {
     <div class="ins-block"><div class="field"><div class="lab"><span>Lighting for this zone</span></div>
       <div class="seg" role="radiogroup" id="zone-mode"><button role="radio" data-mode="follow" aria-checked="${!ov}">Main effect</button><button role="radio" data-mode="own" aria-checked="${!!ov}">Its own effect</button></div></div>
       ${ov ? `<div class="field"><label class="lab" for="zone-effect"><span>Effect</span></label><select class="select" id="zone-effect">${S.effects.map((e) => `<option value="${e.id}"${e.id === ov.effect ? " selected" : ""}>${esc(e.name)}</option>`).join("")}</select></div>
-      <div class="ins-block" id="zone-fields">${eff ? eff.params.map((p) => fieldHTML(p, ov.params[p.id], "zp")).join("")
+      <div class="ins-block" id="zone-fields">${eff ? eff.params.map((p) => fieldHTML(p, ov.params[p.id], "zp", { colours: true })).join("")
         : '<p class="hint">That effect isn\'t on this PC any more. Pick another one to give this zone its own light.</p>'}</div>` : `<p class="hint">Follows ${esc(effectName(S.state.scene.effect))} like the rest of the rig.</p>`}
     </div>`;
   const saveZone = coalesce(({ override, revision }) => writeZoneOverride(key, override, revision));

@@ -197,6 +197,69 @@ test("a tile opens its detail view by click or Enter, and a double click still o
   await focus.locator(".focus-panel").waitFor({ state: "detached" });
 });
 
+test("history inspection holds recorded samples, preserves gaps and can be copied", async (t) => {
+  const page = await pageFor(t, { width: 480, height: 640 });
+  await page.waitForFunction(() => document.querySelector('[data-id="power"] .light-canvas')?.dataset.series > 0);
+  const focus = page.locator("#light-focus");
+  // Freeze before the next fixture poll. GPU samples straddle the CPU peak without sharing its timestamp.
+  await page.evaluate(async () => {
+    const { R } = await import("/js/readings.js");
+    const now = Date.now() / 1000;
+    R.series["auto/cpu_power"] = [[now - 61, 20], [now - 8, 85], [now - 6, 40], [now - 4, 70]];
+    R.series["auto/gpu_power"] = [[now - 61, 11], [now - 10, 53], [now - 6, 55], [now - 4, 52]];
+    document.querySelector('[data-id="power"] .tile-name').click();
+    document.querySelector("#light-focus [data-hold]").click();
+  });
+  const cursor = focus.getByRole("slider", { name: "Inspect recorded sample" });
+  assert.match(await focus.locator(".focus-sample-info").textContent(), /Sample 5 of 5/);
+  assert.match(await cursor.getAttribute("aria-valuetext"), /70 W.*52 W/);
+  assert.equal(await cursor.evaluate((el) => el.style.getPropertyValue("--fill")), "100%");
+  await focus.locator(".light-canvas").evaluate(canvas => {
+    const ctx = canvas.getContext("2d"), arc = ctx.arc.bind(ctx), clear = ctx.clearRect.bind(ctx);
+    ctx.clearRect = (...args) => { canvas.dataset.markers = "0"; return clear(...args); };
+    ctx.arc = (x, y, radius, ...args) => {
+      if (radius === 3.6) canvas.dataset.markers = String(Number(canvas.dataset.markers) + 1);
+      return arc(x, y, radius, ...args);
+    };
+  });
+  await focus.locator('[data-jump="peak"]').click();
+  await page.waitForFunction(() => document.querySelector("#light-focus .light-canvas").dataset.markers === "1");
+  assert.equal(await cursor.evaluate((el) => el === document.activeElement), true);
+  assert.equal(await focus.locator(".focus-read .num").textContent(), "85");
+  assert.equal(await focus.locator('[data-tone="second"] dd').textContent(), "–");
+  await cursor.press("ArrowRight");
+  assert.match(await cursor.getAttribute("aria-valuetext"), /40 W.*55 W/);
+  await page.waitForFunction(() => document.querySelector("#light-focus .light-canvas").dataset.markers === "2");
+  await focus.locator('[data-jump="low"]').click();
+  assert.equal(await focus.locator(".focus-read .num").textContent(), "20");
+
+  // Pruning the live ring buffer must leave the held samples intact.
+  await page.evaluate(async () => {
+    const { R } = await import("/js/readings.js");
+    const { emit } = await import("/js/core.js");
+    R.series["auto/cpu_power"].splice(0);
+    emit("state");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => { throw Error("denied"); } } });
+  });
+  await focus.locator('[data-span="60"]').click();
+  assert.match(await focus.locator(".focus-sample-info").textContent(), /Sample 4 of 4/);
+  await cursor.press("Home");
+  assert.equal(await cursor.evaluate((el) => el.style.getPropertyValue("--fill")), "0%");
+  await cursor.press("ArrowRight");
+  assert.equal(await focus.locator(".focus-read .num").textContent(), "85");
+  await focus.locator("[data-copy-summary]").click();
+  const text = await focus.getByRole("textbox", { name: "Sensor summary to copy" }).inputValue();
+  assert.match(text, /3 recorded samples\nLow: 40 W at .*\nAverage: 65 W\nPeak: 85 W at .*\nSelected: 85 W at /);
+  assert.match(text, /3 recorded samples[\s\S]*Selected: – at /);
+  await page.evaluate(() => { navigator.clipboard.writeText = async (summary) => { window.copiedSummary = summary; }; });
+  await focus.locator("[data-copy-summary]").click();
+  assert.equal(await page.evaluate(() => window.copiedSummary), text);
+  await focus.getByRole("button", { name: "Resume live" }).click();
+  assert.equal(await cursor.count(), 0);
+  assert.equal(await focus.locator(".focus-now").textContent(), "now");
+  assert.ok(await focus.locator(".focus-panel").evaluate((el) => el.scrollWidth <= el.clientWidth + 1));
+});
+
 test("every graph draws on one shared beat, so the window is not presented once per canvas", async (t) => {
   const page = await pageFor(t, { reducedMotion: "no-preference" });
   await page.waitForFunction(() => document.querySelector('[data-id="cpu"] .light-canvas')?.dataset.series > 0);

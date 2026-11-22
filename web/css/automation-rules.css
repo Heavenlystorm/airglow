@@ -1,0 +1,24 @@
+.rule-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  max-width: var(--page-max);
+  margin: 0 auto 14px;
+}
+.rule-filters .text { width: min(100%, 18rem); }
+.rule-filters .select { width: auto; }
+.rule-filters .hint { margin: 0; }
+.rules .rule::before { content: attr(value); }
+.rb-enabled, .rb-day-groups { display: flex; align-items: center; gap: 8px; }
+.rb-enabled { font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.rb-enabled input { accent-color: var(--brass); }
+.rb-schedule { flex-basis: 100%; display: grid; gap: 8px; }
+.rb-schedule .days, .rb-day-groups { flex-wrap: wrap; }
+.rb-schedule .hint { margin: 0; }
+#rb-form input[type="time"] { width: auto; }
+.rule .sentence b { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .rule-filters .text { flex: 1 1 10rem; min-width: 0; }
+  #rb-form .actions { flex-wrap: wrap; }
+}

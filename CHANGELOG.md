@@ -1,6 +1,19 @@
 # Changelog
 
 ## Unreleased
+- Studio has two editable lighting templates. Lantern Walk moves a gold light and an apricot halo across plum
+  LEDs. Rain Glass sends narrow streaks of light diagonally across a dark teal background.
+- In Lighting, open **Edit colour** or **Edit palette** on the whole rig or a zone to type or paste hex colours,
+  preview a gradient, reverse its stops, or try the effect default before applying. Pick from recent colours or
+  four named palettes, and save your own palettes for both Lighting and Studio.
+- Automations can be searched and filtered by status. Filtered rules keep their original priority numbers.
+  Duplicate a rule to edit a switched-off copy beside the original, or save a new rule switched off.
+  Time rules have day-group shortcuts, a duration preview and an explicit next-day finish for overnight schedules.
+- Open a sensor tile to pause its history, inspect a timestamped sample by keyboard or touch, jump to the low or
+  peak, or copy the window's statistics. Sample counts and missing readings stay visible when comparing sensors.
+- Quick Switch finds settings by topic and lighting zones by zone or controller name. Search tolerates accents
+  and punctuation, can show only pinned favorites, and supports Page Up and Page Down. It shows the result count
+  and marks the current section and workspace.
 - The 3D lighting view clears its whole canvas on every repaint. The bottom pixel row was only partly cleared and
   could keep a faint trace of lights that had reached the edge.
 
