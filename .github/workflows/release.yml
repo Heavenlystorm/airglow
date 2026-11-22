@@ -118,6 +118,35 @@ jobs:
           git commit -m "airglow $VERSION"
           git push
 
+  published-installer:
+    needs: release
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install, open and uninstall the public download
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read the published release.' }
+          $setup = @($release.assets | Where-Object name -like '*-Setup.exe')
+          if ($setup.Count -ne 1) { throw 'Expected one published Windows installer.' }
+          gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --pattern $setup[0].name --dir published
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the published installer.' }
+          $path = Join-Path 'published' $setup[0].name
+          if (('sha256:' + (Get-FileHash -LiteralPath $path).Hash) -ne $setup[0].digest) { throw 'Published installer checksum differs.' }
+          ./tools/test-windows-package.ps1 -Scenario clean -Version $env:GITHUB_REF_NAME.Substring(1) -Setup $path
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: airglow-published-installer
+          path: output/installer-smoke
+          if-no-files-found: warn
+
   winget:
     needs: release
     if: ${{ !contains(github.ref_name, '-') }}

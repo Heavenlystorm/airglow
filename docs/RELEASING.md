@@ -15,8 +15,9 @@ tag is pushed.
    pre-releases. The WinGet and Scoop publication steps run when their respective credentials are configured.
    If the first WinGet submission is awaiting moderation, rerun only the release's `winget` job after it merges.
    This submits the existing public installer and leaves its checksum intact.
-5. Smoke-test the published Setup.exe on a PC (or VM) that has never had Airglow: install, open, check the Devices
-   tab, quit from the tray, uninstall from Apps & features.
+5. Check the release workflow’s `published-installer` job. It downloads Setup.exe from the public tag, verifies its
+   SHA-256 digest, and tests installation, native launch and uninstall on a fresh Windows VM. Use a PC with supported
+   hardware for a manual check of the Devices tab and the tray’s Quit command.
 
 `.\build.ps1` runs the source gate and builds a local candidate in `dist\releases\`. Install the build and browser
 dependencies listed in [Building from source](../README.md#building-from-source) and
