@@ -62,7 +62,8 @@ function tile() {
       if (!parts.has(selector)) parts.set(selector, {});
       return parts.get(selector);
     },
-    style: { setProperty(key, v) { this[key] = v; } },
+    dataset: {},
+    style: { setProperty(key, v) { this[key] = v; }, removeProperty(key) { delete this[key]; } },
     classList: { toggle(key, v) { this[key] = v; } },
   };
 }
@@ -166,14 +167,16 @@ test("resize geometry follows the rendered row height and spacing on a large scr
 
 test("a grow key at the narrow viewport limit preserves the saved desktop span", async () => {
   const h = await harness({ gridTemplateColumns: "318px 318px", paddingLeft: "16px", paddingRight: "16px" }, 680);
-  const tile = h.O.layout.tiles[0];
-  tile.w = 4; tile.h = 1; h.O.editing = true;
-  const el = { dataset: { id: tile.id }, closest() { return this; }, focus() {} };
+  const model = h.O.layout.tiles[0];
+  model.w = 4; model.h = 1; h.O.editing = true;
+  const el = { ...tile(), dataset: { id: model.id }, closest() { return this; }, focus() {} };
   h.onKey({ target: el, shiftKey: true, key: "ArrowRight", preventDefault() {} });
-  assert.equal(tile.w, 4);
+  assert.equal(model.w, 4);
   assert.equal(h.timers.size, 0, "a visually unchanged tile must not overwrite its saved span");
   h.onKey({ target: el, shiftKey: true, key: "ArrowLeft", preventDefault() {} });
-  assert.equal(tile.w, 1, "explicit shrinking starts from the visible two-column width");
+  assert.equal(model.w, 1, "explicit shrinking starts from the visible two-column width");
+  assert.equal(el.style.gridColumn, "span 1");
+  assert.equal(el.dataset.w, model.w);
 });
 
 test("grabbing a clamped tile resize handle without moving does not shrink it", async () => {
@@ -188,11 +191,11 @@ test("grabbing a clamped tile resize handle without moving does not shrink it", 
 
 test("resize snap thresholds follow visual cells at 90 and 120 percent appearance scale", async () => {
   for (const [zoom, delta, size] of [[.9, .52, 2], [1.2, .45, 1]]) {
-    const h = await harness(undefined, 1280, zoom), tile = h.O.layout.tiles[0];
-    tile.w = 1; tile.h = 1;
-    h.O.drag = { mode: "resize", t: tile, el: { style: { removeProperty() {}, setProperty() {} }, dataset: {} }, w0: 1, savedW0: 1, h0: 1, x0: 0, y0: 0 };
+    const h = await harness(undefined, 1280, zoom), model = h.O.layout.tiles[0];
+    model.w = 1; model.h = 1;
+    h.O.drag = { mode: "resize", t: model, el: tile(), w0: 1, savedW0: 1, h0: 1, x0: 0, y0: 0 };
     h.onPointerMove({ clientX: 309 * zoom * delta, clientY: 164 * zoom * delta });
-    assert.equal(tile.w, size); assert.equal(tile.h, size);
+    assert.equal(model.w, size); assert.equal(model.h, size);
   }
 });
 
