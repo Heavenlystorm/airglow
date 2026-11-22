@@ -9,6 +9,7 @@ import ctypes
 from ctypes import wintypes
 import functools
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -21,6 +22,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from airglow import fxformat
+from airglow.api import TYPES
 
 
 def main():
@@ -28,9 +30,12 @@ def main():
     parser.add_argument('--exe')
     parser.add_argument('--entry', default=str(ROOT / 'run.py'))
     parser.add_argument('--effect')
-    parser.add_argument('--seconds', type=float, default=12)
+    parser.add_argument('--seconds', type=float, default=12, help='Observation time after the first frame')
+    parser.add_argument('--startup-timeout', type=float, default=45, help='Maximum time to the first frame')
     parser.add_argument('--result')
     args = parser.parse_args()
+    if not all(math.isfinite(value) and value > 0 for value in (args.seconds, args.startup_timeout)):
+        parser.error('Observation time and startup timeout must be finite and positive.')
     if args.effect:
         effect = fxformat.validate(Path(args.effect).read_text(encoding='utf-8'))
     else:
@@ -41,14 +46,28 @@ def main():
             'layers': effect['layers'], 'params': params,
             'points': [[i * 10, 100, None, i / 31, 0, 'test'] for i in range(32)]}
     received = {'frames': 0, 'nonzero_frames': 0, 'problems': [], 'distinct_frames': set()}
+    milestones = {}
+    resources = {}
+    first_frame = threading.Event()
 
     class Handler(SimpleHTTPRequestHandler):
+        # Match Airglow's static server even on Windows images that register .js as text/plain.
+        extensions_map = {**SimpleHTTPRequestHandler.extensions_map, **TYPES}
+
         def log_message(self, *_):
             pass
 
+        def log_request(self, code='-', size='-'):
+            path = self.path.partition('?')[0]
+            if self.command == 'GET' and not path.startswith('/api/'):
+                resources[path] = int(code)
+
         def do_GET(self):
+            if self.path.partition('?')[0] == '/runtime/host.html':
+                milestones.setdefault('page_request', round(time.monotonic() - launched, 3))
             if not self.path.startswith('/api/fx/host/stream'):
                 return super().do_GET()
+            milestones.setdefault('stream_request', round(time.monotonic() - launched, 3))
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream')
             self.end_headers()
@@ -71,6 +90,9 @@ def main():
                 colours = body[3 + body[0]:]
                 received['nonzero_frames'] += bool(any(colours))
                 received['distinct_frames'].add(colours)
+                if not first_frame.is_set():
+                    milestones['first_frame'] = round(time.monotonic() - launched, 3)
+                    first_frame.set()
             elif self.headers.get('Content-Type') == 'application/json':
                 data = json.loads(body)
                 received['problems'].extend(data.get('problems', {}).values())
@@ -102,6 +124,7 @@ def main():
         command += ['--effect-host', f'http://127.0.0.1:{server.server_port}/runtime/host.html#token=native-smoke',
                     '--parent', str(os.getpid())]
         with open(Path(data) / 'stderr.log', 'w', encoding='utf-8') as err:
+            launched = time.monotonic()
             proc = subprocess.Popen(command, env=env, stdout=err, stderr=err, creationflags=0x08000000)
             @callback_type
             def check(hwnd, _):
@@ -121,18 +144,26 @@ def main():
                     if rect.right <= left or rect.bottom <= top or rect.left >= right or rect.top >= bottom:
                         return True
                     visible.add(title.value)
-                    elapsed = round(time.monotonic() - started, 3)
+                    elapsed = round(time.monotonic() - launched, 3)
                     visibility['samples'] += 1
                     if visibility['first_seconds'] is None:
                         visibility['first_seconds'] = elapsed
                     visibility['last_seconds'] = elapsed
                 return True
-            started = time.monotonic()
+            render_start = None
+            deadline = launched + args.startup_timeout
             try:
-                while time.monotonic() - started < args.seconds and proc.poll() is None:
+                while proc.poll() is None:
                     user32.EnumWindows(check, 0)
+                    now = time.monotonic()
+                    if render_start is None and first_frame.is_set():
+                        render_start = now
+                        deadline = now + args.seconds
+                    if now >= deadline:
+                        break
                     time.sleep(0.01)
                 exit_code = proc.poll()
+                observed = time.monotonic() - render_start if render_start is not None else 0
             finally:
                 import psutil
                 try:
@@ -147,13 +178,17 @@ def main():
                     psutil.wait_procs(children, timeout=5)
                 except psutil.NoSuchProcess:
                     pass
+        host_log = Path(data) / 'Airglow' / 'logs' / 'effect-host.log'
         result = {**received, 'distinct_frames': len(received['distinct_frames']),
                   'visible_windows': sorted(visible), 'unexpected_exit': exit_code,
                   'taskbar_windows': sorted(switchers),
                   'visibility': visibility, 'web_assets': str(web),
-                  'duration': round(time.monotonic() - started, 2),
+                  'startup_timeout': args.startup_timeout, 'observed_render_seconds': round(observed, 2),
+                  'milestones_seconds': milestones, 'resource_status': resources,
+                  'host_log': host_log.read_text(encoding='utf-8', errors='replace')[-4000:] if host_log.is_file() else '',
+                  'duration': round(time.monotonic() - launched, 2),
                   'stderr': (Path(data) / 'stderr.log').read_text(encoding='utf-8')}
-        result['passed'] = (exit_code is None and not visible and not switchers and received['nonzero_frames'] > 10
+        result['passed'] = (render_start is not None and exit_code is None and not visible and not switchers and received['nonzero_frames'] > 10
                             and result['distinct_frames'] > 2 and not received['problems'])
         print(json.dumps(result, indent=2))
         if args.result:
