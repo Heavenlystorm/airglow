@@ -49,6 +49,7 @@ settings, design and profiles carry over when you update.
   or use an optional global shortcut to recall the app or Desk Display. **F1** opens searchable task and keyboard help.
 - Quick Switch finds settings by topic and zones by name or controller. Filter to pinned favorites,
   page through results, and search across accents and punctuation.
+- Moving or resizing an Overview tile with the keyboard keeps it focused while the other tiles keep their live graphs.
 - The 3D view clears the complete canvas on every repaint, including the bottom edge.
 
 ## 1.21.0

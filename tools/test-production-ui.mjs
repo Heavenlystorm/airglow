@@ -782,6 +782,35 @@ test("overlapping layout and reading changes retarget one animation and stop whe
   assert.equal(result.latest, "91");
 });
 
+test("keyboard layout edits retain tile focus and leave unrelated readings intact", async (t) => {
+  const page = await overview(t, sensors.slice(0, 3).map((sensor, index) => tile(sensor, "auto", index)));
+  await page.locator("#ov-edit").click();
+  const focused = page.locator('[data-id="sensor-auto-0"]');
+  await focused.focus();
+  const result = await page.evaluate(async () => {
+    const { overviewLayout } = await import("/js/overview.js");
+    const grid = document.querySelector("#ov-grid");
+    const el = document.activeElement;
+    let blurs = 0;
+    el.addEventListener("blur", () => { blurs++; });
+    const observer = new MutationObserver(() => {});
+    observer.observe(grid.querySelector('[data-id="sensor-auto-2"] .tile-inner'),
+      { subtree: true, attributes: true, childList: true, characterData: true });
+    const snapshots = [];
+    for (const [key, shiftKey] of [["ArrowDown", false], ["ArrowUp", false], ["ArrowDown", true]]) {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey, bubbles: true, cancelable: true }));
+      snapshots.push([...grid.querySelectorAll(":scope > [data-id]")].map(node => node.dataset.id));
+    }
+    const untouched = observer.takeRecords().length === 0;
+    observer.disconnect();
+    return { blurs, untouched, snapshots, height: overviewLayout().tiles[0].h, shownHeight: el.dataset.h,
+      focused: document.activeElement === el, last: grid.lastElementChild.id };
+  });
+  const [a, b, c] = [0, 1, 2].map(i => `sensor-auto-${i}`);
+  assert.deepEqual(result, { blurs: 0, untouched: true, snapshots: [[b, a, c], [a, b, c], [a, b, c]],
+    height: 2, shownHeight: "2", focused: true, last: "ov-add" });
+});
+
 test("normal-motion Overview layout editing measures frame cadence and interaction stalls", async (t) => {
   const page = await overview(t, sensors.flatMap((sensor, index) => styles.map(style => tile(sensor, style, index))));
   await page.emulateMedia({ reducedMotion: "no-preference" });

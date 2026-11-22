@@ -966,7 +966,7 @@ function onKey(e) {
     focusTile(e.target.dataset.id);
     return;
   }
-  if (resetting || !O.editing) return;
+  if (resetting || !O.editing || O.drag) return;
   const el = e.target.closest?.(".tile:not(.tile-add)");
   if (!el || e.target !== el) return;
   const t = tileById(el.dataset.id), tiles = O.layout.tiles, i = tiles.indexOf(t);
@@ -982,7 +982,16 @@ function onKey(e) {
   else changed = false;
   if (!changed) return;
   e.preventDefault();
-  flip(grid(), () => renderOverview());
+  const g = grid();
+  if (e.shiftKey) {
+    flip(g, () => sizeTile(el, t));
+    update(el, t);
+  } else {
+    // Move the neighboring tile so the focused tile stays attached throughout the edit.
+    const neighbor = O.els.get(tiles[i].id);
+    const forward = e.key === "ArrowRight" || e.key === "ArrowDown";
+    flip(g, () => g.insertBefore(neighbor, forward ? el : el.nextSibling));
+  }
   el.focus();
   save();
 }
