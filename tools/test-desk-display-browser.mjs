@@ -10,6 +10,14 @@ let browser;
 before(async () => {
   browser = await openFixtureBrowser(base);
   mkdirSync(output, { recursive: true });
+  // Open Overview from a configured fixture even when this suite runs on its own.
+  for (const [path, body] of [["/api/onboarded", {}], ["/api/settings", { online_checks: false }]]) {
+    const response = await fetch(base + path, {
+      method: "POST", headers: { "X-Airglow": "1", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.ok(response.ok, `Fixture setup failed at ${path}: ${response.status}`);
+  }
 });
 after(async () => { await browser?.close(); });
 
