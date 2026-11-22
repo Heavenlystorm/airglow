@@ -270,6 +270,60 @@ test("setup activates detected fans and Control center opens the selected channe
   await page.waitForFunction(sid => document.querySelector(`[data-chan="${sid}"] [data-mode]`)?.value === "curve", id);
 });
 
+test("focused fan controls follow saved settings, protect drafts and recover a failed write", async t => {
+  const state = await api("/api/state");
+  const fan = { id: "/test/fan/control/0", name: "Case fan", device: "Sample board", mode: "curve", rpm: 800 };
+  state.fans.channels = [fan];
+  const page = await pageFor(t, "fans/" + encodeURIComponent(fan.id), async p => {
+    await p.route("**/api/state", route => route.fulfill({json: state}));
+    await p.route("**/api/stream?*", () => {}); // Deliver the relevant state events explicitly.
+  });
+  const select = page.getByRole("combobox", {name: "How Case fan runs"});
+  const range = page.getByLabel("Steady speed", {exact: true});
+  await page.waitForFunction(() => document.activeElement?.hasAttribute("data-mode") && window.__testStreams.length);
+  await page.evaluate(() => {
+    const original = window.fetch;
+    window.fanWrites = [];
+    window.fetch = (url, options) => url === "/api/fans/channel"
+      ? new Promise(resolve => window.fanWrites.push({body: JSON.parse(options.body), resolve}))
+      : original(url, options);
+  });
+  async function publish(mode) {
+    fan.mode = mode;
+    await page.evaluate(state => {
+      window.__testStreams.at(-1).dispatchEvent(new MessageEvent("state", {data: JSON.stringify(state)}));
+    }, state);
+    await frames(page);
+  }
+
+  await publish("bios");
+  assert.equal(await select.inputValue(), "bios");
+  assert.ok(await select.evaluate(el => el === document.activeElement));
+
+  await select.selectOption("steady");
+  await page.waitForFunction(() => window.fanWrites.length === 1);
+  await range.focus();
+  await range.evaluate(el => { el.value = "75"; el.dispatchEvent(new Event("input", {bubbles:true})); });
+  await publish("bios");
+  assert.equal(await select.inputValue(), "steady", "a pending mode change survives an older snapshot");
+  assert.equal(await range.inputValue(), "75", "an edit in progress survives the snapshot");
+  await range.dispatchEvent("change");
+  assert.equal(await page.evaluate(() => window.fanWrites.length), 1, "the second edit waits for the first");
+
+  await page.evaluate(fan => {
+    const write = window.fanWrites[0];
+    write.resolve(Response.json({channels: [{...fan, mode: "steady", steady: write.body.duty}]}));
+  }, fan);
+  await page.waitForFunction(() => window.fanWrites.length === 2);
+  assert.equal(await page.evaluate(() => window.fanWrites[1].body.duty), 75);
+  await page.evaluate(() => window.fanWrites[1].resolve(Response.json({error: "Could not save duty"}, {status:503})));
+  await page.waitForFunction(() => {
+    const range = document.querySelector("[data-steady]");
+    return range.value === String(window.fanWrites[0].body.duty) && range.nextElementSibling.textContent === range.value + "%";
+  });
+  assert.ok(await range.evaluate(el => el === document.activeElement));
+});
+
 test("mixed-unit graphs label both scales, missing values stay empty, and disconnects clear current numbers", async (t) => {
   await api("/api/overview", { tiles: [
     { id: "mixed", type: "sensor", sensors: ["auto/cpu_temp", "auto/cpu_load"], style: "graph", w: 2, h: 2 },

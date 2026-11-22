@@ -274,6 +274,8 @@ function renderPorts() {
 // ------------------------------------------------------------ motherboard headers and coolers (through LHM)
 const MODES = [["", "Not configured"], ["bios", "BIOS / device"], ["curve", "Airglow curve"], ["steady", "Steady speed"]];
 let chanKey = "";
+const channelWrites = new Map();
+let editingDuty = null;
 
 function channelRow(c) {
   const mode = c.mode || "";
@@ -299,8 +301,8 @@ function renderChannels(channels, lhmOnline) {
     chanKey = "";
     return;
   }
-  // rebuild the rows only when what they are changes, never under a control you're using
-  const key = JSON.stringify(channels.map((c) => [c.id, c.name, c.device, c.pump, c.mode, c.steady]));
+  // A saved mode or duty can change in another window while a control in this row has focus.
+  const key = JSON.stringify(channels.map((c) => [c.id, c.name, c.device, c.pump]));
   if (key !== chanKey && !box.contains(document.activeElement)) {
     chanKey = key;
     setHTML(box, `<h2>Motherboard and cooler fans</h2>
@@ -311,6 +313,20 @@ function renderChannels(channels, lhmOnline) {
   for (const c of channels) {
     const row = box.querySelector(`[data-chan="${CSS.escape(c.id)}"]`);
     if (!row) continue;
+    const select = row.querySelector("[data-mode]"), range = row.querySelector("[data-steady]");
+    if (range !== editingDuty) {
+      const pending = channelWrites.get(c.id)?.body;
+      const mode = pending?.mode ?? c.mode ?? "";
+      const steady = String(pending?.duty ?? c.steady ?? (c.pump ? 70 : 50));
+      if (select.value !== mode) select.value = mode;
+      if (mode !== "steady" && document.activeElement === range) select.focus({ preventScroll: true });
+      row.querySelector(".chan-steady").hidden = mode !== "steady";
+      if (range.value !== steady) {
+        range.value = steady;
+        range.nextElementSibling.textContent = `${range.value}%`;
+        rangeFill(range);
+      }
+    }
     const now = c.duty;
     row.querySelector(".bar i").style.width = `${clamp(now ?? 0, 0, 100)}%`;
     row.querySelector(".bar").title = now == null ? "No reported duty" : `Reported ${Math.round(now)}%`;
@@ -327,24 +343,41 @@ function renderChannels(channels, lhmOnline) {
   }
 }
 
+async function writeChannel(body) {
+  // Keep edits to one channel in the order they were made, including a copy from another row.
+  const previous = channelWrites.get(body.id);
+  async function persist() {
+    const { channels } = await post("/api/fans/channel", body);
+    const saved = channels.find(channel => channel.id === body.id);
+    const current = S.state.fans.channels.find(channel => channel.id === body.id);
+    if (current && saved) Object.assign(current, { mode: saved.mode, steady: saved.steady });
+  }
+  const done = previous ? previous.done.catch(() => {}).then(persist) : persist();
+  const write = { body, done };
+  channelWrites.set(body.id, write);
+  try { await done; }
+  finally {
+    if (channelWrites.get(body.id) === write) {
+      channelWrites.delete(body.id);
+      renderPorts();
+    }
+  }
+}
+
 async function saveChannel(row, patch) {
   const c = (S.state.fans.channels || []).find((x) => x.id === row.dataset.chan);
   const body = { id: row.dataset.chan, mode: patch.mode ?? c?.mode ?? "", duty: patch.duty ?? +row.querySelector("[data-steady]").value };
   try {
-    const r = await post("/api/fans/channel", body);
-    S.state.fans.channels = r.channels;
-    chanKey = "";
-    renderPorts();
+    await writeChannel(body);
     toast(!body.mode || body.mode === "bios" ? `${c?.name || "That fan"} will use BIOS / device control` : body.mode === "curve" ? `Airglow curve saved for ${c?.name || "that fan"}` : `Steady ${body.duty}% saved for ${c?.name || "that fan"}`);
-  } catch (err) { fail(err); chanKey = ""; renderPorts(); }
+  } catch (err) { fail(err); }
 }
 
 export async function copyChannelSettings(targets, patch) {
   const applied = [], failed = [];
   for (const target of targets) {
     try {
-      const result = await post("/api/fans/channel", { id: target.id, mode: patch.mode, duty: patch.duty });
-      S.state.fans.channels = result.channels;
+      await writeChannel({ id: target.id, mode: patch.mode, duty: patch.duty });
       applied.push(target.id);
     } catch (error) { failed.push({ id: target.id, name: target.name, error: error.message }); }
   }
@@ -369,7 +402,6 @@ function copyChannelSheet(source, patch) {
     const selected = new Set(fields.filter((c) => c.checked && !c.disabled).map((c) => c.value));
     fields.forEach((c) => { c.disabled = true; }); button.disabled = true;
     const { applied, failed } = await copyChannelSettings(targets.filter((c) => selected.has(c.id)), patch);
-    chanKey = ""; renderPorts();
     const result = form.querySelector("#copy-results");
     result.hidden = false;
     result.className = failed.length ? "err" : "hint";
@@ -404,13 +436,20 @@ export function initFans() {
     if (e.target.matches("[data-mode]")) {
       row.querySelector(".chan-steady").hidden = e.target.value !== "steady";
       saveChannel(row, { mode: e.target.value });
-    } else if (e.target.matches("[data-steady]")) saveChannel(row, { mode: "steady", duty: +e.target.value });
+    } else if (e.target.matches("[data-steady]")) {
+      editingDuty = null;
+      saveChannel(row, { mode: "steady", duty: +e.target.value });
+    }
   });
   box.addEventListener("input", (e) => {
     if (!e.target.matches("[data-steady]")) return;
+    editingDuty = e.target;
     rangeFill(e.target);
     e.target.nextElementSibling.textContent = `${e.target.value}%`;
   });
+  for (const event of ["focusout", "pointerup", "pointercancel"]) {
+    box.addEventListener(event, e => { if (e.target === editingDuty) editingDuty = null; });
+  }
   // Copy only to the targets selected in the review sheet; pump inclusion is always explicit.
   box.addEventListener("click", async (e) => {
     const b = e.target.closest("[data-chan-all]");
