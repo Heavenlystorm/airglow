@@ -2,11 +2,11 @@
 import { $, $$, S, emit, esc, fail, get, post, setHTML, toast } from "./core.js";
 import { closeSheet, openSheet } from "./sheet.js";
 const LICENSES = ["MIT", "Apache-2.0", "BSD-3-Clause", "MPL-2.0", "GPL-3.0-or-later"];
-export function cardMedia(poster) {
+export function cardMedia(poster, labelSample = false) {
   return `<div class="st-card-media">${poster
     ? `<img class="st-poster" src="art/studio/${esc(poster)}.webp" alt="Sample rig showing this effect" width="480" height="300">`
     : '<span class="st-preview-note"><svg aria-hidden="true"><use href="#i-effect"/></svg><span>Preparing preview…</span></span>'}
-    <canvas class="st-live" aria-hidden="true"></canvas></div>`;
+    <canvas class="st-live" aria-hidden="true"></canvas>${labelSample ? '<span class="st-feature-rig">Sample case</span>' : ""}</div>`;
 }
 
 export function createStudioGallery({ H, E, box, remember, save, queueStills, addStill, effectRunnable }) {

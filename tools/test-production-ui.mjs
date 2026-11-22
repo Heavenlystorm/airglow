@@ -64,6 +64,12 @@ test("device wiring starts collapsed and retains a focused draft through discove
   });
   const first = page.locator('[data-key="hub/a"]'), second = page.locator('[data-key="hub/b"]');
   assert.equal(await first.getByLabel("Shape").isVisible(), false);
+  await page.getByRole("button", { name: "Go to Channel b wiring" }).press("Enter");
+  assert.ok(await second.getByLabel("Shape").isVisible());
+  const secondConfigure = second.getByRole("button", { name: /configure/i });
+  assert.ok(await secondConfigure.evaluate(el => el === document.activeElement));
+  await secondConfigure.press("Enter");
+  assert.equal(writes.length, 0, "Navigating the channel map does not write zone settings");
   await first.getByRole("button", { name: /configure/i }).press("Enter");
   const name = first.getByLabel("Zone name");
   zones = await page.evaluate(async () => (await import("/js/core.js")).S.zones.zones);
@@ -180,6 +186,8 @@ test("automation search keeps priority and edited copies save beside their sourc
   await duplicate.press("Enter");
   const detail = page.locator("#rb-schedule-detail");
   assert.match(await detail.innerText(), /7h 30m.*following day/);
+  const segments = page.locator("#rb-hours .schedule-hours i");
+  assert.equal(await segments.count(), 2, "An overnight schedule crosses midnight");
   await page.getByRole("button", { name: "Weekends", exact: true }).click();
   await page.getByRole("button", { name: "Sat", exact: true }).click();
   await page.getByRole("button", { name: "Sun", exact: true }).click();
@@ -193,8 +201,11 @@ test("automation search keeps priority and edited copies save beside their sourc
   await save.click();
   assert.equal(writes.length, 0);
   assert.match(await detail.innerText(), /different start and end/);
+  assert.equal(await segments.count(), 0);
   await end.fill("23:15");
   assert.match(await detail.innerText(), /45m on each selected day/);
+  assert.equal(await segments.count(), 1);
+  assert.equal(await segments.evaluateAll(nodes => parseFloat(nodes[0].style.width)), 45 / 1440 * 100);
   await save.click();
   await page.locator("#sheet").waitFor({ state: "hidden" });
   assert.equal(writes.length, 1);
@@ -572,6 +583,41 @@ test("Studio templates have a bundled sample still before playback and keep it t
   await page.locator('[data-tpl="aurora"]').focus();
   await retry;
   assert.deepEqual(posts, ["/api/studio/preview/load", "/api/studio/preview/load"]);
+});
+
+test("Firefly featured templates select by keyboard, open the matching editor and restore the standard gallery in other designs", async t => {
+  const posts = [];
+  const page = await staticPage(t, async (route, url) => {
+    if (url.pathname === "/api/studio/effects") { await route.fulfill({ json: { effects: [] } }); return true; }
+    if (route.request().method() !== "POST") return false;
+    posts.push(url.pathname);
+    await route.fulfill({ status: 503, json: { error: "No preview device in this fixture" } });
+    return true;
+  });
+  await page.evaluate(async () => {
+    const { applyDesign } = await import("/js/design.js");
+    const { initStudio, renderStudio } = await import("/js/studio.js");
+    applyDesign("firefly", { persist: false });
+    document.querySelector(".studio-view").hidden = false;
+    initStudio(); await renderStudio();
+  });
+  const choices = page.getByRole("radiogroup", { name: "Featured templates" });
+  await choices.getByRole("radio", { name: /Lantern Walk/ }).press("ArrowRight");
+  assert.equal(await choices.getByRole("radio", { name: /Rain Glass/ }).getAttribute("aria-checked"), "true");
+  assert.equal(await choices.locator('[tabindex="0"]').count(), 1);
+  assert.equal(await page.locator(".st-feature-card:visible").getAttribute("data-card"), "rain-glass");
+  assert.equal(await page.locator("#st-start [data-preview]:visible").count(), 0);
+  assert.deepEqual(posts, [], "selecting a featured template is local in reduced motion");
+  await page.evaluate(async () => (await import("/js/design.js")).applyDesign("graphite", { persist: false }));
+  assert.equal(await choices.count(), 0);
+  assert.equal(await page.locator("#st-start [data-tpl]").first().getAttribute("data-tpl"), "aurora");
+  assert.ok(await page.locator('[data-tpl="lantern-walk"]').isVisible());
+  await page.evaluate(async () => (await import("/js/design.js")).applyDesign("firefly", { persist: false }));
+  await choices.getByRole("radio", { name: /Rain Glass/ }).focus();
+  await page.keyboard.press("Tab");
+  assert.ok(await page.locator('[data-tpl="rain-glass"]').evaluate(el => el === document.activeElement));
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("#st-name").inputValue(), "My rain glass");
 });
 
 test("style radios keep one tab stop and retain focus and comparison across arrow keys", async (t) => {
@@ -1260,7 +1306,7 @@ async function colourEditorPage(t, mock) {
       { id: "solid", name: "Solid", needs: [], params: [{ id: "color", type: "color", label: "Colour", default: "#778899" }] },
     ];
     S.zones = { zones: [{ key: "hub/front", device: { name: "Desk hub", online: true }, positions: [[.4, .5]],
-      config: { name: "Front strip", enabled: true, layout: { shape: "strip", x: .4, y: .5, angle: 0, length: .2 },
+      config: { name: "Front strip", enabled: true, layout: { shape: "strip", x: .4, y: .5, angle: 0, length: .2, leds: 1 },
         override: { effect: "solid", params: { color: "#123456" } } } }] };
     document.querySelector(".lighting-view").hidden = false;
     (await import("/js/stage.js")).initStage();
@@ -1268,6 +1314,20 @@ async function colourEditorPage(t, mock) {
   });
   return page;
 }
+
+test("Lighting inspector follows the selected zone palette and clears it when lights are off", async t => {
+  const page = await colourEditorPage(t);
+  const palette = () => page.locator("#inspector").evaluate(el => el.style.getPropertyValue("--inspector-palette"));
+  assert.match(await palette(), /linear-gradient.*#112233.*#abcdef/);
+  await page.locator("#zone-pick").selectOption("hub/front");
+  assert.equal(await palette(), "#123456");
+  await page.evaluate(async () => {
+    const { S } = await import("/js/core.js");
+    S.state.effective = { on: false, brightness: 60 };
+    (await import("/js/lighting.js")).renderLighting();
+  });
+  assert.equal(await palette(), "transparent");
+});
 
 test("Lighting palette edits stay local until applied and share saved palettes with Studio", async t => {
   const writes = [];
@@ -1429,4 +1489,41 @@ test("a replaced colour sheet reports a late error and can retry its original dr
   await toast.getByText("Palette applied").waitFor();
   assert.equal(writes.length, 2);
   assert.deepEqual(writes[1].params, writes[0].params);
+});
+
+test("Light theatre holds scene metadata with the optical frame and clears a disconnected stream", async t => {
+  const page = await colourEditorPage(t, () => false);
+  await page.evaluate(async () => {
+    const { S, emit } = await import("/js/core.js");
+    S.state.scene.on = true;
+    emit("frames:live", { zones: { "hub/front": "abcdef" } });
+  });
+  const opener = page.getByRole("button", { name: "Open Light theatre" });
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Light theatre" });
+  await dialog.getByText("Frame held", { exact: true }).waitFor();
+  await page.evaluate(async () => {
+    const { S, emit } = await import("/js/core.js");
+    S.state.effective = { on: true, effect: "solid", brightness: 44 };
+    emit("state"); emit("frames:live", { zones: { "hub/front": "eeaaaa" } });
+  });
+  assert.equal(await dialog.locator("h3").textContent(), "Gradient");
+  assert.match(await dialog.locator(".theatre-meter").textContent(), /60% brightness/);
+  await dialog.getByRole("button", { name: "Resume live" }).click();
+  assert.equal(await dialog.locator("h3").textContent(), "Solid");
+  assert.match(await dialog.locator(".theatre-meter").textContent(), /44% brightness/);
+  await page.evaluate(async () => {
+    const { R } = await import("/js/readings.js"), { emit } = await import("/js/core.js");
+    R.stale = true; emit("state");
+  });
+  await dialog.getByText("Connection lost", { exact: true }).waitFor();
+  await page.evaluate(async () => {
+    const { R } = await import("/js/readings.js"), { emit } = await import("/js/core.js");
+    R.stale = false; emit("state");
+  });
+  await dialog.getByText("Waiting for frames", { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.locator(".light-theatre").waitFor({ state: "detached" });
+  await opener.click();
+  await dialog.getByText("Waiting for frames", { exact: true }).waitFor();
 });

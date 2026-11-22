@@ -366,6 +366,13 @@ export function initStudio() {
   });
   box().addEventListener("keydown", (e) => {          // layer rows are list items: Enter or Space picks one
     if ((e.key === "Enter" || e.key === " ") && e.target.matches("li[data-sel]")) { e.preventDefault(); e.target.click(); }
+    if (!e.target.matches("[data-feature]")) return;
+    const buttons = $$("[data-feature]", box()), index = buttons.indexOf(e.target);
+    const next = { ArrowUp: index - 1, ArrowLeft: index - 1, ArrowDown: index + 1, ArrowRight: index + 1, Home: 0, End: buttons.length - 1 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    const button = buttons[(next + buttons.length) % buttons.length];
+    button.focus(); button.click();
   });
   // One listener on the shared sheet, so opening a sheet twice never runs an action twice.
   $("#sheet").addEventListener("click", onSheetClick);
@@ -385,6 +392,10 @@ export function initStudio() {
   });
   window.matchMedia?.("(prefers-reduced-motion: reduce)").addEventListener("change", refreshSceneMotion);
   new MutationObserver(refreshSceneMotion).observe(document.documentElement, { attributes: true, attributeFilter: ["data-motion"] });
+  document.addEventListener("designchange", () => {
+    if (H.view === "home" && !box().closest(".view").hidden && $("#st-start") &&
+        !!$("#st-feature-gallery") !== (document.documentElement.dataset.design === "firefly")) renderHome();
+  });
 }
 
 export function openStudio(req) {
@@ -704,6 +715,34 @@ function cardHTML(eff, acts) {
     <div class="st-acts"><button class="btn quiet st-scene-play" data-preview="${esc(eff.fx_id || eff.id)}" aria-pressed="false" aria-label="Play preview of ${esc(eff.name)}">Play preview</button>${acts}</div></div>`;
 }
 
+const featureIds = ["lantern-walk", "rain-glass", "party"];
+let featuredId = featureIds[0];
+
+function templateCard(t, code = false, featured = false) {
+  const id = code ? `code-${t.id}` : t.id;
+  const swatches = featured ? [...new Set([...t.master.palette, ...t.layers.map(l => l.params?.color).filter(Boolean)])] : [];
+  return `<div class="st-card st-tpl${featured ? " st-feature-card" : ""}" data-card="${id}"${featured && id !== featuredId ? " hidden" : ""}>
+    ${cardMedia(id, featured)}
+    <div class="st-cap"><strong>${esc(t.name)}${code ? ' <i class="st-badge">Code</i>' : ""}</strong><span>${esc(t.description)}</span>
+    ${featured ? `<div class="st-swatchline" aria-label="Template colours">${swatches.map(c => `<i style="--swatch:${esc(c)}" title="${esc(c)}"></i>`).join("")}</div>` : ""}</div>
+    <div class="st-acts"><button class="btn" ${code ? "data-code-tpl" : "data-tpl"}="${t.id}">Start here</button><button class="btn quiet st-scene-play" data-preview="${id}" aria-pressed="false" aria-label="Play preview of ${esc(t.name)}">Play preview</button></div></div>`;
+}
+
+function templateShelf() {
+  const code = CODE_TEMPLATES.map(t => templateCard(t, true)).join("");
+  if (document.documentElement.dataset.design !== "firefly")
+    return `<div class="st-grid">${LAYER_TEMPLATES.map(t => templateCard(t)).join("")}${code}</div>`;
+  const featured = featureIds.map(id => LAYER_TEMPLATES.find(t => t.id === id));
+  return `<div class="st-feature-gallery" id="st-feature-gallery">
+    <div class="st-feature-select" role="radiogroup" aria-label="Featured templates">${featured.map(t => {
+      const types = [...new Set(t.layers.map(l => H.info.types[l.type].name))].join(" · ");
+      return `<button type="button" role="radio" data-feature="${t.id}" aria-checked="${t.id === featuredId}" tabindex="${t.id === featuredId ? 0 : -1}"><img src="art/studio/${t.id}.webp" width="96" height="60" alt=""><span><strong>${esc(t.name)}</strong><small>${esc(types)}</small></span></button>`;
+    }).join("")}</div>
+    <div class="st-feature-stage">${featured.map(t => templateCard(t, false, true)).join("")}</div></div>
+    <h3 class="st-shelf-heading">Layer templates</h3><div class="st-grid st-library-grid">${LAYER_TEMPLATES.filter(t => !featureIds.includes(t.id)).map(t => templateCard(t)).join("")}</div>
+    <h3 class="st-shelf-heading">Code templates</h3><div class="st-grid st-library-grid">${code}</div>`;
+}
+
 function renderHome(pickStart) {
   const effects = H.lib?.effects || [];
   const mine = effects.filter((e) => e.origin === "mine"), community = effects.filter((e) => e.origin === "community");
@@ -726,12 +765,7 @@ function renderHome(pickStart) {
     ${mine.length ? savedEffects : ""}
     <section class="st-sec" id="st-start"><div class="st-library-head"><h2 class="st-h">Effect templates</h2>
       <button class="btn quiet" data-st="surprise">Surprise me</button></div>
-      <div class="st-grid">${LAYER_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="${t.id}">${cardMedia(t.id)}
-        <div class="st-cap"><strong>${esc(t.name)}</strong><span>${esc(t.description)}</span></div>
-        <div class="st-acts"><button class="btn" data-tpl="${t.id}">Start here</button><button class="btn quiet st-scene-play" data-preview="${t.id}" aria-pressed="false" aria-label="Play preview of ${esc(t.name)}">Play preview</button></div></div>`).join("")}
-        ${CODE_TEMPLATES.map((t) => `<div class="st-card st-tpl" data-card="code-${t.id}">${cardMedia("code-" + t.id)}
-        <div class="st-cap"><strong>${esc(t.name)} <i class="st-badge">Code</i></strong><span>${esc(t.description)}</span></div>
-        <div class="st-acts"><button class="btn" data-code-tpl="${t.id}">Start here</button><button class="btn quiet st-scene-play" data-preview="code-${t.id}" aria-pressed="false" aria-label="Play preview of ${esc(t.name)}">Play preview</button></div></div>`).join("")}</div></section>
+      ${templateShelf()}</section>
     ${mine.length ? "" : savedEffects}
     ${community.length ? `<section class="st-sec"><h2 class="st-h">From the community</h2><div class="st-grid">${community.map((e) => cardHTML(e, `
         <button class="btn${using === e.fx_id ? " on" : ""}" data-use="${esc(e.fx_id)}">${using === e.fx_id ? "On your lights" : "Use"}</button>
@@ -1967,6 +2001,18 @@ async function onClick(e) {
   const t = e.target.closest("button, a, [data-sel]");
   if (!t) return;
   const ds = t.dataset;
+  if (ds.feature) {
+    if (ds.feature !== featuredId) {
+      stopCard();
+      featuredId = ds.feature;
+      for (const card of $$(".st-feature-card", box())) card.hidden = card.dataset.card !== featuredId;
+      for (const button of $$("[data-feature]", box())) {
+        button.setAttribute("aria-checked", String(button === t));
+        button.tabIndex = button === t ? 0 : -1;
+      }
+    }
+    return;
+  }
   if (ds.paint) return paintAction(ds.paint);
   if (ds.st === "blend-effects") return openBlend(H.lib?.effects || [], { onSaved: effect => openStudio({ fx_id: effect.fx_id }) });
   if (ds.preview) {

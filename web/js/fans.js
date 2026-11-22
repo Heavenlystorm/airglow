@@ -17,7 +17,8 @@ function spark(points, min, max, color) {
 
 const shortCpu = (n) => (n || "Processor").replace(/^AMD\s+|^Intel\(R\)\s+Core\(TM\)\s+/i, "");
 const shortGpu = (n) => (n || "Graphics card").replace(/^NVIDIA\s+GeForce\s+|^AMD\s+Radeon\s+/i, "");
-const lineColor = (lvl) => (lvl === "hot" ? "#ef5a48" : lvl === "warm" ? "#e39540" : "#b9b5aa");
+const lineColor = (lvl) => lvl === "hot" ? "var(--hot)" : lvl === "warm" ? "var(--warm)" : "var(--trace, var(--data-line))";
+const readoutIcon = id => `<svg class="readout-icon" aria-hidden="true"><use href="#i-${id}"/></svg>`;
 
 function renderReadouts() {
   const s = S.state.sensors, h = S.history;
@@ -27,14 +28,14 @@ function renderReadouts() {
   const peak = Math.max(150, ...h.map((p) => (p.cpu_w ?? 0) + (p.gpu_w ?? 0)));
   const total = h.filter((p) => p.cpu_w != null && p.gpu_w != null).map((p) => [p.t, p.cpu_w + p.gpu_w]);
   let html = `
-    <div class="ro"><div class="head"><span>${esc(shortCpu(s.cpu_name))}</span><span>${s.cpu_power != null ? Math.round(s.cpu_power) + " W" : ""}</span></div>
+    <div class="ro" data-reading="cpu"><div class="head"><span>${readoutIcon("chip")}${esc(shortCpu(s.cpu_name))}</span><span>${s.cpu_power != null ? Math.round(s.cpu_power) + " W" : ""}</span></div>
       ${tempBig(s.cpu_temp, cpuLvl)}${spark(pts("cpu"), 20, 100, lineColor(cpuLvl))}</div>
-    <div class="ro"><div class="head"><span>${esc(shortGpu(s.gpu_name))}</span><span>${s.gpu_power != null ? Math.round(s.gpu_power) + " W" : ""}</span></div>
+    <div class="ro" data-reading="gpu"><div class="head"><span>${readoutIcon("chip")}${esc(shortGpu(s.gpu_name))}</span><span>${s.gpu_power != null ? Math.round(s.gpu_power) + " W" : ""}</span></div>
       ${tempBig(s.gpu_temp, gpuLvl)}${spark(pts("gpu"), 20, 100, lineColor(gpuLvl))}</div>
-    ${s.liquid_temp != null ? `<div class="ro"><div class="head"><span>Coolant</span><span>liquid cooler</span></div>
+    ${s.liquid_temp != null ? `<div class="ro" data-reading="coolant"><div class="head"><span>${readoutIcon("temp")}Coolant</span><span>liquid cooler</span></div>
       ${tempBig(s.liquid_temp, tempLevel(s.liquid_temp, 40, 50))}</div>` : ""}
-    <div class="ro"><div class="head"><span>Power draw</span><span>processor and graphics</span></div>
-      <div class="big">${num(s.total_power == null ? "–" : Math.round(s.total_power))}<span class="u">W</span></div>${spark(total, 0, Math.ceil(peak * 1.15 / 50) * 50, "#b9b5aa")}</div>`;
+    <div class="ro" data-reading="power"><div class="head"><span>${readoutIcon("bolt")}Power draw</span><span>processor and graphics</span></div>
+      <div class="big">${num(s.total_power == null ? "–" : Math.round(s.total_power))}<span class="u">W</span></div>${spark(total, 0, Math.ceil(peak * 1.15 / 50) * 50, lineColor())}</div>`;
   if (!s.online) {
     html += `<p class="ro note">Temperatures come from LibreHardwareMonitor, which isn't responding. Open it from the Start menu, and turn on Options, Remote Web Server, Run.</p>`;
   }
@@ -86,7 +87,8 @@ function renderEditor() {
     `<button role="radio" data-c="${c}" aria-checked="${!!named && c === E.curve}">${curveLabel(c)}</button>`).join(""));
   const pts = E.draft;
   const line = (arr) => [[ED.tMin, arr[0][1]], ...arr, [ED.tMax, arr.at(-1)[1]]].map(([t, d]) => `${ex(t).toFixed(1)},${ey(d).toFixed(1)}`).join(" ");
-  let g = `<g class="grid">`;
+  let g = `<defs><linearGradient id="fan-curve-wash" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+    <stop stop-color="var(--brass)" stop-opacity=".28"/><stop offset="1" stop-color="var(--brass)" stop-opacity=".015"/></linearGradient></defs><g class="grid">`;
   for (let t = 20; t <= 100; t += 10) g += `<line class="${t % 50 === 0 ? "major" : ""}" x1="${ex(t)}" x2="${ex(t)}" y1="${ED.T}" y2="${ED.B}"/>`;
   for (let d = 0; d <= 100; d += 10) g += `<line class="${d % 50 === 0 ? "major" : ""}" x1="${ED.L}" x2="${ED.R}" y1="${ey(d)}" y2="${ey(d)}"/>`;
   g += `</g><g class="axis">`;
@@ -104,7 +106,7 @@ function renderEditor() {
   showPoint();
   if (live) {
     const t = clamp(F.temp, ED.tMin, ED.tMax), d = F.duty;
-    g += `<line class="now-line" x1="${ex(t)}" x2="${ex(t)}" y1="${ED.T}" y2="${ED.B}"/><circle class="now-dot" cx="${ex(t)}" cy="${ey(d)}" r="5"/>`;
+    g += `<line class="now-line" x1="${ex(t)}" x2="${ex(t)}" y1="${ED.T}" y2="${ED.B}"/><circle class="now-ring" cx="${ex(t)}" cy="${ey(d)}" r="12"/><circle class="now-dot" cx="${ex(t)}" cy="${ey(d)}" r="5"/>`;
   }
   pts.forEach(([t, d], i) => {
     g += `<circle class="pt${E.sel === i ? " sel" : ""}" data-i="${i}" cx="${ex(t)}" cy="${ey(d)}" r="8" tabindex="0" role="slider" aria-label="Point ${i + 1}" aria-valuenow="${d}" aria-valuetext="${fmtTemp(t)}, ${d} percent" aria-valuemin="${minDuty}" aria-valuemax="100"/>`;

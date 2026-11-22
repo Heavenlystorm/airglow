@@ -2,6 +2,7 @@
 // LEDs go on a <canvas> (additive glow), interaction (select, arrange, rotate) on an SVG layer above it.
 
 import { $, S, clamp, emit, esc, fail, on, post, refreshZones } from "./core.js";
+import { R } from "./readings.js";
 
 const U = 1000;                       // canvas units -> viewBox units
 const VB_W = 1600, VB_H = 1000;
@@ -11,6 +12,7 @@ const WORKSPACE = { x: -VB_M, y: -VB_M, width: VB_W + 2 * VB_M, height: VB_H + 2
 const st = { selected: null, arranging: false, drag: null, mode: "2d", view: { s: 1, ox: 0, oy: 0 }, frames: {} };
 let camera = WORKSPACE;
 let rig3d = null, rigModule = null, modeRequest = 0;
+let theatre = null, theatreFrame = null;
 
 const canvas = () => $("#stage-canvas");
 const svg = () => $("#stage-svg");
@@ -50,21 +52,21 @@ async function setRigMode(mode, focus = false) {
   $("#stage-view-2d")?.setAttribute("aria-pressed", String(!active));
   button?.setAttribute("aria-pressed", String(active));
   $("#stage").classList.toggle("in-3d", active);
-  rig3d?.setVisible(active);
+  rig3d?.setVisible(active && !theatre);
   renderOverlay();
-  if (active && focus) rig3d.focus();
+  if (active && focus && !theatre) rig3d.focus();
   if (!active) { computeView(); draw(); }
 }
 
 // ------------------------------------------------------------ geometry helpers
-function ledRadius(z) {
+export function ledRadius(z) {
   const L = z.config.layout;
   if (L.shape === "fans") return clamp((L.size * U / 2) * Math.PI / L.leds_per_fan * 0.42, 3, 11);
   if (L.shape === "matrix") return clamp((L.length * U) / Math.max(L.cols, 1) * 0.32, 2, 8);
   return clamp((L.length * U) / Math.max(L.leds, 1) * 0.36, 3, 9);
 }
 
-function fanCentres(z) {
+export function fanCentres(z) {
   const L = z.config.layout;
   const a = L.angle * Math.PI / 180, gap = L.size * 1.12;
   return Array.from({ length: L.fans }, (_, f) => {
@@ -75,14 +77,14 @@ function fanCentres(z) {
 
 const framed = () => document.documentElement.dataset.rig !== "minimal";
 
-function matrixCorners(L) {
+export function matrixCorners(L) {
   const a = L.angle * Math.PI / 180, w = L.length * U / 2, h = w * L.rows / L.cols;
   return [[-w, -h], [w, -h], [w, h], [-w, h]].map(([dx, dy]) => [
     L.x * U + Math.cos(a) * dx - Math.sin(a) * dy, L.y * U + Math.sin(a) * dx + Math.cos(a) * dy,
   ]);
 }
 
-function portraitBounds(zones) {
+export function portraitBounds(zones) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const include = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
   for (const z of zones) {
@@ -351,7 +353,7 @@ function glowFor(ctx, hex, r, peak = 0.55, spread = 4.2) {
 }
 
 function draw() {
-  if (st.mode === "3d" || document.hidden || $('[data-view="lighting"]').hidden) return;
+  if (theatre || st.mode === "3d" || document.hidden || $('[data-view="lighting"]').hidden) return;
   const c = canvas();
   const ctx = c.getContext("2d");
   const v = st.view;
@@ -486,6 +488,8 @@ export function paintRig(c, frames, { fit = "zones", backdrop = null, pad = 22, 
 // LED frames arrive on the live stream (live.js) while a view with the preview is showing.
 function onLiveFrames(f) {
   st.frames = f.zones;
+  theatreFrame = f;
+  if (theatre) { theatre.frames(f); return; }
   rig3d?.setFrames(st.frames);
   if (document.hidden) return;
   if (!$('[data-view="lighting"]').hidden) draw();
@@ -629,6 +633,27 @@ export function initStage() {
   switcher.className = "stage-view-switch"; switcher.setAttribute("role", "group"); switcher.setAttribute("aria-label", "Lighting view");
   switcher.innerHTML = '<button type="button" class="chip-btn" id="stage-view-2d" aria-pressed="true">2D</button><button type="button" class="chip-btn" id="stage-view-3d" aria-pressed="false" title="Explore your lighting layout in 3D">3D</button>';
   $(".stage-tools").append(switcher);
+  const theatreButton = document.createElement("button");
+  theatreButton.type = "button"; theatreButton.id = "stage-theatre"; theatreButton.className = "chip-btn";
+  theatreButton.setAttribute("aria-haspopup", "dialog");
+  theatreButton.setAttribute("aria-label", "Open Light theatre");
+  theatreButton.title = "Open Light theatre";
+  theatreButton.innerHTML = '<svg aria-hidden="true"><use href="#i-effect"/></svg><span>Theatre</span>';
+  $(".stage-tools").append(theatreButton);
+  theatreButton.addEventListener("click", async () => {
+    if (theatre || theatreButton.hasAttribute("aria-busy")) return;
+    theatreButton.setAttribute("aria-busy", "true");
+    try {
+      const { openTheatre } = await import("./light-theatre.js");
+      if ($('dialog[open]') || $('[data-view="lighting"]').hidden) return;
+      theatre = openTheatre(theatreFrame, () => {
+        theatre = null;
+        rig3d?.setFrames(st.frames); rig3d?.setVisible(st.mode === "3d"); draw();
+      });
+      if (theatre) rig3d?.setVisible(false);
+    } catch (err) { fail(err); }
+    finally { theatreButton.removeAttribute("aria-busy"); }
+  });
   $("#stage-view-2d").addEventListener("click", () => setRigMode("2d"));
   $("#stage-view-3d").addEventListener("click", () => setRigMode("3d", true));
   computeView();
@@ -650,7 +675,11 @@ export function initStage() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && st.arranging && !$("#sheet").open) setArranging(false);
   });
-  on("zones", () => { renderOverlay(); draw(); });
+  on("zones", () => { theatre?.zones(); renderOverlay(); draw(); });
+  on("state", () => {
+    if (R.stale) theatreFrame = null;
+    theatre?.state();
+  });
   document.addEventListener("appearancechange", () => {
     if (!document.hidden && !$('[data-view="lighting"]').hidden) { computeView(); draw(); declutter(); }
   });

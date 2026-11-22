@@ -123,10 +123,29 @@ function fitNames() {
   }
 }
 
+// Show the palette being edited in this scope. A screen-driven effect with no colour controls
+// has no fixed palette; powered-down output and unavailable zones likewise keep the neutral rail.
+function paintInspectorPalette(scene, zone) {
+  const effective = S.state.effective || S.state.scene;
+  const visible = effective.on !== false && effective.brightness !== 0 && S.state.scene.on !== false &&
+    S.state.scene.brightness !== 0 && scene.effect !== "off" && (!selectedZone || (zone?.device.online && zone.config.enabled));
+  let swatch = "transparent";
+  if (visible) {
+    const effect = S.effects.find(e => e.id === scene.effect);
+    const colours = (effect?.params || []).filter(p => p.type === "color" || p.type === "colors")
+      .flatMap(p => scene.params?.[p.id] ?? p.default ?? []).filter(c => /^#[0-9a-f]{6}$/i.test(c));
+    if (["rainbow", "cycle", "spectrum"].includes(scene.effect)) swatch = sceneSwatch(scene);
+    else if (colours.length > 1) swatch = `linear-gradient(90deg, ${colours.join(", ")})`;
+    else if (colours.length) swatch = colours[0];
+  }
+  $("#inspector").style.setProperty("--inspector-palette", swatch);
+}
+
 function renderDeck() {
   const zone = zoneFor(selectedZone);
   const unavailable = selectedZone && !zone?.device.online;
   const scene = zone?.config.override || S.state.scene;
+  paintInspectorPalette(scene, zone);
   const c = sceneColor(scene);
   const deck = $("#deck"), before = deck._html;
   const previous = deck.contains(document.activeElement) ? document.activeElement : null;
@@ -276,7 +295,7 @@ function renderSceneInspector() {
   const eff = S.effects.find((e) => e.id === scene.effect) || S.effects[0];
   const ins = $("#inspector");
   ins.innerHTML = `${readinessBanner()}${overrideBanner()}${presetsHTML()}<div class="rule-line"></div>
-    <div class="ins-block"><div class="ins-title"><h2>${esc(eff.name)}</h2></div>
+      <div class="ins-block"><div class="ins-title ins-scene-heading"><h2>${esc(eff.name)}</h2></div>
       <p class="ins-desc">${esc(eff.description)}${eff.needs.includes("audio") ? " Plays from whatever your speakers or headphones are playing." : ""}${eff.needs.includes("screen") ? " Uses your main display. Nothing is recorded or saved." : ""}</p>
       ${studioButton(eff)}
       <div class="ins-block" id="scene-fields">${eff.params.map((p) => fieldHTML(p, scene.params[p.id], "sp", { colours: true })).join("")}</div>
@@ -285,6 +304,7 @@ function renderSceneInspector() {
     </div>`;
   wireFields($("#scene-fields"), eff, scene.params, (params, live) => {
     S.state.scene.params = params;
+    paintInspectorPalette(S.state.scene);
     const patch = { params, expected_effect: eff.id };
     if (live) sendScene(patch); else applyLightingScene(patch).then(() => { renderInspector(); renderDeck(); }).catch(fail);
     S.state.active_preset = null;
@@ -294,7 +314,7 @@ function renderSceneInspector() {
   rangeFill(bri);
   bri.addEventListener("input", () => {
     editingParams = Date.now(); rangeFill(bri); $("#bri-out").textContent = `${bri.value}%`;
-    S.state.scene.brightness = +bri.value; sendScene({ brightness: +bri.value });
+    S.state.scene.brightness = +bri.value; paintInspectorPalette(S.state.scene); sendScene({ brightness: +bri.value });
   });
 }
 
@@ -390,7 +410,7 @@ function renderZoneInspector(key) {
   const eff = ov ? (S.effects.find((e) => e.id === ov.effect) || null) : null;   // the effect may be deleted
   const ins = $("#inspector");
   ins.innerHTML = `<div class="lighting-saved" id="zone-saved" hidden><span role="status">Zone lighting saved.</span><button class="text-link" data-zone-undo aria-label="Undo zone lighting">Undo</button></div>
-    <div class="ins-block"><div class="ins-title"><h2>${esc(z.config.name)}</h2><button class="text-link" id="zone-done">Back to whole rig</button></div>
+      <div class="ins-block"><div class="ins-title ins-scene-heading"><h2>${esc(z.config.name)}</h2><button class="text-link" id="zone-done">Back to whole rig</button></div>
       <p class="ins-desc">${esc(z.device.name)}, ${z.positions.length} LED${z.positions.length === 1 ? "" : "s"}${z.config.enabled ? "" : ". This zone is switched off."}</p>
       <div class="btn-row"><button class="btn" id="zone-identify">Identify</button><a class="btn quiet" href="#devices/${encodeURIComponent(z.key)}">Zone settings</a></div></div>
     <div class="rule-line"></div>
@@ -414,6 +434,7 @@ function renderZoneInspector(key) {
     await chooseZoneEffect(key, { effect: id, params: {} }, id);
   });
   if (ov && eff) wireFields($("#zone-fields"), eff, ov.params, (params) => {
+    paintInspectorPalette({ effect: ov.effect, params }, z);
     saveZone({ override: { effect: ov.effect, params }, revision: nextZoneEdit(key) });
   });
 }

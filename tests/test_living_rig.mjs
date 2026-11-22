@@ -20,9 +20,15 @@ async function renderer(rig = "frame") {
   const source = readFileSync(new URL("../web/js/stage.js", import.meta.url), "utf8");
   const names = source.match(/import\s*\{([^}]+)\}/)[1].split(",").map(x => x.trim());
   const module = new vm.SourceTextModule(source, { context });
-  await module.link(() => new vm.SyntheticModule(names, function () {
+  const coreModule = new vm.SyntheticModule(names, function () {
     for (const name of names) this.setExport(name, core[name] || (() => {}));
-  }, { context }));
+  }, { context });
+  const readings = new vm.SyntheticModule(["R"], function () { this.setExport("R", { stale: false }); }, { context });
+  await module.link(specifier => {
+    if (specifier === "./core.js") return coreModule;
+    if (specifier === "./readings.js") return readings;
+    throw new Error("Unexpected stage dependency: " + specifier);
+  });
   await module.evaluate();
   return { ...module.namespace, canvas, zones, operations, gradients };
 }

@@ -13,11 +13,21 @@ function scheduleError(w) {
   return "";
 }
 
+const clockMinutes = value => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
+
+function scheduleRibbon(w) {
+  if (w.type !== "time" || !w.start || !w.end || w.start === w.end || w.days?.length === 0) return "";
+  const start = clockMinutes(w.start), end = clockMinutes(w.end);
+  const intervals = end < start ? [[0, end], [start, 1440]] : [[start, end]];
+  const bars = intervals.filter(([a, b]) => b > a).map(([a, b]) =>
+    `<i style="left:${100 * a / 1440}%;width:${100 * (b - a) / 1440}%"></i>`).join("");
+  return `<div class="schedule-ribbon" aria-hidden="true"><div class="schedule-hours">${bars}</div><div class="schedule-ticks"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div></div>`;
+}
+
 function scheduleDetail(w) {
   const error = scheduleError(w);
   if (error) return error;
-  const minutes = value => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
-  const difference = minutes(w.end) - minutes(w.start);
+  const difference = clockMinutes(w.end) - clockMinutes(w.start);
   const length = (difference + 1440) % 1440;
   const hours = Math.floor(length / 60), remainder = length % 60;
   const duration = [hours ? `${hours}h` : "", remainder ? `${remainder}m` : ""].filter(Boolean).join(" ");
@@ -150,7 +160,7 @@ export function renderAutomations() {
     const state = !r.enabled ? "Switched off" : paused ? "Paused" : isActive ? (winning ? control : "Applies now, but a rule above it wins") : "Waiting";
     const id = esc(r.id);
     return `<li class="rule${isActive && winning ? " active" : ""}${r.enabled ? "" : " disabled"}" data-id="${id}" value="${i + 1}">
-      <div><div class="sentence">${sentence(r)}</div><div class="state">${state}</div></div>
+      <div><div class="sentence">${sentence(r)}</div><div class="state">${state}</div>${scheduleRibbon(r.when)}</div>
       <div class="tools">
         <label class="switch" title="${r.enabled ? "Switch off" : "Switch on"}"><input type="checkbox" id="enable-${id}" data-toggle${r.enabled ? " checked" : ""} aria-label="Automation on"><span></span></label>
         <button class="icon-btn" id="up-${id}" data-up ${filtered || i === 0 ? "disabled" : ""} aria-label="Move up (higher priority)" title="${filtered ? "Clear filters to reorder" : "Move up (higher priority)"}"><svg><use href="#i-up"/></svg></button>
@@ -175,7 +185,9 @@ export function renderAutomations() {
   const starterIcon = { lights_off: "power", dim: "effect", fan_curve: "sliders", preset: "workspace" };
   const starters = STARTERS.filter((s) => !used.has(JSON.stringify([s.rule.when.type, s.rule.then.type])));
   setHTML($("#starters"), starters.length ? `<h2>${rules.length ? "More ideas" : "Start with one of these"}</h2>
-    <div class="starter-grid">${starters.map((s) => `<button class="starter" id="starter-${STARTERS.indexOf(s)}" data-starter="${STARTERS.indexOf(s)}" aria-haspopup="dialog"><svg class="starter-icon" aria-hidden="true"><use href="#i-${s.icon || starterIcon[s.rule.then.type]}"/></svg><strong>${esc(s.title)}</strong><span>${esc(typeof s.text === "function" ? s.text() : s.text)}</span><svg class="starter-arrow" aria-hidden="true"><use href="#i-back"/></svg></button>`).join("")}</div>` : "");
+    <div class="starter-grid">${starters.map((s) => `<button class="starter" id="starter-${STARTERS.indexOf(s)}" data-starter="${STARTERS.indexOf(s)}" aria-haspopup="dialog">
+      <span class="rule-glyphs" aria-hidden="true"><svg class="starter-icon"><use href="#i-${s.icon}"/></svg><i></i><svg class="action-icon"><use href="#i-${starterIcon[s.rule.then.type]}"/></svg></span>
+      <strong>${esc(s.title)}</strong><span class="starter-detail">${esc(typeof s.text === "function" ? s.text() : s.text)}</span><svg class="starter-arrow" aria-hidden="true"><use href="#i-back"/></svg></button>`).join("")}</div>` : "");
 }
 
 // ------------------------------------------------------------ builder
@@ -210,7 +222,7 @@ function openBuilder(rule, isNew, title = "", copyFrom = null) {
       time: () => `<input class="text" type="time" data-w="start" aria-label="Start time" value="${w.start}" required><span>to</span><input class="text" type="time" data-w="end" aria-label="End time" value="${w.end}" required>
         <div class="rb-schedule"><div class="rb-day-groups" role="group" aria-label="Day shortcuts">${Object.keys(DAY_GROUPS).map(label => `<button type="button" class="text-link" data-days="${label}">${label}</button>`).join("")}</div>
         <div class="days" role="group" aria-label="Starting days">${DAYS.map((d, i) => `<button type="button" data-day="${i}" aria-pressed="${w.days.includes(i)}">${d}</button>`).join("")}</div>
-        <p class="hint" id="rb-schedule-detail" role="status">${scheduleDetail(w)}</p></div>`,
+        <div id="rb-hours">${scheduleRibbon(w)}</div><p class="hint" id="rb-schedule-detail" role="status">${scheduleDetail(w)}</p></div>`,
       locked: () => "",
       temp_above: () => `<select class="select" data-w="source" aria-label="Temperature source" style="width:auto">${[["max", "Hotter part"], ["cpu", "Processor"], ["gpu", "Graphics card"], ["liquid", "Coolant"]].map(([v, l]) => `<option value="${v}"${(w.source ?? "max") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
         <span>above</span><input class="text" type="number" required min="${tempIn(30)}" max="${tempIn(100)}" data-w="temp" aria-label="Temperature" value="${tempIn(w.temp ?? 80)}" style="width:80px"><span>°${unitF() ? "F" : "C"}</span>`,
@@ -243,6 +255,7 @@ function openBuilder(rule, isNew, title = "", copyFrom = null) {
       const detail = form.querySelector("#rb-schedule-detail");
       if (detail) {
         detail.textContent = scheduleDetail(r.when);
+        setHTML(form.querySelector("#rb-hours"), scheduleRibbon(r.when));
         form.querySelector('[data-w="end"]').setCustomValidity(scheduleError(r.when));
       }
       const number = form.querySelector('input[type="number"]:invalid');

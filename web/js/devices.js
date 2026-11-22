@@ -47,6 +47,18 @@ function renderList() {
   }
 }
 
+function channelMap(device) {
+  const channels = device.zones.map(z => {
+    const config = zoneSaves.get(z.key)?.draft || z.config;
+    const layout = config.layout;
+    const icon = layout.shape === "fans" ? "fan" : layout.shape === "matrix" ? "workspace" : "bulb";
+    const status = config.enabled ? "On" : "Off";
+    return `<button type="button" data-wire="${esc(z.key)}" data-enabled="${config.enabled}" title="Configure ${esc(config.name)}" aria-label="Go to ${esc(config.name)} wiring (${status})">
+      <svg aria-hidden="true"><use href="#i-${icon}"/></svg><span>${esc(config.name)}</span><small>${status}</small></button>`;
+  }).join("");
+  return `<nav class="wire-map" aria-label="Device zone wiring"><div class="wire-map-title"><svg aria-hidden="true"><use href="#i-chip"/></svg><span>Zone wiring</span><small>${device.zones.length} ${device.zones.length === 1 ? "zone" : "zones"}</small></div><div class="wire-ports">${channels}</div></nav>`;
+}
+
 function zoneCard(z) {
   const c = zoneSaves.get(z.key)?.draft || z.config, L = c.layout, max = z.zone.max_leds;
   const total = L.shape === "fans" ? L.fans * L.leds_per_fan : L.leds;
@@ -100,6 +112,7 @@ function renderDetail() {
   }
   const how = { native: "Direct USB connection", openrgb: "Through OpenRGB", dynamic: "Through Windows Dynamic Lighting, lit while Airglow's window is in front" }[d.kind] || "";
   const active = document.activeElement;
+  const focusedWire = active?.dataset.wire;
   const focusedZone = active?.closest?.("[data-key]")?.dataset.key;
   const activeControl = focusedZone && Object.keys(active.dataset).find(key => ["f", "configure", "identify", "openSetup"].includes(key));
   // Replacing a dirty native input fires change on Chromium and silently commits a partial name/count.
@@ -112,7 +125,7 @@ function renderDetail() {
   deferredDetail = false;
   setHTML(box, `<div class="dev-head"><div><h1>${esc(d.name)}</h1><p class="meta">${esc(d.vendor)}, ${esc(d.type)}. ${how}.${d.online ? "" : ` <span style="color:var(--warm)">${esc(d.error || "Not connected")}</span>`}</p></div></div>
     ${d.experimental ? `<p class="hint warn"><b>Experimental support.</b> This controller follows the same protocol as ones Airglow is tested with, but nobody has confirmed it with Airglow yet.${d.note ? ` ${esc(d.note)}` : ""} If something looks wrong, save a diagnostics report (Settings, About) and open an issue.</p>` : ""}
-    <p class="hint">Choose Configure to rename a zone, adjust its wiring or identify its lights.</p>
+    ${channelMap(d)}
     ${paramsBlock(d)}
     ${d.zones.map(zoneCard).join("")}`);
   wireParams(d);
@@ -121,6 +134,8 @@ function renderDetail() {
     card?.scrollIntoView({ block: "center" });
     card?.querySelector("[data-configure]").focus({ preventScroll: true });
     pendingScroll = null;
+  } else if (focusedWire && !active.isConnected) {
+    box.querySelector(`[data-wire="${CSS.escape(focusedWire)}"]`)?.focus({ preventScroll: true });
   } else if (activeControl && !active.isConnected) {
     const card = document.getElementById(`zc-${focusedZone}`);
     const selector = activeControl === "f" ? `[data-f="${CSS.escape(active.dataset.f)}"]` : "[data-" + (activeControl === "openSetup" ? "open-setup" : activeControl) + "]";
@@ -182,8 +197,10 @@ function paintStrips() {
     if (el._painted === hex) continue;              // an unchanged strip must not touch every cell again
     el._painted = hex;
     const cells = el.children;
+    const count = Math.floor((hex?.length || 0) / 6);
     for (let i = 0; i < cells.length; i++) {
-      cells[i].style.background = hex && hex.length >= (i + 1) * 6 ? `#${hex.substr(i * 6, 6)}` : "";
+      const sample = count > cells.length ? Math.round(i * (count - 1) / Math.max(1, cells.length - 1)) : i;
+      cells[i].style.background = sample < count ? `#${hex.slice(sample * 6, sample * 6 + 6)}` : "";
     }
   }
 }
@@ -237,6 +254,8 @@ export function initDevices() {
   });
   box.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.matches("input[data-f=name]")) e.target.blur(); });
   box.addEventListener("click", (e) => {
+    const wire = e.target.closest("[data-wire]");
+    if (wire) { showZone(wire.dataset.wire); renderDevices(); return; }
     const card = e.target.closest("[data-key]");
     const configure = e.target.closest("[data-configure]");
     if (card && configure) {

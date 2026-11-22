@@ -254,3 +254,66 @@ test("narrow windows keep camera and zone controls inside the stage", async t =>
   }
   await page.screenshot({ path: `${OUTPUT}/lighting-3d-narrow.png`, fullPage: true });
 });
+
+test("Light theatre projects delivered frame colours, holds motion and never changes the rig", async t => {
+  const { page, posts } = await pageFor(t, 1440);
+  const launcher = page.getByRole("button", { name: "Open Light theatre" });
+  await page.evaluate(async () => {
+    const { S, emit } = await import("/js/core.js");
+    // Use the fixture's actual configured geometry; supply known engine RGB to check the optical layer precisely.
+    S.state.effective = { ...S.state.effective, effect: "gradient", on: true, brightness: 80 };
+    const rgb = ["ffc492", "ffa96f", "df9ee0", "b092e0", "92d8d3", "79c8c2"];
+    emit("frames:live", { zones: Object.fromEntries(S.zones.zones.map(z => [z.key,
+      z.positions.map((p, i) => rgb[i % rgb.length]).join("")])) });
+  });
+  await launcher.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Light theatre" });
+  await dialog.getByText("Frame held", { exact: true }).waitFor();
+  const lights = dialog.locator("[data-emitters]");
+  async function sample() {
+    await flush(page);
+    return lights.evaluate(c => {
+      const data = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let found = 0, red = 0, blue = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] > 200) found++;
+        if (data[i] === 255 && !data[i + 1] && !data[i + 2] && data[i + 3] === 255) red++;
+        if (data[i + 2] === 255 && !data[i] && !data[i + 1] && data[i + 3] === 255) blue++;
+      }
+      return { found, red, blue };
+    });
+  }
+  assert.ok((await sample()).found > 200);
+  await page.screenshot({ path: `${OUTPUT}/light-theatre.png` });
+  await stableFrames(page, "ff0000");
+  assert.equal((await sample()).red, 0, "Reduced motion holds the first received frame");
+  await dialog.getByRole("button", { name: "Resume live" }).press("Enter");
+  assert.ok((await sample()).red > 50, "Emitter cores retain frame RGB");
+  await stableFrames(page, "0000ff");
+  assert.ok((await sample()).blue > 50);
+  const camera = dialog.getByRole("button", { name: "Face-on" });
+  await camera.click();
+  assert.equal(await camera.getAttribute("aria-pressed"), "true");
+  const zone = dialog.getByLabel("Focus a lighting zone");
+  const first = await page.evaluate(async () => (await import("/js/core.js")).S.zones.zones.find(z => z.device.online && z.config.enabled && z.positions.length).key);
+  await zone.selectOption(first);
+  assert.match(await dialog.locator(".theatre-meter").textContent(), /^1 zone\s+·/);
+  await page.setViewportSize({ width: 390, height: 720 });
+  await flush(page);
+  assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+  await page.screenshot({ path: `${OUTPUT}/light-theatre-narrow.png` });
+  await page.evaluate(async () => { const { S, emit } = await import("/js/core.js"); S.state.effective.on = false; emit("state"); });
+  await dialog.getByText("Lights off", { exact: true }).waitFor();
+  assert.equal((await sample()).found, 0);
+  await page.evaluate(async first => {
+    const { S, emit } = await import("/js/core.js"); S.zones.zones.find(z => z.key === first).device.online = false; emit("zones");
+  }, first);
+  await dialog.getByText("Devices offline", { exact: true }).waitFor();
+  await page.evaluate(async () => { const { S, emit } = await import("/js/core.js"); S.zones.zones = []; emit("zones"); });
+  await dialog.getByText("No configured LEDs", { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden" });
+  assert.ok(await launcher.evaluate(el => document.activeElement === el));
+  await page.locator(".light-theatre").waitFor({ state: "detached" });
+  assert.deepEqual(posts, []);
+});

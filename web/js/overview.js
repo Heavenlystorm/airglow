@@ -351,7 +351,7 @@ function showTrend(el, meta, points) {
 
 // Sensor tile markup per style. Values and paths are filled in by update().
 function sensorMarkup(t) {
-  const head = `<header class="tile-head"><span class="tile-name"></span><span class="tile-src"></span></header>`;
+  const head = `<header class="tile-head"><svg class="ov-symbol" width="0" height="0" aria-hidden="true"><use/></svg><span class="tile-name"></span><span class="tile-src"></span></header>`;
   if (t.style === "auto") return `${head}<div class="readout"><span class="num">–</span><span class="unit"></span>${TREND}</div>
     <div class="instrument-meter"><div class="instrument-track" aria-hidden="true"><i></i><b class="thermal-marker"></b><b class="threshold-tick warning" title="Airglow warning"></b><b class="threshold-tick critical" title="Airglow high"></b></div><div class="instrument-scale"><span class="scale-lo"></span><span class="scale-hi"></span></div></div>
     <div class="instrument-history"><div class="history-caption"><span></span><span class="history-range"></span></div><div class="history-plot"><svg viewBox="0 0 400 100" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/><g class="network-bins"/></svg><div class="light-host"></div></div><span class="history-empty">Collecting history</span></div>
@@ -399,7 +399,7 @@ function lightModel(el, series, extra = {}) {
 
 function controlMarkup(t) {
   if (t.type === "lighting") {
-    return `<div class="canvas-heading"><span>Lighting canvas</span><a class="link" href="#lighting" title="Open Lighting">Open Lighting ↗</a></div><div class="overview-rig-host"></div>
+    return `<div class="canvas-heading"><span><svg class="ov-symbol" width="0" height="0" aria-hidden="true"><use href="#i-bulb"/></svg>Lighting canvas</span><a class="link" href="#lighting" title="Open Lighting">Open Lighting ↗</a></div><div class="overview-rig-host"></div>
       <footer class="lt-foot"><div class="lt-what"><b class="lt-effect"></b><span class="lt-sub"></span></div>
         <label class="lt-brightness"><span>Brightness <b class="lt-percent" aria-hidden="true"></b></span><input type="range" class="lt-bri" min="0" max="100" aria-label="Brightness"></label>
         <label class="switch" title="Lights on or off"><input type="checkbox" class="lt-on" aria-label="Lights on"><span></span></label></footer>`;
@@ -507,7 +507,12 @@ function source(meta) {
 
 function updateSensor(el, t) {
   const id = t.sensors[0], meta = R.meta[id], v = value(id);
-  el.dataset.family = sensorFamily(meta, id);
+  const family = sensorFamily(meta, id);
+  if (el.dataset.family !== family || !el._symbol?.isConnected) {
+    el.dataset.family = family;
+    el._symbol = el.querySelector(".ov-symbol use");
+    el._symbol?.setAttribute("href", "#i-" + ({ thermal: "temp", load: "chip", capacity: "chip", power: "bolt" }[family] || "sliders"));
+  }
   const name = t.label || meta?.name || sensorName(id);
   setHTML(el.querySelector(".tile-name"), esc(name));
   const src = el.querySelector(".tile-src"), srcText = t.style === "graph" ? "" : source(meta);

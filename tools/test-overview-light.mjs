@@ -199,6 +199,8 @@ test("a tile opens its detail view by click or Enter, and a double click still o
 
 test("history inspection holds recorded samples, preserves gaps and can be copied", async (t) => {
   const page = await pageFor(t, { width: 480, height: 640 });
+  // A narrow workspace can place this tile below the fold. Offscreen graphs suspend drawing.
+  await page.locator('[data-id="power"]').scrollIntoViewIfNeeded();
   await page.waitForFunction(() => document.querySelector('[data-id="power"] .light-canvas')?.dataset.series > 0);
   const focus = page.locator("#light-focus");
   // Freeze before the next fixture poll. GPU samples straddle the CPU peak without sharing its timestamp.

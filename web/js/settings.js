@@ -275,10 +275,12 @@ export function renderSettings() {
   const designName = DESIGNS.find((d) => d.id === s.design)?.name || "Graphite";
   setHTML($("#settings"), `
     <section class="set-group" id="set-general"><h2>General</h2>
+      <div class="set-row appearance-feature"><div><div class="label">Appearance</div>
+        <p><strong>${esc(designName)}</strong> · ${esc(appearanceName(s.appearance))}</p>
+        <button type="button" class="btn" id="s-appearance" aria-haspopup="dialog">Edit appearance</button></div>
+        <span class="design-current"><span class="dsg-preview" data-design="${esc(s.design)}" aria-hidden="true">${previewHTML()}</span></span></div>
       ${row("Start with Windows", "Opens quietly in the tray when you sign in, so lighting and fan curves apply right away.", sw("s-startup", v.start_with_windows, "Start with Windows"))}
       ${row("Temperature unit", "", `<div class="seg" id="s-unit" role="radiogroup" aria-label="Temperature unit"><button role="radio" data-v="C" aria-checked="${s.temp_unit === "C"}">°C</button><button role="radio" data-v="F" aria-checked="${s.temp_unit === "F"}">°F</button></div>`)}
-      ${row("Appearance", `<strong>${esc(designName)}</strong> · ${esc(appearanceName(s.appearance))}`,
-        `<span class="design-current"><span class="dsg-preview" data-design="${esc(s.design)}" aria-hidden="true">${previewHTML()}</span><button type="button" class="btn" id="s-appearance" aria-haspopup="dialog">Edit appearance</button></span>`)}
       ${row("Electricity price", "Feeds the Cost per hour tile. It starts at the German household average of 37.97 ct/kWh (Destatis, first half of 2026); Hamburg tariffs run from about 35 ct to 45 ct. Only the processor and graphics card power Airglow already reads is counted.",
         `<input class="text num" id="s-price" type="number" min="0.01" max="5" step="0.01" value="${s.energy_price}" aria-label="Electricity price per kilowatt hour" style="width:110px"><span class="hint">€/kWh</span>`)}
     </section>
@@ -347,7 +349,8 @@ function paintNav() {
   const nav = $("#settings-nav-links");
   if (!nav) return;
   if (!navWired) {
-    nav.innerHTML = SECTIONS.map(([id, label]) => `<button type="button" data-set="${id}">${esc(label)}</button>`).join("");
+    const icons = { general: "gear", lighting: "bulb", fans: "fan", helpers: "sliders", sensors: "temp", devices: "chip", migration: "copy", about: "section" };
+    nav.innerHTML = SECTIONS.map(([id, label]) => `<button type="button" data-set="${id}"><svg class="settings-symbol" aria-hidden="true"><use href="#i-${icons[id]}"/></svg>${esc(label)}</button>`).join("");
     nav.addEventListener("click", (e) => {
       const b = e.target.closest("[data-set]");
       if (b) focusSettingsSection(b.dataset.set);
