@@ -1089,7 +1089,7 @@ function closeEditor(keepHash) {
   stopScreenRunner();
   clearInterval(E.watch);
   E.watch = null;
-  E.cm = null; E.errMark = null;
+  unmountCode();
   E.doc = null;
   V = null;
   E.saved = null;
@@ -1100,7 +1100,7 @@ function renderEditor() {
   stopPainting();
   const restoreFocus = preserveEditorFocus();
   const d = E.doc;
-  if (d.mode !== "code") { E.cm = null; E.errMark = null; }
+  unmountCode();
   queueMicrotask(() => arrive("edit"));
   setHTML(box(), `<div class="st-edit ${d.mode === "code" ? "is-code" : ""}">
     <header class="st-top">
@@ -1675,6 +1675,13 @@ function loadCodeMirror() {
     }
   })();
   return cmLoaded;
+}
+
+function unmountCode() {
+  // Chromium autofill can retain the last focused name input and its detached form tree.
+  E.cm?.getWrapperElement().remove();
+  E.cm = null;
+  E.errMark = null;
 }
 
 async function mountCode() {
