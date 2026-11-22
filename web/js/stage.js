@@ -3,6 +3,8 @@
 
 import { $, S, clamp, emit, esc, fail, on, post, refreshZones } from "./core.js";
 import { R } from "./readings.js";
+import { createArrangement, groupOffset, positionedZone, positionOf, samePosition, shiftPosition, turnAngle } from "./arrange-model.js";
+import { createArrangePanel } from "./stage-arrange.js";
 
 const U = 1000;                       // canvas units -> viewBox units
 const VB_W = 1600, VB_H = 1000;
@@ -13,6 +15,7 @@ const st = { selected: null, arranging: false, drag: null, mode: "2d", view: { s
 let camera = WORKSPACE;
 let rig3d = null, rigModule = null, modeRequest = 0;
 let theatre = null, theatreFrame = null;
+let arrangement = null, panel = null, previewZones = null, setupSaving = false;
 
 const canvas = () => $("#stage-canvas");
 const svg = () => $("#stage-svg");
@@ -20,6 +23,8 @@ const svg = () => $("#stage-svg");
 // Stay in the established 2D editor until the optional renderer is ready. A late
 // import cannot reopen 3D after Arrange, 2D, or setup placement has been requested.
 async function setRigMode(mode, focus = false) {
+  if (mode === "3d" && st.placing) return;
+  if (mode === "3d" && arrangement?.changed.size) { panel.message("Save or cancel the layout to switch views."); return; }
   const request = ++modeRequest;
   const button = $("#stage-view-3d");
   if (mode === "3d") {
@@ -28,6 +33,7 @@ async function setRigMode(mode, focus = false) {
       rigModule ||= import("./rig-3d.js").catch(error => { rigModule = null; throw error; });
       const { createRig3D } = await rigModule;
       if (request !== modeRequest) return;
+      if (arrangement?.changed.size) return;
       rig3d ||= createRig3D($("#stage"), {
         onSelect: key => selectZone(key),
         isVisible: () => !$('[data-view="lighting"]').hidden,
@@ -37,6 +43,7 @@ async function setRigMode(mode, focus = false) {
         },
       });
       st.arranging = false; st.drag = null;
+      arrangement = null;
       $("#arrange").setAttribute("aria-pressed", "false");
       rig3d.setZones(S.zones?.zones || []); rig3d.setFrames(st.frames); rig3d.select(st.selected);
     } catch (error) {
@@ -178,12 +185,12 @@ function projectCamera(w, h) {
   const ox = (w - camera.width * s) / 2 - camera.x * s;
   const oy = (h - camera.height * s) / 2 - camera.y * s;
   st.view = { s, ox, oy, w, h };
-  if (s > 0) svg().style.setProperty("--stage-label-size", st.arranging ? "22px" : `${13 / s}px`);
+  if (s > 0) svg().style.setProperty("--stage-label-size", `${(st.arranging ? 12 : 13) / s}px`);
 }
 
-function computeView() {
+function computeView(rect) {
   if (st.mode === "3d") return;
-  const c = canvas(), r = c.getBoundingClientRect();
+  const c = canvas(), r = rect || c.getBoundingClientRect();
   projectCamera(r.width, r.height);
   const dpr = window.devicePixelRatio || 1;
   c.width = Math.round(r.width * dpr);
@@ -254,17 +261,27 @@ function declutter() {
 
 export function renderOverlay() {
   const s = svg();
-  const zones = S.zones?.zones || [];
-  rig3d?.setZones(zones); rig3d?.select(st.selected);
+  const saved = S.zones?.zones || [];
+  const zones = (arrangement && !st.placing || st.drag?.positions) ? saved.map(z =>
+    positionedZone(z, st.drag?.positions?.get(z.key) || (!st.placing && arrangement?.changed.get(z.key)?.position))) : saved;
+  previewZones = zones;
+  rig3d?.setZones(saved); rig3d?.select(st.selected);
+  panel?.render(st.placing ? null : arrangement, saved, st.drag?.positions);
   const visible = zones.filter((z) => z.device.online && (z.config.enabled || st.arranging || (st.mode === "2d" && z.key === st.selected)));
   camera = stageCamera(visible);
   st.portrait = portraitBounds(visible);
   s.setAttribute("viewBox", `${camera.x} ${camera.y} ${camera.width} ${camera.height}`);
-  if (st.view.w && st.view.h) projectCamera(st.view.w, st.view.h);
+  // The first live frame can arrive after CSS has laid out the view but before its ResizeObserver runs.
+  // Project the canvas using the same current viewport as the SVG hit targets.
+  const rect = st.mode === "2d" ? canvas().getBoundingClientRect?.() : null;
+  if (rect?.width && rect.height && (rect.width !== st.view.w || rect.height !== st.view.h)) computeView(rect);
+  else if (st.view.w && st.view.h) projectCamera(st.view.w, st.view.h);
   const identity = $("#stage-identity");
   if (identity) {
     const selected = visible.find((z) => z.key === st.selected);
-    identity.innerHTML = `<b>Living Rig</b><span>${selected ? esc(selected.config.name) : `${visible.length} zone${visible.length === 1 ? "" : "s"}`}<span class="rig-stage-note"> · ${selected ? `${selected.positions.length} LEDs` : "Your layout"}</span></span>`;
+    if (arrangement && !st.placing) {
+      identity.innerHTML = `<b>Layout draft</b><span>${arrangement.selected.size} selected</span>`;
+    } else identity.innerHTML = `<b>Living Rig</b><span>${selected ? esc(selected.config.name) : `${visible.length} zone${visible.length === 1 ? "" : "s"}`}<span class="rig-stage-note"> · ${selected ? `${selected.positions.length} LEDs` : "Your layout"}</span></span>`;
   }
   const empty = $("#stage-empty");
   empty.hidden = visible.length > 0 || st.arranging;
@@ -273,10 +290,12 @@ export function renderOverlay() {
     $("#stage-empty-title").textContent = connected ? "Your lighting zones are switched off" : "No lighting found yet";
     $("#stage-empty-detail").textContent = connected ? "Enable a zone in Devices, or choose Arrange to see its position." : "Connect a supported device or use OpenRGB to add your lights.";
   }
-  let html = "", handles = "";
+  const edited = arrangement && !st.placing;
+  let html = edited ? '<defs><pattern id="placement-grid" width="50" height="50" patternUnits="userSpaceOnUse"><path d="M50 0H0V50"/></pattern></defs><rect class="arrange-grid" x="0" y="0" width="1600" height="1000" fill="url(#placement-grid)"/>' : "", handles = "";
+  const focusedZone = s.contains?.(document.activeElement) ? document.activeElement.closest?.(".zone")?.dataset.key : null;
   for (const z of visible) {
     const L = z.config.layout, on = z.config.enabled && z.positions.length;
-    const sel = st.selected === z.key;
+    const sel = edited ? arrangement.selected.has(z.key) : st.selected === z.key;
     let hit = "", deco = "", lx, ly, below;
     if (L.shape === "fans") {
       const r = L.size * U / 2;
@@ -303,7 +322,7 @@ export function renderOverlay() {
       lx = Math.min(x1, x2); ly = Math.min(y1, y2) - 24; below = Math.max(y1, y2) + 42;
     }
     let handle = "";
-    if (sel && st.arranging) {
+    if (sel && st.arranging && (!edited || arrangement.selected.size === 1)) {
       const [cx, cy] = [L.x * U, L.y * U];
       const a = (L.angle - 90) * Math.PI / 180, d = (L.shape === "fans" ? L.size * U * 0.5 * Math.max(1, L.fans * 0.6) : L.length * U * 0.5) + 60;
       const hx = cx + Math.cos(a) * d, hy = cy + Math.sin(a) * d;
@@ -316,10 +335,11 @@ export function renderOverlay() {
     handles += handle;
   }
   s.innerHTML = html + handles;             // handles must stay above every zone's transparent hit area
+  if (focusedZone) zoneEl(focusedZone)?.focus({ preventScroll: true });
   declutter();
   $("#stage").classList.toggle("arranging", st.arranging);
   $("#stage-hint").textContent = st.arranging
-    ? "Drag a zone to move it. Drag its handle to rotate."
+    ? edited ? "Shift-click to add a zone. Arrow keys nudge the selection." : "Drag a zone to move it. Drag its handle to rotate."
     : (visible.length ? "Pick a zone on the rig to edit its lighting." : "");
 }
 
@@ -359,9 +379,7 @@ function draw() {
   const v = st.view;
   ctx.globalCompositeOperation = "source-over";
   ctx.clearRect(0, 0, v.w, v.h);
-  const zones = (S.zones?.zones || []).filter((z) => z.device.online && (z.config.enabled || st.arranging));
-  const drag = st.drag;
-  // During a move the original frame stays stationary, keeping the layout's reference point clear.
+  const zones = (st.arranging && previewZones ? previewZones : S.zones?.zones || []).filter((z) => z.device.online && (z.config.enabled || st.arranging));
   paintPortrait(ctx, zones, v);
   // dark "unlit LED" dots first, then additive light
   for (const pass of [0, 1]) {
@@ -369,21 +387,9 @@ function draw() {
     for (const z of zones) {
       const hex = st.frames[z.key];
       const r = ledRadius(z) * v.s;
-      let dx = 0, dy = 0, rot = null;
-      if (drag && (drag.keys || [drag.key]).includes(z.key)) {
-        if (drag.mode === "move") { dx = drag.dx; dy = drag.dy; }
-        else rot = drag;
-      }
       for (let i = 0; i < z.positions.length; i++) {
-        let [px, py] = z.positions[i];
-        px *= U; py *= U;
-        if (rot) {
-          const cx = z.config.layout.x * U, cy = z.config.layout.y * U, a = rot.delta * Math.PI / 180;
-          const ox = px - cx, oy = py - cy;
-          px = cx + ox * Math.cos(a) - oy * Math.sin(a);
-          py = cy + ox * Math.sin(a) + oy * Math.cos(a);
-        }
-        const [x, y] = toScreen(px + dx, py + dy);
+        const [px, py] = z.positions[i];
+        const [x, y] = toScreen(px * U, py * U);
         if (!pass) {
           ctx.fillStyle = z.config.enabled ? "#1e1e20" : "#141415";
           ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
@@ -501,22 +507,71 @@ function zoneByKey(key) {
   return (S.zones?.zones || []).find((z) => z.key === key);
 }
 
-async function saveLayout(z, layout) {
-  return saveLayouts([{ z, layout }]);
+function paintLayout() { renderOverlay(); draw(); }
+const draftMode = () => st.arranging && arrangement && !st.placing;
+const picked = () => [...arrangement.selected].map(zoneByKey).filter(z => z?.device.online);
+const stagePosition = z => draftMode() ? arrangement.pose(z) : positionOf(z.config.layout);
+
+async function savePlacements(items) {
+  await post("/api/stage/placement", { placements: items });
+  // The server has accepted the whole group. Update the stage immediately, even if the subsequent
+  // discovery refresh is interrupted. Unrelated edits remain on the current zone records.
+  for (const item of items) {
+    const z = zoneByKey(item.key);
+    if (z && samePosition(z.config.layout, item.expected)) Object.assign(z, positionedZone(z, item.position));
+  }
+  emit("zones");
+  void refreshZones().then(() => emit("zones")).catch(fail);
 }
 
-// One gesture, one reload: a device's zones move together, and N concurrent GET /api/zones used to race, so
-// whichever answered last decided the state the page kept.
-async function saveLayouts(items) {
-  try {
-    for (const { z, layout } of items) {
-      const r = await post(`/api/zones/${encodeURIComponent(z.key)}`, { ...z.config, layout });
-      z.config = r.config;
-    }
-    await refreshZones();
-    renderOverlay();
-    draw();
-  } catch (e) { fail(e); renderOverlay(); draw(); }
+function finishArrangement() {
+  arrangement = null; st.drag = null; st.arranging = false;
+  $("#arrange").setAttribute("aria-pressed", "false");
+  paintLayout(); $("#arrange").focus({ preventScroll: true });
+}
+
+function chooseForLayout(key, toggle = false) {
+  if (!draftMode() || arrangement.busy) return;
+  if (!toggle) arrangement.selected.clear();
+  if (key) {
+    if (toggle && arrangement.selected.has(key)) arrangement.selected.delete(key);
+    else arrangement.selected.add(key);
+  }
+  panel.message(""); paintLayout();
+}
+
+async function arrangeAction(action, value) {
+  if (!draftMode() || arrangement.busy || st.drag) return;
+  const a = arrangement, zones = picked();
+  if (action === "cancel") { finishArrangement(); return; }
+  if (action === "save") {
+    if (!a.changed.size) return;
+    a.busy = true; panel.message(""); paintLayout();
+    try {
+      await savePlacements([...a.changed.values()]);
+      if (arrangement === a) {
+        if (st.placing) arrangement = null;
+        else finishArrangement();
+      }
+    } catch (err) { if (arrangement === a) panel.message(err.message); else fail(err); }
+    finally { a.busy = false; paintLayout(); }
+    return;
+  }
+  if (action === "toggle") { chooseForLayout(value, true); return; }
+  panel.message("");
+  if (action === "snap") a.snap = value;
+  else if (action === "undo" || action === "redo") a.history(action === "redo");
+  else if (["row", "column", "space-x", "space-y"].includes(action)) {
+    a.align(zones, ["column", "space-x"].includes(action) ? "x" : "y", action.startsWith("space-"));
+  } else if (action === "turn" || action === "backturn") {
+    a.edit(zones, p => ({ ...p, angle: turnAngle(p.angle, action === "turn" ? 15 : -15) }));
+  } else {
+    const amount = value || panel.step();
+    const { dx, dy } = groupOffset(zones.map(a.pose), action === "left" ? -amount : action === "right" ? amount : 0,
+      action === "up" ? -amount : action === "down" ? amount : 0);
+    a.edit(zones, p => shiftPosition(p, dx, dy));
+  }
+  paintLayout();
 }
 
 function zoneEl(key) {
@@ -536,6 +591,20 @@ function selectZone(key, focus = false) {
 function onKey(e) {
   const g = e.target.closest?.(".zone");
   if (!g) return;
+  if (draftMode()) {
+    if (arrangement.busy) return;
+    const dir = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" }[e.key];
+    if (dir) {
+      e.preventDefault();
+      if (!arrangement.selected.has(g.dataset.key)) chooseForLayout(g.dataset.key);
+      arrangeAction(dir, e.shiftKey ? .001 : panel.step());
+      return;
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault(); chooseForLayout(g.dataset.key, e.key === " " || e.shiftKey);
+    }
+    return;
+  }
   if (e.key === "Enter" || e.key === " ") {
     e.preventDefault();
     selectZone(g.dataset.key, true);
@@ -543,75 +612,87 @@ function onKey(e) {
 }
 
 function onPointerDown(e) {
+  if (e.button !== 0 || st.drag || arrangement?.busy || setupSaving) return;
   const rotEl = e.target.closest("[data-rot]");
   const g = e.target.closest(".zone");
   if (rotEl && st.arranging) {
     const z = zoneByKey(rotEl.dataset.rot);
     const p = svgPoint(e);
-    const cx = z.config.layout.x * U, cy = z.config.layout.y * U;
-    st.drag = { key: z.key, mode: "rotate", start: Math.atan2(p.y - cy, p.x - cx), delta: 0, moved: false };
+    if (!z?.device.online) return;
+    const pos = stagePosition(z), cx = pos.x * U, cy = pos.y * U;
+    st.drag = { key: z.key, keys: [z.key], before: [pos], id: e.pointerId, mode: "rotate", start: Math.atan2(p.y - cy, p.x - cx), moved: false };
     svg().setPointerCapture(e.pointerId);
     return;
   }
   if (!g) {
+    if (draftMode()) { chooseForLayout(null); return; }
     if (st.selected) selectZone(null);
     return;
   }
   const key = g.dataset.key;
   if (st.arranging) {
+    if (draftMode()) {
+      if (e.shiftKey || e.ctrlKey || e.metaKey) { chooseForLayout(key, true); zoneEl(key)?.focus({ preventScroll: true }); return; }
+      if (!arrangement.selected.has(key)) chooseForLayout(key);
+    }
     const p = svgPoint(e);
-    const keys = st.placing?.includes(key) ? st.placing : [key];      // a device being placed moves as one
-    st.drag = { key, keys, mode: "move", x0: p.x, y0: p.y, dx: 0, dy: 0, moved: false };
+    // Keep the grabbed zone first so it provides the grid anchor when moving a group.
+    const group = draftMode() ? picked().map(z => z.key) : st.placing?.includes(key) ? st.placing : [key];
+    const keys = [key, ...group.filter(k => k !== key)].filter(k => zoneByKey(k)?.device.online);
+    st.drag = { key, keys, before: keys.map(k => stagePosition(zoneByKey(k))), id: e.pointerId, mode: "move", x0: p.x, y0: p.y, moved: false };
     svg().setPointerCapture(e.pointerId);
+    if (draftMode()) { zoneEl(key)?.focus({ preventScroll: true }); return; }
   }
   selectZone(key);
 }
 
 function onPointerMove(e) {
   const d = st.drag;
-  if (!d) return;
+  if (!d || d.id !== e.pointerId) return;
   const p = svgPoint(e);
+  let poses;
   if (d.mode === "move") {
-    d.dx = p.x - d.x0; d.dy = p.y - d.y0;
-    d.moved ||= Math.hypot(d.dx, d.dy) > 3;
-    for (const k of d.keys) svg().querySelector(`.zone[data-key="${CSS.escape(k)}"]`)?.setAttribute("transform", `translate(${d.dx} ${d.dy})`);
+    const dx0 = p.x - d.x0, dy0 = p.y - d.y0;
+    d.moved ||= Math.hypot(dx0, dy0) > 3;
+    if (!d.moved) return;
+    const { dx, dy } = groupOffset(d.before, Math.round(dx0) / U, Math.round(dy0) / U, draftMode() && arrangement.snap && !e.shiftKey);
+    poses = d.before.map(pos => shiftPosition(pos, dx, dy));
   } else {
-    const z = zoneByKey(d.key);
-    const cx = z.config.layout.x * U, cy = z.config.layout.y * U;
-    let deg = (Math.atan2(p.y - cy, p.x - cx) - d.start) * 180 / Math.PI;
+    const pos = d.before[0];
+    let deg = (Math.atan2(p.y - pos.y * U, p.x - pos.x * U) - d.start) * 180 / Math.PI;
     if (!e.shiftKey) deg = Math.round(deg / 15) * 15;          // snap to 15° unless Shift is held
-    d.delta = deg; d.moved = true;
+    poses = [{ ...pos, angle: turnAngle(pos.angle, Math.round(deg)) }]; d.moved ||= Math.abs(deg) >= .5;
   }
-  draw();
+  d.positions = new Map(d.keys.map((k, i) => [k, poses[i]]));
+  if (!d.frame) d.frame = requestAnimationFrame(() => { d.frame = 0; if (st.drag === d) paintLayout(); });
 }
 
-function onPointerUp() {
+async function onPointerUp(e) {
   const d = st.drag;
+  if (!d || d.id !== e.pointerId) return;
   st.drag = null;
-  if (!d || !d.moved) { draw(); return; }
-  if (d.mode === "move") {
-    const moved = [];
-    for (const k of d.keys) {
-      const z = zoneByKey(k);
-      const L = { ...z.config.layout };
-      L.x = Math.round(clamp(L.x + d.dx / U, 0, VB_W / U) * 100) / 100;
-      L.y = Math.round(clamp(L.y + d.dy / U, 0, VB_H / U) * 100) / 100;
-      moved.push({ z, layout: L });
-    }
-    saveLayouts(moved);
-    return;
+  if (d.frame) cancelAnimationFrame(d.frame);
+  if (e.type !== "pointerup" || !d.moved || !d.positions) { paintLayout(); return; }
+  const zones = d.keys.map(zoneByKey);
+  if (zones.some(z => !z?.device.online)) { paintLayout(); return; }
+  if (draftMode()) {
+    // Capture the pre-drag pose even if discovery returned a changed placement mid-gesture.
+    arrangement.edit(zones.map((z, i) => ({ ...z, config: { ...z.config, layout: { ...z.config.layout, ...d.before[i] } } })),
+      (_p, i) => d.positions.get(d.keys[i]));
+  } else if (st.placing) {
+    setupSaving = true;
+    try { await savePlacements(d.keys.map((key, i) => ({ key, expected: d.before[i], position: d.positions.get(key) }))); }
+    catch (err) { fail(err); }
+    finally { setupSaving = false; }
   }
-  const z = zoneByKey(d.key);
-  const L = { ...z.config.layout };
-  L.angle = Math.round(((L.angle + d.delta) % 360 + 540) % 360 - 180);
-  saveLayout(z, L);
+  paintLayout();
 }
 
 // The setup guide's last step: Arrange mode with the new light picked out, so you drag it to where it sits.
 // keys: the zones being placed (a graphics card's zones move together), or null when done.
 export function placing(keys) {
   setRigMode("2d");
-  st.arranging = !!keys;
+  st.drag = null; st.arranging = !!keys || !!arrangement;
   st.placing = keys;
   st.selected = keys?.[0] || null;
   $("#arrange").setAttribute("aria-pressed", String(st.arranging));
@@ -626,6 +707,7 @@ export function select(key) {
 }
 
 export function initStage() {
+  panel = createArrangePanel($('[data-view="lighting"]'), arrangeAction);
   const identity = document.createElement("div");
   identity.id = "stage-identity"; identity.className = "stage-identity";
   $("#stage").append(identity);
@@ -664,16 +746,33 @@ export function initStage() {
   svg().addEventListener("pointerup", onPointerUp);
   svg().addEventListener("pointercancel", onPointerUp);
   svg().addEventListener("keydown", onKey);
-  const setArranging = (on) => {
-    if (on) setRigMode("2d");
-    st.arranging = on;
-    $("#arrange").setAttribute("aria-pressed", String(on));
-    renderOverlay();
-    draw();
-  };
-  $("#arrange").addEventListener("click", () => setArranging(!st.arranging));
+  svg().addEventListener("lostpointercapture", onPointerUp);
+  $("#arrange").addEventListener("click", () => {
+    if (st.placing || arrangement?.busy) return;
+    if (arrangement) {
+      if (arrangement.changed.size) { panel.message("Save or cancel your placement changes."); panel.element.querySelector('[data-act="save"]').focus(); }
+      else finishArrangement();
+      return;
+    }
+    setRigMode("2d");
+    arrangement = createArrangement();
+    const current = zoneByKey(st.selected);
+    if (current?.device.online) arrangement.selected.add(current.key);
+    st.arranging = true; $("#arrange").setAttribute("aria-pressed", "true"); paintLayout();
+  });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && st.arranging && !$("#sheet").open) setArranging(false);
+    if (!draftMode() || arrangement.busy || $('dialog[open]') || $('[data-view="lighting"]').hidden) return;
+    if (e.key === "Escape") {
+      if (st.drag) { st.drag = null; paintLayout(); return; }
+      if (arrangement.changed.size) { panel.message("Choose Cancel to discard this layout draft."); panel.element.querySelector('[data-act="cancel"]').focus(); }
+      else finishArrangement();
+      return;
+    }
+    const key = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && ["z", "y"].includes(key) &&
+        (panel.element.contains(e.target) || $("#stage").contains(e.target))) {
+      e.preventDefault(); arrangeAction(key === "y" || e.shiftKey ? "redo" : "undo");
+    }
   });
   on("zones", () => { theatre?.zones(); renderOverlay(); draw(); });
   on("state", () => {

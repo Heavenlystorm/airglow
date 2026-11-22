@@ -21,10 +21,24 @@ SUITES = {
     "roadmap": ["node", "--test", "tools/test-roadmap.mjs"],
     "personalization": ["node", "--test", "tools/test-personalization-browser.mjs"],
     "rig3d": ["node", "--test", "tools/test-rig-3d-browser.mjs"],
+    "theatre-capture": ["node", "--test", "tools/test-theatre-capture.mjs"],
     "creative": ["node", "--test", "tools/test-creative-browser.mjs"],
+    "studio-screen": ["node", "--test", "tools/test-studio-screen.mjs"],
     "blend-renderer": ["node", "tools/test-blend-renderer.mjs"],
     "overview-canvas": ["node", "--test", "tools/test-overview-canvas.mjs"],
+    "overview-companions": ["node", "--test", "tools/test-overview-companions.mjs"],
     "overview-light": ["node", "--test", "tools/test-overview-light.mjs"],
+    "desk-display": ["node", "--test", "tools/test-desk-display-browser.mjs"],
+    "profile-library": ["node", "--test", "tools/test-profile-library.mjs"],
+    "profile-capacity": ["node", "--test", "tools/test-profile-capacity.mjs"],
+    "community-profiles": ["node", "--test", "tools/test-community-profile-navigation.mjs"],
+    "first-use-workspaces": ["node", "--test", "tools/test-first-use-workspaces.mjs"],
+    "evening-workflow": ["node", "--test", "tools/test-evening-workflow.mjs"],
+    "split-workspace": ["node", "--test", "tools/test-split-workspace.mjs"],
+    "wind-down": ["node", "--test", "tools/test-wind-down.mjs"],
+    "windows-shortcut": ["node", "--test", "tools/test-window-shortcut.mjs"],
+    "telemetry-sessions": ["node", "--test", "tools/test-session-lab.mjs"],
+    "curve-sandbox": ["node", "--test", "tools/test-curve-sandbox.mjs"],
 }
 
 
@@ -53,7 +67,16 @@ def main():
                      AIRGLOW_PERSONALIZATION_OUTPUT=str(output / "personalization"),
                      AIRGLOW_RIG3D_OUTPUT=str(output / "rig-3d"), AIRGLOW_CREATIVE_OUTPUT=str(output / "creative"))
     check_env["AIRGLOW_CANVAS_OUTPUT"] = str(output / "overview-canvas")
+    check_env["AIRGLOW_COMPANIONS_OUTPUT"] = str(output / "overview-companions")
+    check_env["AIRGLOW_CAPTURE_OUTPUT"] = str(output / "theatre-capture")
     check_env["AIRGLOW_LIGHT_OUTPUT"] = str(output / "overview-light")
+    check_env["AIRGLOW_DESK_OUTPUT"] = str(output / "desk-display")
+    check_env["AIRGLOW_SHORTCUT_OUTPUT"] = str(output / "windows-shortcut")
+    check_env["AIRGLOW_WIND_DOWN_OUTPUT"] = str(output / "wind-down")
+    check_env["AIRGLOW_LIBRARY_OUTPUT"] = str(output / "profile-library")
+    check_env["AIRGLOW_SPLIT_OUTPUT"] = str(output / "split-workspace")
+    check_env["AIRGLOW_SESSION_OUTPUT"] = str(output / "telemetry-sessions")
+    check_env["AIRGLOW_CURVE_OUTPUT"] = str(output / "curve-sandbox")
     result = {"fixture": str(fixture), "checks": {}}
     with (output / "fixture.log").open("w", encoding="utf-8") as log:
         server = subprocess.Popen([sys.executable, "-u", "tools/dev_server.py", "--demo"], cwd=ROOT, env=env,

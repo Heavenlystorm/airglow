@@ -277,49 +277,75 @@ document.addEventListener("visibilitychange", () => {
   else stopPreview();
 });
 
-export async function openGallery() {
-  G.filter.clear(); G.picked = null; G.profile = null;
-  openSheet(`<div class="body wide gallery"><div class="su-top"><span class="su-where"><b>Profile gallery</b></span><button class="icon-btn" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div>
-    <p class="hint" style="margin:0">Loading profiles from GitHub…</p></div>`);
-  $("#sheet").addEventListener("close", stopPreview, { once: true });
-  try { G.list = await get("/api/gallery"); }
-  catch (e) {
-    openSheet(`<div class="body"><h2>The gallery didn't load</h2><p class="lede" style="margin:0">${esc(e.message)}</p>
-      <div class="actions"><span class="spacer"></span><button class="btn quiet" data-close>Close</button><button class="btn primary" id="gl-retry">Try again</button></div></div>`);
-    $("#gl-retry").addEventListener("click", openGallery);
-    return;
-  }
-  renderGallery();
-  const first = G.list.profiles[0];
-  if (first) pick(first.id);
-}
+let galleryVisit = 0, detailRequest = 0, closeGalleryVisit = null;
 
-function visible() {
-  return G.list.profiles.filter((p) => [...G.filter].every((f) => p.badges.includes(f)));
+export async function openGallery() {
+  closeGalleryVisit?.();
+  const visit = ++galleryVisit;
+  G.filter.clear(); G.picked = null; G.profile = null;
+  const sheet = openSheet(`<div class="body wide gallery profile-gallery"><div class="sheet-head"><h2>Profile gallery</h2>
+    <button class="btn quiet" data-close>Close</button></div><p role="status" class="hint">Loading community profiles…</p></div>`);
+  const current = () => visit === galleryVisit && sheet.open && !!sheet.querySelector(".profile-gallery");
+  const retire = () => {
+    if (visit !== galleryVisit) return;
+    galleryVisit++; detailRequest++; closeGalleryVisit = null;
+    observer.disconnect(); sheet.removeEventListener("close", departed);
+    if (G.preview) stopPreview();
+  };
+  const departed = () => { if (!current()) retire(); };
+  const observer = new MutationObserver(departed);
+  observer.observe(sheet, { childList:true }); sheet.addEventListener("close",departed);
+  closeGalleryVisit = retire;
+  try {
+    const listing = await get("/api/gallery");
+    if (!current()) return;
+    G.list = listing; renderGallery();
+  } catch (error) {
+    if (!current()) return;
+    openSheet(`<div class="body profile-gallery"><h2>The gallery didn’t load</h2><p class="lede">${esc(error.message)}</p>
+      <div class="actions"><button class="btn" id="gl-offline">Browse offline lookbook</button><span class="spacer"></span>
+      <button class="btn quiet" data-close>Close</button><button class="btn primary" id="gl-retry">Try again</button></div></div>`);
+    $("#gl-retry").onclick=openGallery;
+    $("#gl-offline").onclick=async()=>{const m=await import("./lookbook.js");if(current())m.openLookbook();};
+  }
 }
 
 function renderGallery() {
-  const items = visible();
   const featured = new Set(G.list.featured);
-  openSheet(`<div class="body wide gallery">
-    <div class="su-top"><span class="su-where"><b>Profile gallery</b><span>${G.list.profiles.length} profiles from the community</span></span><button class="icon-btn" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-close"/></svg></button></div>
-    <div class="gl-filters" role="group" aria-label="Filter">${Object.entries(BADGES).map(([k, v]) => `<button class="chip-btn" data-filter="${k}" aria-pressed="${G.filter.has(k)}">${v}</button>`).join("")}</div>
-    <div class="gl-main">
-      <div class="gl-list" role="listbox" aria-label="Profiles">${items.map((p) => `<button class="gl-card" role="option" data-pick="${esc(p.id)}" aria-selected="${G.picked === p.id}">
-          <strong>${esc(p.name)}${featured.has(p.id) ? ` <span class="tag new">Featured</span>` : ""}</strong>
-          <span class="gl-by">by ${esc(p.author || "someone")}</span>
-          <span class="gl-badges">${p.badges.map((b) => `<i>${BADGES[b] || b}</i>`).join("")}</span></button>`).join("") || `<p class="hint">Nothing matches these filters.</p>`}</div>
-      <div class="gl-detail" id="gl-detail">${detailHTML()}</div>
-    </div>
-    <p class="hint" style="margin:0">Have one to share? Profiles, Edit, then Share next to it.</p>
-  </div>`);
-  $$("#sheet [data-filter]").forEach((b) => b.addEventListener("click", () => {
-    const f = b.dataset.filter;
-    G.filter.has(f) ? G.filter.delete(f) : G.filter.add(f);
-    renderGallery();
-  }));
-  $$("#sheet [data-pick]").forEach((b) => b.addEventListener("click", () => pick(b.dataset.pick)));
-  wireDetail();
+  const sheet = openSheet(`<div class="body wide gallery profile-gallery"><header class="sheet-head"><div><h2>Profile gallery</h2>
+    <p class="hint">${G.list.profiles.length} community profiles</p></div><button class="btn quiet" data-close>Close</button></header>
+    <input type="search" class="text" id="gl-search" aria-label="Search community profiles" placeholder="Search by name, author or keyword" autocomplete="off">
+    <div class="gl-filters" role="group" aria-label="Filters">${Object.entries(BADGES).map(([k,v])=>`<button class="chip-btn" data-filter="${k}" aria-pressed="false">${v}</button>`).join("")}</div>
+    <div class="gl-main"><div class="gl-list" role="listbox" aria-label="Community profiles"></div><div class="gl-detail" id="gl-detail"></div></div></div>`);
+  const search=sheet.querySelector("#gl-search"), list=sheet.querySelector(".gl-list");
+  function update() {
+    const terms = search.value.toLocaleLowerCase().trim().split(/\s+/);
+    const items = G.list.profiles.filter(p => {
+      const haystack = [p.name,p.author,p.description,...p.badges.map(b=>BADGES[b]||b)].filter(Boolean).join(" ").toLocaleLowerCase();
+      return terms.every(t=>haystack.includes(t)) && [...G.filter].every(f=>p.badges.includes(f));
+    });
+    list.innerHTML = items.map(p=>`<button class="gl-card" role="option" data-pick="${esc(p.id)}" tabindex="${p.id===G.picked?0:-1}" aria-selected="${p.id===G.picked}">
+      <strong>${esc(p.name)}${featured.has(p.id)?' <span class="tag new">Featured</span>':""}</strong>
+      <span class="gl-by">by ${esc(p.author||"community")}</span><span class="gl-badges">${p.badges.map(b=>`<i>${esc(BADGES[b]||b)}</i>`).join("")}</span></button>`).join("") || '<p class="hint">No profiles match your search and filters.</p>';
+    if (items.some(p=>p.id===G.picked)) return;
+    if (items.length) pick(items[0].id);
+    else { detailRequest++; G.picked=null; G.profile=null; if(G.preview)stopPreview(); $("#gl-detail").innerHTML=""; }
+  }
+  sheet.querySelector(".gl-filters").onclick=e=>{
+    const button=e.target.closest("[data-filter]");if(!button)return;
+    const f=button.dataset.filter;
+    if(G.filter.has(f))G.filter.delete(f);else G.filter.add(f);
+    button.setAttribute("aria-pressed", String(G.filter.has(f))); update();
+  };
+  search.oninput=update;
+  list.onclick=e=>{const button=e.target.closest("[data-pick]");if(button)pick(button.dataset.pick);};
+  list.onkeydown=e=>{
+    const options=[...list.querySelectorAll("[data-pick]")], i=options.indexOf(document.activeElement);
+    const next={ArrowDown:Math.min(options.length-1,i+1), ArrowUp:Math.max(0,i-1), Home:0, End:options.length-1}[e.key];
+    if(next===undefined||!options[next])return;
+    e.preventDefault(); options[next].focus(); pick(options[next].dataset.pick);
+  };
+  update(); search.focus({preventScroll:true});
 }
 
 function detailHTML() {
@@ -345,17 +371,28 @@ function wireDetail() {
 }
 
 async function pick(id) {
+  const request = ++detailRequest, visit = galleryVisit;
+  if (G.preview) stopPreview();
   G.picked = id; G.profile = null;
-  $$("#sheet [data-pick]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.pick === id)));
-  $("#gl-detail").innerHTML = detailHTML();
+  $$("#sheet [data-pick]").forEach((b) => {
+    b.setAttribute("aria-selected", String(b.dataset.pick === id));
+    b.tabIndex = b.dataset.pick === id ? 0 : -1;
+  });
+  const pane = $("#gl-detail");
+  pane.innerHTML = detailHTML();
+  const current = () => pane.isConnected && $("#sheet").open && G.picked === id && request === detailRequest && visit === galleryVisit;
   try {
     const p = await get(`/api/gallery/profile?id=${encodeURIComponent(id)}`);
-    if (G.picked !== id) return;
+    if (!current()) return;
     G.profile = p;
     $("#gl-detail").innerHTML = detailHTML();
     wireDetail();
     startPreview(p);
-  } catch (e) { fail(e); }
+  } catch (e) {
+    if (!current()) return;
+    pane.innerHTML = `<p class="hint" role="status">${esc(e.message)}</p><button class="btn" type="button" data-detail-retry>Try again</button>`;
+    pane.querySelector("button").onclick = () => pick(id);
+  }
 }
 
 // ------------------------------------------------------------ trying one on: Keep or Discard, from any tab
@@ -363,14 +400,19 @@ const T = { profile: null, fans: false, autos: true };
 try { T.profile = JSON.parse(sessionStorage.getItem("airglow.trial") || "null"); } catch { /* none */ }
 
 async function tryProfile(p) {
+  if (!p) return;
+  const pane = $("#gl-detail"), button = $("#gl-try");
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
   stopPreview();
   try {
     await post("/api/profiles/try", { profile: p, include_fans: false });
     T.profile = p; T.fans = false; T.autos = true;
     try { sessionStorage.setItem("airglow.trial", JSON.stringify(p)); } catch { /* fine */ }
-    closeSheet();
+    if (pane?.isConnected && $("#sheet")?.open && G.profile === p) closeSheet();
     emit("refresh");
   } catch (e) { fail(e); }
+  finally { if (button) button.disabled = false; }
 }
 
 function endTrial() {

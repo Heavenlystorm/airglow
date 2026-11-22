@@ -3,10 +3,15 @@ import { $ } from "./core.js";
 import { animateMotion } from "./motion.js";
 
 let wired = false;
+let focusOrigin = null;
 
 export function openSheet(html, { step = false } = {}) {
   const d = $("#sheet");
   const swapping = d.open;
+  const opener = document.activeElement;
+  if (!swapping && opener && opener !== document.body && !d.contains(opener)) {
+    focusOrigin = { opener, menu: opener.closest("details")?.querySelector("summary") };
+  }
   d.innerHTML = html;
   // A guide that moves to its next step slides the new content in, so the change reads as progress. A sheet that
   // just repaints in place (a row deleted, a value saved) stays put.
@@ -20,6 +25,17 @@ export function openSheet(html, { step = false } = {}) {
   }
   if (!wired) {
     wired = true;
+    d.addEventListener("close", () => {
+      // close() queues this event. A new sheet can already be open by the time it arrives.
+      if (d.open || !focusOrigin) return;
+      const { opener, menu } = focusOrigin;
+      focusOrigin = null;
+      if (document.activeElement !== document.body && !d.contains(document.activeElement)) return;
+      const original = opener.isConnected ? opener : document.getElementById(opener.id);
+      const toggle = menu?.isConnected ? menu : menu?.id && document.getElementById(menu.id);
+      const target = toggle && !toggle.closest("details")?.open ? toggle : original;
+      target?.focus({ preventScroll: true });
+    });
     d.addEventListener("keydown", (e) => {
       if (e.key !== "Tab") return;
       const items = [...d.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")]
@@ -31,16 +47,7 @@ export function openSheet(html, { step = false } = {}) {
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     });
   }
-  if (!d.open) {
-    const openerId = document.activeElement?.id;
-    d.showModal();
-    if (openerId) d.addEventListener("close", () => {
-      // A save can replace the original button while its dialog is open.
-      if (!d.open && (document.activeElement === document.body || d.contains(document.activeElement))) {
-        document.getElementById(openerId)?.focus({ preventScroll: true });
-      }
-    }, { once: true });
-  }
+  if (!d.open) d.showModal();
   d.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", closeSheet));
   return d;
 }

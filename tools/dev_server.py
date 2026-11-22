@@ -2,6 +2,8 @@
 
     python tools/dev_server.py           # your real sensors (LibreHardwareMonitor, if it's running)
     python tools/dev_server.py --demo    # made-up sensors too, for screenshots or a PC without LibreHardwareMonitor
+
+Set AIRGLOW_DEMO_PORT, AIRGLOW_DEMO_LHM_PORT and AIRGLOW_FIXTURE_DATA to run a second isolated rig.
 """
 
 import json
@@ -31,7 +33,10 @@ logging.basicConfig(level=logging.INFO)
 os.environ.setdefault("AIRGLOW_GALLERY_URL", (Path(__file__).resolve().parent.parent / "profiles").as_uri())
 os.environ.setdefault("AIRGLOW_EFFECTS_URL", (Path(__file__).resolve().parent.parent / "effects").as_uri())
 DEMO = "--demo" in sys.argv
-DEMO_LHM_PORT = 8791
+DEMO_PORT = int(os.environ.get("AIRGLOW_DEMO_PORT", "8790"))
+DEMO_LHM_PORT = int(os.environ.get("AIRGLOW_DEMO_LHM_PORT", "8791"))
+if not all(1 <= p <= 65535 for p in (DEMO_PORT, DEMO_LHM_PORT)) or (DEMO and DEMO_PORT == DEMO_LHM_PORT):
+    raise ValueError("Choose distinct ports between 1 and 65535 for the demo app and demo sensors.")
 
 
 class DevNzxt(FakeLightDevice):
@@ -216,12 +221,16 @@ if __name__ == "__main__":
         ctrl.engine.audio = SimpleNamespace(active=False, error=None, frame=None, touch=lambda **kw: None)
     ctrl.start()
     updater = updates.Updater(store, kind="velopack", managers=lambda channel: [DemoFeed()], fetch_meta=lambda: None)
-    server = api.Server(8790, ctrl, store, updater=updater)
+    server = api.Server(DEMO_PORT, ctrl, store, updater=updater)
     if os.environ.get("AIRGLOW_FIXTURE") == "1":
         server.previews.host.url = None       # screen previews must obey the fixture's no-native-WebView rule too
+        if os.environ.get("AIRGLOW_FIXTURE_PREVIEW_PAGE") == "1" and os.environ.get("AIRGLOW_FIXTURE_DATA"):
+            # Hand the preview page its own short-lived fixture credential without starting a native host.
+            (data / "preview-page.token").write_text(server.previews.host.token, encoding="ascii")
     from airglow import fxlibrary
     from airglow.lighting import studio
     fxlibrary.LIBRARY = fxlibrary.Library(data / "effects")     # the dev server keeps its effects with its data
-    studio.HOST.url = None if os.environ.get("AIRGLOW_FIXTURE") == "1" else "http://127.0.0.1:8790"
-    print("dev UI on http://127.0.0.1:8790  (data in", data, ")", "with demo sensors" if DEMO else "")
+    origin = f"http://127.0.0.1:{DEMO_PORT}"
+    studio.HOST.url = None if os.environ.get("AIRGLOW_FIXTURE") == "1" else origin
+    print("dev UI on", origin, "(data in", data, ")", "with demo sensors" if DEMO else "")
     server.serve_forever()

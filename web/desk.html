@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en" data-design="firefly">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Airglow · Desk Display</title>
+<script src="js/design-boot.js"></script>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/designs.css">
+<link rel="stylesheet" href="css/desk-display.css">
+</head>
+<body class="desk-body" data-layout="clock" data-scenery="glasshouse">
+<main class="desk-face">
+  <div class="desk-plate" hidden aria-hidden="true"><div></div></div>
+  <header class="desk-head">
+    <div class="desk-brand"><svg class="desk-brand-mark" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"><path d="M7.85 37.53A25 25 0 0 1 56.15 37.53M6 44H58"/></g><path d="M18 44a14 14 0 0 1 28 0z" fill="currentColor"/></svg><h1>Desk Display</h1></div>
+    <div class="desk-tools">
+      <button type="button" class="desk-tool" id="desk-pin" title="Keep on top" aria-label="Keep on top" aria-pressed="false" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 3 8 0-1 6 3 3v2H6v-2l3-3-1-6zm4 11v7"/></svg>
+      </button>
+      <button type="button" class="desk-tool" id="desk-full" title="Full screen" aria-label="Full screen" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/></svg>
+      </button>
+      <button type="button" class="desk-tool" id="desk-options-open" aria-haspopup="dialog" aria-label="Display settings" title="Display settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+      </button>
+    </div>
+  </header>
+  <section class="desk-clock-panel" aria-label="Desk clock">
+    <p class="desk-date" id="desk-date"></p>
+    <div class="desk-digits"><time id="desk-time"></time><span id="desk-period"></span></div>
+    <div class="desk-timer-line">
+      <button type="button" id="desk-timer-open" class="desk-link" aria-haspopup="dialog">Focus timer</button>
+      <span id="desk-clock-detail"></span>
+    </div>
+    <progress class="desk-progress" id="desk-progress" aria-label="Focus timer elapsed" max="100" value="0" hidden></progress>
+  </section>
+  <section class="desk-readings" aria-label="Pinned readings">
+    <div class="desk-readings-head"><h2 id="desk-reading-title">Pinned readings</h2><div><span id="desk-range-note">Past minute</span>
+      <button type="button" class="desk-link" id="desk-choose-readings" aria-haspopup="dialog" aria-label="Choose display readings">Edit</button></div></div>
+    <div id="desk-instruments"></div>
+    <p id="desk-empty" hidden>Pin a reading on the Overview to see it here.</p>
+  </section>
+  <p class="desk-feedback" id="desk-feedback" role="status"></p>
+</main>
+<dialog class="desk-dialog desk-picker" id="desk-pick" aria-labelledby="desk-pick-title">
+  <div class="desk-dialog-head"><h2 id="desk-pick-title">Display readings</h2><button type="button" class="desk-close" aria-label="Cancel reading changes">×</button></div>
+  <label>Reading source<select class="select" id="desk-pick-mode"><option value="overview">Follow Overview pins</option><option value="desk">Choose for this display</option></select></label>
+  <section id="desk-pick-custom" hidden><h3>Display order</h3><div id="desk-pick-order"></div>
+    <label for="desk-pick-search">Find readings</label><input class="text" id="desk-pick-search" type="search" autocomplete="off" placeholder="Temperature, power, fan…">
+    <div id="desk-pick-list" role="group" aria-label="Available readings"></div>
+    <button type="button" class="btn quiet" id="desk-pick-retry" hidden>Retry loading readings</button></section>
+  <p id="desk-pick-message" role="status" aria-live="polite"></p>
+  <button type="button" class="btn primary" id="desk-pick-save">Save display readings</button>
+</dialog>
+<dialog class="desk-dialog" id="desk-options" aria-labelledby="desk-options-title">
+  <div class="desk-dialog-head"><h2 id="desk-options-title">Display settings</h2><button class="desk-close" type="button" aria-label="Close display settings">×</button></div>
+  <label>Layout<select class="select" id="desk-layout"><option value="clock">Clock and readings</option><option value="instruments">Large readings</option><option value="quiet">Clock only</option></select></label>
+  <label class="desk-scenery-field">Scenery<select class="select" id="desk-scenery"><option value="glasshouse">Glasshouse</option><option value="dusk">Firefly dusk</option><option value="plain">Plain</option>
+    <optgroup label="Lighting lookbook" id="desk-plates"><option value="daily">A different look each day</option></optgroup></select><small id="desk-daily-name" hidden></small></label>
+  <label>Clock format<select class="select" id="desk-format"><option value="system">System setting</option><option value="12">12-hour</option><option value="24">24-hour</option></select></label>
+  <label class="desk-check"><input type="checkbox" id="desk-seconds"> Show seconds</label>
+  <p class="desk-save-error" role="status"></p>
+  <button type="button" class="btn" id="desk-main" disabled>Open Airglow</button>
+</dialog>
+<dialog class="desk-dialog" id="desk-timer" aria-labelledby="desk-timer-title">
+  <div class="desk-dialog-head"><h2 id="desk-timer-title">Focus timer</h2><button class="desk-close" type="button" aria-label="Close focus timer">×</button></div>
+  <form id="desk-duration-form">
+    <div class="desk-duration-choices" aria-label="Timer presets"><button type="button" data-minutes="15">15 min</button><button type="button" data-minutes="25">25 min</button><button type="button" data-minutes="50">50 min</button></div>
+    <label>Minutes<input class="text" id="desk-minutes" type="number" min="1" max="240" step="1" value="25" required></label>
+    <button class="btn primary" type="submit">Start focus timer</button>
+  </form>
+  <div id="desk-timer-active" hidden><p id="desk-timer-status"></p><div class="desk-duration-choices"><button class="btn primary" type="button" id="desk-pause">Pause</button><button class="btn" type="button" id="desk-end">End timer</button></div></div>
+  <p class="desk-save-error" role="status"></p>
+</dialog>
+<script src="js/desk-display.js" type="module"></script>
+</body>
+</html>

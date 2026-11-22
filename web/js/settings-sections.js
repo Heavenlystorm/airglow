@@ -1,6 +1,6 @@
 // Settings navigation and the topics that take Quick Switch to each section.
 export const SETTINGS_SECTIONS = [
-  ["general", "General", "Appearance and theme, temperature unit, startup and electricity price"],
+  ["general", "General", "Appearance, Windows shortcut, temperature unit, startup and electricity price"],
   ["lighting", "Lighting", "Lights during sleep, shutdown and lock"],
   ["fans", "Fans", "Temperature source, coolant, failsafe and ramp speed"],
   ["helpers", "Helper programs", "Install or repair LibreHardwareMonitor and OpenRGB"],

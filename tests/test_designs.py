@@ -14,7 +14,7 @@ class DesignListTests(unittest.TestCase):
     def test_every_design_is_in_every_place(self):
         css = (WEB / "css" / "designs.css").read_text(encoding="utf-8")
         js = (WEB / "js" / "design.js").read_text(encoding="utf-8")
-        window = (ROOT / "airglow" / "window.py").read_text(encoding="utf-8")
+        window = (ROOT / "airglow" / "windowtheme.py").read_text(encoding="utf-8")
         self.assertRegex(css, r"\[data-design\]\s*\{")                 # the Graphite reset previews fall back to
         blocks = set(re.findall(r'\[data-design="([a-z]+)"\]', css))
         self.assertEqual(blocks | {"graphite"}, set(config.DESIGNS))

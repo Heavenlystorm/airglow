@@ -7,6 +7,7 @@ import { select } from "./stage.js";
 import { openColourEditor, rememberColours } from "./lighting-colours.js";
 import { editProfilesSheet, openGallery, saveProfileSheet } from "./profiles.js";
 import { favoriteButton } from "./quick-preferences.js";
+import { initWindDown } from "./wind-down.js";
 
 let selectedZone = null;
 const zoneFor = (key) => S.zones?.zones?.find(z => z.key === key);
@@ -275,7 +276,7 @@ export function describeShort(rule) {
 function presetsHTML() {
   const active = S.state.active_preset;
   return `<div class="ins-block"><div class="ins-title"><h2 style="font-size:15px">Profiles</h2>
-      <span class="btn-row" style="gap:14px"><button class="text-link" id="browse-profiles">Browse</button><button class="text-link" id="edit-presets">Edit</button></span></div>
+      <span class="btn-row" style="gap:12px"><button class="text-link" data-profile-library>Library</button><button class="text-link" id="browse-profiles">Gallery</button><button class="text-link" id="edit-presets">Edit</button></span></div>
     <div class="presets">${S.presets.map((p) => `<span class="preset-choice"><button class="preset" data-preset="${esc(p.id)}" aria-pressed="${p.id === active}" style="--pc:${sceneColor(p)};--ps:${sceneSwatch(p)}">
       <span class="pdot"></span>${esc(p.name)}</button>${favoriteButton("profile", p.id, p.name)}</span>`).join("")}
       <button class="preset" id="save-preset" title="Save the current lighting and fan curve as a profile"><svg width="14" height="14"><use href="#i-plus"/></svg>Save current</button></div></div>`;
@@ -467,6 +468,7 @@ export function renderLighting() {
 }
 
 export function initLighting() {
+  initWindDown();
   new ResizeObserver(fitNames).observe($("#deck"));
   document.fonts?.ready.then(fitNames);
   $("#zone-pick").addEventListener("change", (e) => showZone(e.target.value));

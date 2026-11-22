@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
+import { linkStage } from "./stage-fixture.mjs";
 
 const file = new URL("../web/js/overview-rig.js", import.meta.url);
 const tick = () => new Promise(setImmediate);
@@ -65,11 +66,7 @@ async function harness({ actual3d = false } = {}) {
   const names = stageSource.match(/import\s*\{([^}]+)\}/)[1].split(",").map(x => x.trim());
   const core = new vm.SyntheticModule(names, function () { for (const n of names) this.setExport(n, n === "clamp" ? (v, lo, hi) => Math.max(lo, Math.min(hi, v)) : n === "S" ? {} : () => {}); }, { context });
   const readings = new vm.SyntheticModule(["R"], function () { this.setExport("R", { stale: false }); }, { context });
-  await stage.link(specifier => {
-    if (specifier === "./core.js") return core;
-    if (specifier === "./readings.js") return readings;
-    throw new Error("Unexpected stage dependency: " + specifier);
-  });
+  await linkStage(stage, context, core, readings);
   await stage.evaluate();
   await module.link(() => stage); await module.evaluate();
   const rig = module.namespace.createOverviewRig(host, { onSelect: key => selections.push(key), onViewChange: view => viewChanges.push(view), isVisible: () => visible });

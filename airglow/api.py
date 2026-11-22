@@ -17,8 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (__version__, autostart, conflicts, coolers, diagnostics, fancontrol, gallery, lightsetup, paths,
                system, tools, updates)
-from .automation import validate_rule, whole_number
-from .config import DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP, validate_zone
+from .automation import rehearse, validate_rule, whole_number
+from .config import CurveConflict, DEFAULT_CURVES, MIN_FAN_DUTY, SAFETY_TEMP, validate_zone
 from .lighting import effects, geometry, studio
 
 log = logging.getLogger(__name__)
@@ -38,9 +38,10 @@ TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
 
 
 class ApiError(Exception):
-    def __init__(self, status, message):
+    def __init__(self, status, message, *, details=None):
         super().__init__(message)
         self.status = status
+        self.details = details or {}
 
 
 class Server(ThreadingHTTPServer):
@@ -158,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(404, "not found")
         except ApiError as e:
             self._close_unread(body_read)
-            self._send(e.status, {"error": str(e)})
+            self._send(e.status, {**e.details, "error": str(e)})
         except ValueError as e:
             self._close_unread(body_read)
             self._send(400, {"error": str(e)})
@@ -282,9 +283,10 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- views
 
-def _settings_view(store, updater=None):
+def _settings_view(store, updater=None, shortcut=None):
     s = store.settings()
-    return {"settings": s, "start_with_windows": autostart.is_enabled(), "fan_profiles": fancontrol.profiles(s),
+    return {"settings": s, "windows_shortcut": shortcut.status() if shortcut else None,
+            "start_with_windows": autostart.is_enabled(), "fan_profiles": fancontrol.profiles(s),
             "fancontrol_installed": fancontrol.exe_path(s) is not None, "version": __version__,
             "updates_available": bool(updates.UPDATE_REPO) and updater is not None,
             "update": updater.status() if updater else None,
@@ -360,6 +362,44 @@ def _setup_pending(ctrl, store):
 
 def route(server, method, path, body, query=None):
     ctrl, store, hooks = server.ctrl, server.store, server.hooks
+    if path == "/api/windows-shortcut":
+        native = hooks.get("window_shortcut")
+        if method == "GET":
+            if native:
+                return native.status()
+            return {"available": False, "registered": False, "saved": store.settings()["windows_shortcut"],
+                    "keys": [], "error": "Windows shortcuts are available in the Airglow desktop app."}
+        if method == "POST":
+            if not native:
+                raise ApiError(409, "Open the Airglow desktop app to register a Windows shortcut.")
+            from .windowshortcut import ShortcutUnavailable
+            try:
+                return native.change(body.get("choice"), body.get("session"), body.get("version"))
+            except ShortcutUnavailable as exc:
+                raise ApiError(409, str(exc)) from None
+    if path.startswith("/api/desk-display"):
+        from .deskdisplay import display_view
+        native = hooks.get("desk_display")
+        if path == "/api/desk-display" and method == "GET":
+            reading_ids = (query or {}).get("reading", []) if (query or {}).get("source") == ["desk"] else None
+            return display_view(store, ctrl, native, reading_ids)
+        if path == "/api/desk-display/open" and method == "POST":
+            if not native:
+                return {"native": False, "open": False, "pinned": False}
+            try:
+                return native.open()
+            except RuntimeError as exc:
+                raise ApiError(409, str(exc)) from None
+        if path == "/api/desk-display/pin" and method == "POST":
+            if type(body.get("pinned")) is not bool:
+                raise ApiError(400, "Choose whether to keep the window on top.")
+            if not native:
+                raise ApiError(409, "Window pinning is available in the Windows app.")
+            try:
+                return native.pin(body["pinned"])
+            except RuntimeError as exc:
+                raise ApiError(409, str(exc)) from None
+        raise ApiError(404, "not found")
     if method == "POST" and path.startswith("/api/studio/preview/"):
         return server.previews.route(path.rsplit("/", 1)[-1], body)
     if path.startswith(("/api/control/", "/api/cooling/")):
@@ -408,9 +448,11 @@ def route(server, method, path, body, query=None):
         if path == "/api/curves":
             return {"curves": store.curves(), "defaults": DEFAULT_CURVES, "safety_temp": SAFETY_TEMP, "min_duty": MIN_FAN_DUTY}
         if path == "/api/settings":
-            return _settings_view(store, server.updater)
+            return _settings_view(store, server.updater, hooks.get("window_shortcut"))
         if path == "/api/automations":
             return store.get_rules()
+        if path == "/api/lighting/wind-down":
+            return ctrl.engine.wind_down()
         if path == "/api/apps":
             return system.windowed_exes()
         if path == "/api/tools":
@@ -437,6 +479,11 @@ def route(server, method, path, body, query=None):
         with ctrl._lock:
             ctrl.set_scene(body)
             return ctrl.scene_response()
+    if path == "/api/lighting/wind-down":
+        if body.get("action") not in ("start", "cancel"):
+            raise ValueError("Choose Start or Cancel for the wind-down timer.")
+        return ctrl.engine.wind_down(body["action"], minutes=body.get("minutes"), token=body.get("id"),
+                                     session=body.get("session"), version=body.get("version"))
     if path == "/api/scene/undo":
         with ctrl._lock:
             ctrl.undo_scene(body.get("expected_revision"), body.get("expected_session"))
@@ -458,8 +505,26 @@ def route(server, method, path, body, query=None):
         return {"channels": ctrl.fan_channels}
     m = re.fullmatch(r"/api/curves/([a-z0-9-]{1,64})(/reset)?", path)
     if m:
-        points = store.reset_curve(m.group(1)) if m.group(2) else store.set_curve(m.group(1), body.get("points"))
+        try:
+            points = store.reset_curve(m.group(1)) if m.group(2) else store.set_curve(m.group(1), body.get("points"), body.get("expected_points"))
+        except CurveConflict as error:
+            raise ApiError(409, str(error)) from None
         return {"points": points}
+    if path == "/api/stage/placement":
+        from .stageplacement import PlacementConflict, clean_placements
+        placements = clean_placements(body)
+        with ctrl._lock:
+            for key in placements:
+                dev, _zone = _find_zone(ctrl, key)
+                if not dev.online:
+                    raise ApiError(409, "An arranged zone is offline. Reconnect it or cancel this layout.")
+            try:
+                changed = store.set_stage_placements(placements)
+            except PlacementConflict as exc:
+                raise ApiError(409, str(exc)) from None
+            for key in changed:
+                ctrl.engine.invalidate(key)
+        return {"changed": changed}
     m = re.fullmatch(r"/api/zones/([^/]+)(/identify)?", path)
     if m:
         key = urllib.parse.unquote(m.group(1))
@@ -534,6 +599,8 @@ def route(server, method, path, body, query=None):
         dev.set_params(params)
         return {"params": params}
     if path == "/api/settings":
+        if "windows_shortcut" in body:
+            raise ApiError(400, "Use the Windows shortcut setting to register a combination.")
         if "start_with_windows" in body:
             autostart.enable() if body.pop("start_with_windows") else autostart.disable()
         if body:
@@ -553,11 +620,14 @@ def route(server, method, path, body, query=None):
                 ctrl.manager.bridge._last_try = 0.0           # try the new address now, not after the retry wait
             if set(clean) - {"design", "appearance", "looks", "temp_unit", "energy_price"}:
                 ctrl.apply()                                 # display-only edits never issue hardware work
-        return _settings_view(store, server.updater)
+        return _settings_view(store, server.updater, hooks.get("window_shortcut"))
     if path == "/api/quick-actions":
         return store.update_quick_action(body.get("operation"), body.get("kind"), body.get("id"))
     if path == "/api/settings/reset":
-        store.reset_settings()
+        if native := hooks.get("window_shortcut"):
+            native.reset_settings()
+        else:
+            store.reset_settings()
         server.hooks.get("design_changed", lambda d: None)(store.settings()["design"])
         bridge = ctrl.manager.bridge
         bridge.client.host = store.settings()["openrgb_host"]
@@ -567,7 +637,7 @@ def route(server, method, path, body, query=None):
         if server.updater:
             server.updater.settings_changed()
         ctrl.apply()
-        return _settings_view(store, server.updater)
+        return _settings_view(store, server.updater, hooks.get("window_shortcut"))
     if path == "/api/openrgb/start":
         try:
             tools.launch("openrgb", openrgb_port=store.settings()["openrgb_port"])
@@ -576,11 +646,19 @@ def route(server, method, path, body, query=None):
         ctrl.manager.bridge._last_try = 0.0         # connect on the next housekeeping pass, not after the retry wait
         return {"ok": True}
     if path == "/api/automations":
-        presets = {p["id"] for p in store.get_presets()}
-        rules = store.set_rules(body.get("rules"), lambda r: validate_rule(r, presets, set(store.curves())))
+        with store._lock:
+            if "expected_rules" in body and body["expected_rules"] != store.rules:
+                raise ApiError(409, "Automations changed. Review the current rules and try your edit again.",
+                               details={"rules": store.get_rules(), "presets": store.get_presets()})
+            presets = {p["id"] for p in store.get_presets()}
+            rules = store.set_rules(body.get("rules"), lambda r: validate_rule(r, presets, set(store.curves())))
         ctrl.automations.evaluate()
         ctrl.apply()
         return rules
+    if path == "/api/automations/rehearse":
+        with ctrl._lock:
+            return rehearse(body, store.get_rules(), {p["id"]: p for p in store.get_presets()},
+                            ctrl.base_scene, ctrl.base_curve, ctrl.curve_points)
     if path == "/api/automations/pause":
         ctrl.automations.pause(whole_number(body.get("minutes", 0), "minutes must be a whole number"))
         ctrl.automations.evaluate()

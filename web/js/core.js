@@ -28,7 +28,12 @@ async function request(method, path, body, timeout = 8000) {
   try {
     const res = await fetch(path, opts);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    if (!res.ok) {
+      const error = new Error(data.error || `Request failed (${res.status})`);
+      error.status = res.status;
+      error.data = data;
+      throw error;
+    }
     // A full settings response can arrive after a newer pin/recent operation has settled.
     if (path === "/api/quick-actions") acknowledgedQuickActions = data;
     else if (data?.settings?.quick_actions && quickActionsAtStart !== acknowledgedQuickActions) {
@@ -155,6 +160,9 @@ export function post(path, body, timeout) {
       }
       return result;
     } catch (error) {
+      if (path === "/api/automations" && error.status === 409 && mutations.get(key)?.id === id) {
+        mutations.get(key).retry = false;
+      }
       update("failed", error.message || String(error));
       throw error;
     }
@@ -235,6 +243,12 @@ export function refreshZones() {
 }
 const listeners = {};
 export const on = (ev, fn) => (listeners[ev] ||= []).push(fn);
+
+// The controller also computes a fallback curve value when there are no outputs to command.
+export function activeFanFailsafe(fans) {
+  return !!fans?.failsafe && (!!fans.ports?.length ||
+    fans.channels?.some(c => c.mode === "curve" || c.mode === "steady") === true);
+}
 export const emit = (ev, data) => (listeners[ev] || []).forEach((fn) => { try { fn(data); } catch (e) { console.error(e); } });
 
 // ------------------------------------------------------------ formatting

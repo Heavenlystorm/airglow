@@ -27,12 +27,23 @@
 <link rel="stylesheet" href="css/scene-audition.css">
 <link rel="stylesheet" href="css/firefly-workbenches.css">
 <link rel="stylesheet" href="css/lighting-colours.css">
+<link rel="stylesheet" href="css/photo-palette.css">
+<link rel="stylesheet" href="css/stage-arrange.css">
 <link rel="stylesheet" href="css/firefly-workspace.css">
 <link rel="stylesheet" href="css/overview-light.css">
 <link rel="stylesheet" href="css/automation-rules.css">
+<link rel="stylesheet" href="css/automation-rehearsal.css">
 <link rel="stylesheet" href="css/firefly-shell.css">
 <link rel="stylesheet" href="css/firefly-overview.css">
 <link rel="stylesheet" href="css/firefly-creative.css">
+<link rel="stylesheet" href="css/session-lab.css">
+<link rel="stylesheet" href="css/workspace-tools.css">
+<link rel="stylesheet" href="css/help-workspace.css">
+<link rel="stylesheet" href="css/wind-down.css">
+<link rel="stylesheet" href="css/curve-sandbox.css">
+<link rel="stylesheet" href="css/profile-library.css">
+<link rel="stylesheet" href="css/lookbook.css">
+<link rel="stylesheet" href="css/overview-companions.css">
 <script type="module" src="js/main.js"></script>
 </head>
 <body>
@@ -69,6 +80,7 @@
 <div class="why" id="why" role="status" aria-live="polite" hidden></div>
 <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
 <div class="mutation-status" id="mutation-status" aria-live="polite" aria-label="Changes" hidden></div>
+<div class="notice" id="view-loading" role="status" hidden><span></span><button type="button" class="btn quiet" hidden>Reload Airglow</button></div>
 
 <main>
   <!-- ============================================================ Overview -->
@@ -79,7 +91,19 @@
         <button class="btn" id="ov-addtile"><svg aria-hidden="true"><use href="#i-plus"/></svg>Add a tile</button>
         <button class="text-link" id="ov-reset">Reset to default</button>
       </div>
-      <div class="btn-row"><button class="chip-btn" data-control-center>Control center</button><button class="chip-btn" id="ov-edit" aria-pressed="false"><svg aria-hidden="true"><use href="#i-move"/></svg>Customize</button></div>
+      <div class="btn-row">
+        <button class="chip-btn" data-control-center>Control center</button>
+        <details class="ov-more">
+          <summary class="chip-btn" id="ov-tools"><svg aria-hidden="true"><use href="#i-workspace"/></svg>Tools</summary>
+          <div class="ov-more-panel" role="group" aria-label="Workspace tools">
+            <button id="ov-desk-display" type="button" data-desk-display><svg aria-hidden="true"><use href="#i-clock"/></svg><span><strong>Desk Display</strong><small>Clock, focus timer and pinned readings</small></span></button>
+            <button id="ov-telemetry-sessions" type="button" data-telemetry-sessions><svg aria-hidden="true"><use href="#i-section"/></svg><span><strong>Recordings</strong><small>Record and compare sensor sessions</small></span></button>
+            <button id="ov-profile-library" type="button" data-profile-library><svg aria-hidden="true"><use href="#i-bulb"/></svg><span><strong>Profile library</strong><small>Preview, compare and import saved looks</small></span></button>
+            <button id="ov-help" type="button" data-help-open aria-haspopup="dialog"><svg aria-hidden="true"><use href="#i-section"/></svg><span><strong>Airglow help</strong><small>Task guide and keyboard shortcuts</small></span></button>
+          </div>
+        </details>
+        <button class="chip-btn" id="ov-edit" aria-pressed="false"><svg aria-hidden="true"><use href="#i-move"/></svg>Customize</button>
+      </div>
     </div>
     <div class="ov-grid" id="ov-grid"></div>
     <div class="overview-empty" id="ov-empty" hidden>
@@ -97,11 +121,13 @@
         <svg id="stage-svg" aria-label="Lighting zones" role="group"></svg>
         <div class="stage-tools">
           <button class="chip-btn" id="arrange" aria-pressed="false"><svg aria-hidden="true"><use href="#i-move"/></svg>Arrange</button>
+          <button class="chip-btn" id="wind-down-open" aria-haspopup="dialog"><svg aria-hidden="true"><use href="#i-moon"/></svg><span>Wind down</span></button>
         </div>
         <div class="stage-empty" id="stage-empty" hidden>
           <h2 id="stage-empty-title">No lighting found yet</h2>
           <p id="stage-empty-detail">Connect a supported device or use OpenRGB to add your lights.</p>
-          <div class="btn-row"><button class="btn primary" data-open-setup>Set up lights</button><a class="btn" href="#devices">Check devices</a></div>
+          <div class="btn-row"><button class="btn primary" data-open-setup>Set up lights</button><a class="btn" href="#devices">Check devices</a>
+            <a class="btn quiet" href="#studio/new">Explore Studio templates</a></div>
         </div>
       </div>
       <div class="effect-scope">
@@ -145,6 +171,7 @@
         <p class="hint" id="editor-hint"></p>
         <div class="btn-row">
           <button class="btn" id="curve-add"><svg aria-hidden="true"><use href="#i-plus"/></svg>Add curve point</button>
+          <button type="button" class="btn" id="curve-sandbox">Curve sandbox</button>
           <button class="btn" id="cooling-workbench"><svg aria-hidden="true"><use href="#i-fan"/></svg>Cooling workbench</button>
           <button class="btn quiet" id="curve-reset"><svg aria-hidden="true"><use href="#i-rotate"/></svg>Reset to default</button>
         </div>
@@ -170,6 +197,7 @@
           <option value="">Pause automations…</option><option value="15">For 15 minutes</option>
           <option value="60">For an hour</option><option value="morning">Until 06:00</option>
         </select>
+        <button class="btn" id="auto-rehearse" aria-haspopup="dialog">Rehearse rules</button>
         <button class="btn primary" id="auto-add">New automation</button>
       </div>
     </div>

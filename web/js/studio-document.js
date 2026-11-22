@@ -38,7 +38,8 @@ export function snapDoc(doc) {
   if (!doc) return "null";
   return JSON.stringify({ name: doc.name, author: doc.author, license: doc.license,
     description: doc.description, tags: doc.tags, remix_of: doc.remix_of,
-    mode: doc.mode, layers: doc.layers, master: doc.master, expose: doc.expose, source: doc.source, values: doc.values });
+    mode: doc.mode, layers: doc.layers, master: doc.master, expose: doc.expose, source: doc.source, values: doc.values,
+    fromLayers: doc.fromLayers || undefined });
 }
 
 export function createHistory() {
@@ -63,27 +64,143 @@ export function createHistory() {
   };
 }
 
+const WEEK = 7 * 864e5;
+const MAX_DOCUMENT = 256 * 1024;
+const MAX_SHELF = 2 * 1024 * 1024;
+const CHECKPOINT_KEY = "airglow.studio.checkpoints.v1";
+const identifier = () => globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+function recoveryKey(doc) {
+  if (doc.fx_id) return `effect:${doc.fx_id}`;
+  doc._variationId ||= identifier();
+  return `draft:${doc._variationId}`;
+}
+
+function readableDoc(doc) {
+  return !!doc && typeof doc.name === "string" && ["layers", "code"].includes(doc.mode)
+    && (!doc.layers || (Array.isArray(doc.layers) && doc.layers.every(l => l && typeof l.type === "string")))
+    && (doc.mode !== "code" || typeof doc.source === "string");
+}
+
+// Keep the newest draft in the original {doc, at} envelope so an upgrade can recover the previous session.
+// A failed write overlays the persisted shelf in memory until a subsequent write succeeds.
 export function createDraftStorage(storage, now = Date.now) {
+  let cached = [], unavailable = false;
+  const pending = new Map();
+  function entries() {
+    let raw;
+    try {
+      raw = storage.getItem(DRAFT_KEY); unavailable = false;
+    } catch { unavailable = true; }
+    if (!unavailable) {
+      let head = null;
+      try { if (raw && raw.length <= MAX_SHELF) head = JSON.parse(raw); } catch { /* The previous version ignored malformed drafts. */ }
+      cached = (!head ? [] : [{ doc: head.doc, at: head.at }, ...(Array.isArray(head.others) ? head.others : [])])
+        .filter(e => readableDoc(e?.doc) && Number.isFinite(e.at) && Number.isFinite(new Date(e.at).getTime())).map(e => {
+          if (!e.doc.fx_id && !e.doc._variationId) e.doc._variationId = `legacy-${e.at}`;
+          e.doc.dirty = true;
+          return { doc: normalizeDoc(e.doc), key: recoveryKey(e.doc), at: e.at };
+        });
+    }
+    const changed = [...pending.values()].reverse().filter(Boolean);
+    return [...changed, ...cached.filter(e => !pending.has(e.key))].filter(e => now() - e.at <= WEEK).sort((a, b) => b.at - a.at);
+  }
+  function flush() {
+    const rows = entries();
+    if (unavailable) return false;
+    try {
+      const records = rows.map(({ doc, at }) => ({ doc, at }));
+      if (records.length) {
+        const [head, ...others] = records;
+        const json = JSON.stringify({ ...head, others });
+        if (json.length > MAX_SHELF || records.some(e => JSON.stringify(e.doc).length > MAX_DOCUMENT)) return false;
+        storage.setItem(DRAFT_KEY, json);
+      } else storage.removeItem(DRAFT_KEY);
+      cached = rows; pending.clear(); return true;
+    } catch { return false; }
+  }
   return {
+    list: entries,
+    get temporary() { return pending.size > 0 || unavailable; },
     write(doc) {
-      try {
-        if (doc?.dirty) storage.setItem(DRAFT_KEY, JSON.stringify({ doc, at: now() }));
-        else storage.removeItem(DRAFT_KEY);
-        return true;
-      } catch { return false; }
+      if (!doc) return false;
+      const key = recoveryKey(doc);
+      pending.delete(key);
+      pending.set(key, doc.dirty ? { key, doc: structuredClone(doc), at: now() } : null);
+      return flush();
     },
-    read() {
-      try {
-        const raw = storage.getItem(DRAFT_KEY) || "null";
-        if (raw.length > 256 * 1024) return null;
-        const d = JSON.parse(raw);
-        if (!d?.doc || typeof d.doc.name !== "string" || !d.doc.name || !Number.isFinite(d.at)
-          || now() - d.at > 7 * 864e5 || !["layers", "code"].includes(d.doc.mode)) return null;
-        return normalizeDoc(d.doc);
-      } catch { return null; }
-    },
-    clear() { try { storage.removeItem(DRAFT_KEY); return true; } catch { return false; } },
+    read() { const row = entries()[0]; return row ? structuredClone(row.doc) : null; },
+    remove(...keys) { for (const key of keys) pending.set(key, null); return flush(); },
   };
+}
+
+// Named versions are deliberately independent of draft expiry, undo, and automatic saves.
+export function createCheckpointStorage(storage, now = Date.now) {
+  function list() {
+    const raw = storage.getItem(CHECKPOINT_KEY);
+    if (!raw) return [];
+    if (raw.length > MAX_SHELF) throw new Error("This checkpoint collection is too large to read.");
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) throw new Error("This checkpoint collection could not be read.");
+    return data.filter(x => typeof x?.id === "string" && typeof x.name === "string" && Number.isFinite(x.at)
+      && Number.isFinite(new Date(x.at).getTime()) && readableDoc(x.doc))
+      .map(x => ({ ...x, doc: normalizeDoc(x.doc) }));
+  }
+  function write(rows) {
+    const raw = JSON.stringify(rows);
+    if (raw.length > MAX_SHELF) throw new Error("The checkpoint shelf is full. Delete an older checkpoint and try again.");
+    if (rows.length) storage.setItem(CHECKPOINT_KEY, raw); else storage.removeItem(CHECKPOINT_KEY);
+  }
+  return {
+    list,
+    capture(doc, title) {
+      const name = String(title || "").trim().slice(0, 60);
+      if (!name) throw new Error("Enter a checkpoint name.");
+      const snapshot = snapDoc(doc);
+      if (!readableDoc(doc) || snapshot.length > MAX_DOCUMENT) throw new Error("This document is too large or incomplete to keep as a checkpoint.");
+      const row = { id: identifier(), name, at: now(), doc: JSON.parse(snapshot) };
+      write([row, ...list()]); return row;
+    },
+    remove(id) { write(list().filter(row => row.id !== id)); },
+  };
+}
+
+export function compareStudioDocuments(before, after) {
+  const changes = [];
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  if (before.mode !== after.mode) changes.push(`Editing mode: ${before.mode} → ${after.mode}`);
+  if (before.mode === "layers" && after.mode === "layers") {
+    const old = new Map(before.layers.map(l => [l.id, l])), next = new Map(after.layers.map(l => [l.id, l]));
+    for (const layer of before.layers) if (!next.has(layer.id)) changes.push(`Removed layer: ${layer.type}`);
+    for (const layer of after.layers) {
+      if (!old.has(layer.id)) changes.push(`Added layer: ${layer.type}`);
+      else if (!same(old.get(layer.id), layer)) {
+        const prior = old.get(layer.id);
+        if (!same(prior.paint, layer.paint)) changes.push(`Paint mask changed: ${layer.type}`);
+        if (!same({ ...prior, paint: null }, { ...layer, paint: null })) changes.push(`Layer settings changed: ${layer.type}`);
+      }
+    }
+    if (!same(before.layers.filter(l => next.has(l.id)).map(l => l.id), after.layers.filter(l => old.has(l.id)).map(l => l.id)))
+      changes.push("Layer order changed");
+    for (const [key, label] of Object.entries({ palette: "Palette", brightness: "Brightness", speed: "Speed", react: "Reactivity" })) {
+      if (!same(before.master[key], after.master[key])) changes.push(key === "palette" ? "Palette changed" : `${label}: ${before.master[key]} → ${after.master[key]}`);
+    }
+    if (!same(before.expose, after.expose)) changes.push("Exposed controls changed");
+  }
+  if (before.mode === "code" && after.mode === "code") {
+    if (!!before.fromLayers !== !!after.fromLayers || before.fromLayers && !same(
+      [before.layers, before.master, before.expose], [after.layers, after.master, after.expose])) changes.push("Return-to-layers settings changed");
+    if (before.source !== after.source) {
+      const a = before.source.split("\n"), b = after.source.split("\n");
+      let line = 0;
+      while (line < a.length && line < b.length && a[line] === b[line]) line++;
+      changes.push(`Source changed from line ${line + 1} (${a.length} → ${b.length} lines)`);
+    }
+    if (!same(before.values, after.values)) changes.push("Control values changed");
+  }
+  for (const [key, label] of Object.entries({ name: "Effect name", author: "Author", license: "License", description: "Description", tags: "Tags", remix_of: "Remix credit" }))
+    if (!same(before[key], after[key])) changes.push(`${label} changed`);
+  return changes;
 }
 
 const validPalette = colors => Array.isArray(colors) && colors.length >= 2 && colors.length <= 4

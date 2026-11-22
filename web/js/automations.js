@@ -2,6 +2,7 @@
 
 import { $, S, curveLabel, emit, esc, fail, get, on, post, setHTML, toast, unitF } from "./core.js";
 import { closeSheet, openSheet } from "./sheet.js";
+import { openRehearsal } from "./automation-rehearsal.js";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_GROUPS = { "Every day": [0, 1, 2, 3, 4, 5, 6], Weekdays: [0, 1, 2, 3, 4], Weekends: [5, 6] };
@@ -57,7 +58,7 @@ export function sentence(r, html = true, names = {}) {
     idle: () => `When the PC has been idle for ${b(`${w.minutes} minutes`)}`,
     time: () => `Between ${b(w.start)} and ${b(w.end)}${daysText(w.days)}`,
     locked: () => "While the PC is locked",
-    temp_above: () => `When ${b({ max: "the hotter part", cpu: "the processor", gpu: "the graphics card", liquid: "the coolant" }[w.source])} is above ${b(tempTxt(w.temp))}`,
+    temp_above: () => `When ${b({ max: "the hotter part", cpu: "the processor", gpu: "the graphics card", liquid: "the coolant" }[w.source])} reaches ${b(tempTxt(w.temp))}`,
   }[w.type]();
   const then = {
     preset: () => `use ${b(presetName)}`,
@@ -83,20 +84,39 @@ const STARTERS = [
 const newId = () => "rule-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 
 let rulesTail = Promise.resolve(), rulesRevision = 0, rulesPending = 0, rulesDraft = null, rulesSaved = null;
+let listGeneration = 0;
 const currentRules = () => rulesPending ? rulesDraft : S.rules;
+
+// Imported rules and conflict replies both replace the list that pending edits were based on.
+function adoptRules(rules) {
+  listGeneration++;
+  S.rules = rulesSaved = rulesDraft = rules;
+  renderAutomations();
+}
+on("rules:imported", adoptRules);
 
 function writeRules(rules) {
   if (!rulesPending) rulesSaved = structuredClone(S.rules);
-  const revision = ++rulesRevision, body = structuredClone(rules);
+  const revision = ++rulesRevision, generation = listGeneration, body = structuredClone(rules);
   rulesPending++;
   S.rules = rulesDraft = structuredClone(body);       // the next gesture must start from these pending edits
   renderAutomations();
   const run = rulesTail.then(async () => {
     try {
-      rulesSaved = await post("/api/automations", { rules: body });
-      if (revision === rulesRevision) rulesDraft = rulesSaved;
+      if (generation !== listGeneration) throw new Error("Automations changed. Review the current rules and try your edit again.");
+      const saved = await post("/api/automations", { rules: body, expected_rules: rulesSaved });
+      if (generation === listGeneration) {
+        rulesSaved = saved;
+        if (revision === rulesRevision) rulesDraft = saved;
+      }
     } catch (err) {
-      if (revision === rulesRevision) rulesDraft = structuredClone(rulesSaved);
+      if (generation === listGeneration) {
+        if (err.status === 409 && Array.isArray(err.data?.rules)) {
+          if (Array.isArray(err.data.presets)) S.presets = err.data.presets;
+          adoptRules(err.data.rules);
+        }
+        else if (revision === rulesRevision) rulesDraft = structuredClone(rulesSaved);
+      }
       throw err;
     } finally {
       S.rules = rulesDraft;                         // an old reply or background refresh cannot replace newer edits
@@ -353,7 +373,12 @@ function openBuilder(rule, isNew, title = "", copyFrom = null) {
 }
 
 // ------------------------------------------------------------ events
+export function openAutomationRehearsal() {
+  openRehearsal({ sentence, rules: currentRules(), waitForSaves: () => rulesTail });
+}
+
 export function initAutomations() {
+  $("#auto-rehearse").addEventListener("click", openAutomationRehearsal);
   $("#rule-search").addEventListener("input", renderAutomations);
   $("#rule-status").addEventListener("change", renderAutomations);
   $("#rule-clear").addEventListener("click", () => {

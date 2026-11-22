@@ -2,7 +2,7 @@
 // tiles (lighting, presets, fans). Tiles are built once and updated in place, so readings change without the tile
 // flashing, and dragging never fights the 2-second refresh.
 
-import { $, $$, S, clamp, curveLabel, effectName, emit, esc, fail, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
+import { $, $$, S, activeFanFailsafe, clamp, curveLabel, effectName, emit, esc, fail, on, post, rangeFill, sceneColor, sceneSwatch, setHTML, toast } from "./core.js";
 import { applyLightingScene } from "./scene-commands.js";
 import { applyProfile, profileToast } from "./profile-undo.js";
 import { R, WINDOW, ensureHistory, fmt, fmtText, level, loadCatalog, range, resample, sensorName, thresholds, value } from "./readings.js";
@@ -17,6 +17,7 @@ import { createLayoutHistory, createWorkspace, deleteWorkspace, exportWorkspace,
 import { createLightGauge, createLightGraph, lightTokens, rgb, setLightCalm } from "./light-graph.js";
 import { agoText, initPulse, renderPulse } from "./overview-pulse.js";
 import { openFocus, trendText } from "./overview-focus.js";
+import { adjacentRecipe, companionMarkup, deskStorageChanged, updateDeskTile, updateLookbookTile } from "./overview-companions.js";
 
 const COLS = 4;
 const ROLL = { roll: true };            // Overview figures change digit by digit
@@ -27,6 +28,8 @@ const STYLES = [
 const CONTROL = {
   lighting: { name: "Lighting", desc: "A live miniature of your rig, with on/off and brightness.", w: 2, h: 2 },
   presets: { name: "Profiles", desc: "One click to switch lighting and fans together.", w: 2, h: 1 },
+  lookbook: { name: "Lighting lookbook", desc: "Browse illustrated lighting recipes and open one to preview.", w: 2, h: 1 },
+  "desk-display": { name: "Desk Display", desc: "Your clock, focus timer and a shortcut to the companion display.", w: 2, h: 1 },
   fans: { name: "Case fans", desc: "Fan speed and the curve they follow.", w: 1, h: 1 },
   control: { name: "Control status", desc: "Completed work, connection health and recent control changes.", w: 2, h: 1 },
 };
@@ -238,6 +241,11 @@ function initWorkspaceToolbar() {
     if (event.target.value) workspaceChange(() => switchWorkspace(O.layout, event.target.value));
   });
   $("#ov-workspace-manage").addEventListener("click", workspaceSheet);
+  document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-telemetry-sessions]")) {
+      import("./session-lab.js").then(module => module.openSessionLab({ sensorIds: O.layout.pins || [] })).catch(fail);
+    }
+  });
   $("#ov-undo").addEventListener("click", () => historyStep("undo"));
   $("#ov-redo").addEventListener("click", () => historyStep("redo"));
   document.addEventListener("keydown", (event) => {
@@ -398,6 +406,7 @@ function lightModel(el, series, extra = {}) {
 }
 
 function controlMarkup(t) {
+  if (t.type === "lookbook" || t.type === "desk-display") return companionMarkup(t.type);
   if (t.type === "lighting") {
     return `<div class="canvas-heading"><span><svg class="ov-symbol" width="0" height="0" aria-hidden="true"><use href="#i-bulb"/></svg>Lighting canvas</span><a class="link" href="#lighting" title="Open Lighting">Open Lighting ↗</a></div><div class="overview-rig-host"></div>
       <footer class="lt-foot"><div class="lt-what"><b class="lt-effect"></b><span class="lt-sub"></span></div>
@@ -405,7 +414,7 @@ function controlMarkup(t) {
         <label class="switch" title="Lights on or off"><input type="checkbox" class="lt-on" aria-label="Lights on"><span></span></label></footer>`;
   }
   if (t.type === "presets") {
-    return `<header class="tile-head"><span class="tile-name">Profiles</span><button class="tile-src link text-link" data-edit-profiles>Edit profiles</button></header><div class="chips pcards"></div>`;
+    return `<header class="tile-head"><span class="tile-name">Profiles</span><span class="ov-profile-links"><button type="button" class="text-link" data-browse-profiles aria-label="Browse profile library">Browse</button><button type="button" class="text-link" data-edit-profiles aria-label="Edit profiles">Edit</button></span></header><div class="chips pcards"></div>`;
   }
   if (t.type === "control") return `<header class="tile-head"><span class="tile-name">Control status</span></header>
     <div class="control-tile-state"></div><p class="control-tile-detail hint"></p><button class="btn quiet" data-control-center>Open control center</button>`;
@@ -436,6 +445,7 @@ function mount(t) {
       });
     }
   }
+  if (t.type === "lookbook" || t.type === "desk-display") el.querySelector(".tile-inner").inert = O.editing;
   sizeTile(el, t);
   return el;
 }
@@ -696,13 +706,16 @@ function updateInstrument(el, t, meta, v, lo, hi) {
 function updateLighting(el, t) {
   const sc = S.state.scene, eff = S.state.effective;
   const preset = S.presets.find((p) => p.id === S.state.active_preset);
-  const status = S.state.scene_status, o = S.state.override;
+  const status = S.state.scene_status, o = S.state.override, timer = S.state.wind_down;
   const starting = status?.status === "pending";
   const label = R.stale ? "Lighting status unavailable" : starting ? `Starting ${effectName(eff.effect)}…`
-    : !eff.on ? "Lights off" : eff.brightness === 0 ? "Brightness at 0%" : effectName(eff.effect);
+    : !eff.on ? "Lights off" : timer?.phase === "held" ? "Wind down is holding" : eff.brightness === 0 ? "Brightness at 0%" : effectName(eff.effect);
   setHTML(el.querySelector(".lt-effect"), esc(label));
   const sub = R.stale ? "Waiting for Airglow to reconnect" : status?.status === "failed" ? status.error || "Lighting change failed"
-    : o?.locked ? "Off while the PC is locked" : o?.lighting ? `Automation${eff.on ? ` · ${eff.brightness}% brightness` : " is in control"}`
+    : o?.power ? "Off for Windows power settings" : o?.locked ? "Off while the PC is locked"
+    : eff.on && timer?.phase === "held" ? "Release the timer in Lighting to resume"
+    : eff.on && timer?.phase === "fading" ? `Wind down · ${Math.round(eff.brightness)}% output`
+    : o?.lighting ? `Automation${eff.on ? ` · ${eff.brightness}% brightness` : " is in control"}`
     : S.state.trial ? `Previewing ${S.state.trial.name}` : preset ? `${preset.name} profile` : "Your own settings";
   setHTML(el.querySelector(".lt-sub"), esc(sub));
   const bri = el.querySelector(".lt-bri"), on = el.querySelector(".lt-on");
@@ -760,7 +773,7 @@ function updateFans(el) {
   setHTML(el.querySelector(".fan-sub"), R.stale ? "Waiting for Airglow to reconnect" : stale ? "Waiting for current fan readings"
     : reported.error ? "Fan control needs attention (Fans tab)" : speeds.length ? speeds.join(" · ")
     : reported.count ? "No RPM reading" : S.state.sensors?.online === false ? "LibreHardwareMonitor is offline" : "No controlled fans detected (Fans tab)");
-  setHTML(el.querySelector(".fan-curve"), stale ? "" : F.failsafe ? "Failsafe" : F.curve !== F.base_curve ? `${esc(curveLabel(F.curve))}, by automation` : esc(curveLabel(F.curve)));
+  setHTML(el.querySelector(".fan-curve"), stale ? "" : activeFanFailsafe(F) ? "Failsafe" : F.curve !== F.base_curve ? `${esc(curveLabel(F.curve))}, by automation` : esc(curveLabel(F.curve)));
   setHTML(el.querySelector(".fan-seg"), Object.keys(S.curves?.curves || {}).map((c) =>
     `<button role="radio" data-curve="${c}" aria-checked="${c === F.base_curve}">${curveLabel(c)}</button>`).join(""));
   const curves = {...S.curves, curves: {...S.curves?.curves}};
@@ -772,6 +785,8 @@ function update(el, t) {
   if (t.type === "sensor") updateSensor(el, t);
   else if (t.type === "lighting") updateLighting(el, t);
   else if (t.type === "presets") updatePresets(el);
+  else if (t.type === "lookbook") updateLookbookTile(el,t);
+  else if (t.type === "desk-display") updateDeskTile(el,t);
   else if (t.type === "fans") updateFans(el);
   else if (t.type === "control") {
     const c = S.state.control, counts = c?.counts || {};
@@ -998,6 +1013,7 @@ async function addTile(tile) {
     await ensureHistory(tile.sensors).catch(() => {});
   }
   if (resetting || O.layout !== layout || O.layout.active_workspace !== workspace) return;
+  if (O.layout.tiles.length >= 32) { toast("This workspace has 32 tiles. Remove a tile to add another.", true); return; }
   flip(grid(), () => { O.layout.tiles.push(tile); renderOverview(); });
   save();
   const el = O.els.get(tile.id);
@@ -1049,6 +1065,7 @@ function wirePicker(onPick, selected) {
 }
 
 async function addTileSheet() {
+  if (O.layout.tiles.length >= 32) { toast("This workspace has 32 tiles. Remove a tile to add another.", true); return; }
   await loadCatalog().catch(() => {});
   const has = new Set(O.layout.tiles.map((t) => t.type));
   const controls = Object.entries(CONTROL).filter(([k]) => !has.has(k));
@@ -1112,11 +1129,21 @@ function tileSheet(id, mode = "main", slot = 0) {
   const t = tileById(id);
   if (!t) return;
   if (t.type !== "sensor") {
-    openSheet(`<form class="body" id="ts-form"><h2>${esc(CONTROL[t.type].name)} tile</h2>${appearanceMarkup(t)}
+    const nameable = t.type === "lookbook" || t.type === "desk-display";
+    const nameField = nameable ? `<label class="field"><span class="lab">Tile name</span><input class="text" id="ts-companion-name" maxlength="40" placeholder="${esc(CONTROL[t.type].name)}" value="${esc(t.label || "")}"></label>` : "";
+    openSheet(`<form class="body" id="ts-form"><h2>${esc(CONTROL[t.type].name)} tile</h2>${nameField}${appearanceMarkup(t)}
       <div class="actions"><button type="button" class="btn danger" id="ts-remove">Remove tile</button><span class="spacer"></span><button class="btn primary">Done</button></div></form>`);
     wireAppearance(t, ()=>{renderOverview();save(`appearance-${id}`);});
     $("#ts-remove").addEventListener("click", ()=>{closeSheet();removeTile(id);});
-    $("#ts-form").addEventListener("submit", e=>{e.preventDefault();O.history?.endGroup();closeSheet();});
+    $("#ts-form").addEventListener("submit", e=>{
+      e.preventDefault(); O.history?.endGroup();
+      const label = $("#ts-companion-name")?.value.trim();
+      if (nameable && label !== (t.label || "")) {
+        if (label) t.label = label; else delete t.label;
+        renderOverview(); save();
+      }
+      closeSheet();
+    });
     return;
   }
   if (mode === "pick") {
@@ -1231,6 +1258,20 @@ export async function initOverview(layout) {
       return;
     }
     if (e.target.closest("[data-edit-profiles]")) return editProfilesSheet(renderOverview);
+    if (e.target.closest("[data-browse-profiles]")) return import("./profile-library.js").then(m => m.openProfileLibrary()).catch(fail);
+    const step = e.target.closest("[data-recipe-step]");
+    if (step) {
+      const record = tileById(tile);
+      record.recipe = adjacentRecipe(record.recipe, Number(step.dataset.recipeStep));
+      updateLookbookTile(O.els.get(tile), record); save("recipe-" + tile); return;
+    }
+    const companion = e.target.closest("[data-companion]")?.dataset.companion;
+    if (companion === "recipe") {
+      const record = tileById(tile), recipe = record.recipe ?? 0, card = O.els.get(tile);
+      if (card.dataset.recipeError) { delete card.dataset.recipeError; updateLookbookTile(card, record); }
+      return import("./lookbook.js").then(m => m.openLookbook(recipe)).catch(fail);
+    }
+    if (companion === "desk") return import("./workspace-tools.js").then(m => m.openDeskDisplay()).catch(fail);
     if (e.target.closest("[data-save-profile]")) return saveProfileSheet(renderOverview);
     const p = e.target.closest("[data-preset]");
     if (p) {
@@ -1267,6 +1308,12 @@ export async function initOverview(layout) {
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && O.editing && !$("#sheet").open) setEditing(false); });
   on("state", () => { if (R.stale) overviewFrames = {}; if (visible()) renderOverview(); });
   on("zones", () => { if (visible()) { renderOverview(); paintLightingTiles(); } });
+  const refreshDeskTile = key => {
+    if (!deskStorageChanged(key) || !visible() || document.hidden) return;
+    for (const tile of O.layout.tiles) if (tile.type === "desk-display" && O.els.has(tile.id)) updateDeskTile(O.els.get(tile.id), tile);
+  };
+  window.addEventListener("storage", event => refreshDeskTile(event.key));
+  window.addEventListener("pageshow", event => { if (event.persisted) refreshDeskTile(); });
   on("frames:live", (frame) => { if (!R.stale) { overviewFrames = frame.zones || {}; paintLightingTiles(); } });
   document.addEventListener("appearancechange", () => {
     measureRev++;

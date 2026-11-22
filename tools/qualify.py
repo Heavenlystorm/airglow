@@ -62,7 +62,7 @@ def source_checks(output):
         run_check(output, f"syntax-{script.stem}", ["node", "--check", script])
     js_tests = [f"tools/test-{name}.mjs" for name in UNIT_TOOLS]
     js_tests.extend(test.relative_to(ROOT).as_posix() for test in sorted((ROOT / "tests").glob("test_*.mjs")))
-    run_check(output, "js-tests", ["node", "--experimental-vm-modules", "--test", *js_tests])
+    run_check(output, "js-tests", ["node", "--experimental-vm-modules", "--test", "--test-timeout=30000", *js_tests])
 
 
 def browser_checks(output):

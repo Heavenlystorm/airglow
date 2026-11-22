@@ -6,6 +6,7 @@ it stops being true, things go back to what you had set by hand. That makes "rev
 automatic and avoids rules that fire once and leave things in a strange state.
 """
 
+import math
 import re
 import time
 
@@ -112,14 +113,29 @@ def is_active(rule, sig, sensors, was_active=False):
     if t == "time":
         return _in_window(sig["now"], w["start"], w["end"], w["days"])
     if t == "temp_above":
-        temps = {"cpu": sensors.get("cpu_temp"), "gpu": sensors.get("gpu_temp")}
-        known = [v for v in temps.values() if v is not None]
-        temp = (max(known) if known else None) if w["source"] == "max" else temps.get(w["source"])
-        if w["source"] == "liquid":
-            temp = sensors.get("liquid_temp")
+        temp = trigger_temperature(w["source"], sensors)
         limit = w["temp"] - TEMP_HYSTERESIS if was_active else w["temp"]
         return temp is not None and temp >= limit
     return False
+
+
+def trigger_temperature(source, sensors):
+    if source == "max":
+        known = [sensors[k] for k in ("cpu_temp", "gpu_temp") if sensors.get(k) is not None]
+        return max(known, default=None)
+    return sensors.get(f"{source}_temp")
+
+
+def targets(rule, presets):
+    action = rule["then"]
+    if action["type"] == "fan_curve":
+        return ("fans",)
+    if action["type"] == "preset":
+        preset = presets.get(action["preset"])
+        if not preset:
+            return ()
+        return ("lighting", "fans") if preset.get("fan_points") or preset.get("fan_curve") else ("lighting",)
+    return ("lighting",) if action["type"] in ("lights_off", "dim") else ()
 
 
 def resolve(rules, active_ids, presets):
@@ -129,13 +145,89 @@ def resolve(rules, active_ids, presets):
     for r in rules:
         if not r["enabled"] or r["id"] not in active_ids:
             continue
-        tt = r["then"]["type"]
-        preset = presets.get(r["then"].get("preset")) if tt == "preset" else None
-        if light is None and (tt in ("lights_off", "dim") or preset):
+        domains = targets(r, presets)
+        if light is None and "lighting" in domains:
             light = r
-        if fans is None and (tt == "fan_curve" or (preset and (preset.get("fan_curve") or preset.get("fan_points")))):
+        if fans is None and "fans" in domains:
             fans = r
     return light, fans
+
+
+def preset_curve(preset):
+    return f"profile:{preset['id']}" if preset.get("fan_points") else preset.get("fan_curve")
+
+
+def rule_outputs(base_scene, base_curve, light_rule, fan_rule, presets, curve_points):
+    """Apply rule winners to the hand-set state. Device safety and power policies run afterwards."""
+    scene, curve = dict(base_scene), base_curve
+    if light_rule:
+        action = light_rule["then"]
+        if action["type"] == "preset" and action["preset"] in presets:
+            preset = presets[action["preset"]]
+            scene = {"effect": preset["effect"], "params": preset["params"], "brightness": preset["brightness"], "on": True}
+            if preset.get("areas"):
+                scene["areas"] = preset["areas"]
+        elif action["type"] == "lights_off":
+            scene["on"] = False
+        elif action["type"] == "dim":
+            scene["brightness"] = min(scene["brightness"], action["brightness"])
+    if fan_rule:
+        action = fan_rule["then"]
+        if action["type"] == "fan_curve":
+            curve = action["curve"]
+        elif action["type"] == "preset" and action["preset"] in presets:
+            curve = preset_curve(presets[action["preset"]]) or curve
+    return scene, curve if curve_points(curve) else "balanced"
+
+
+def _scenario(body):
+    day, clock = body.get("weekday"), body.get("clock")
+    if type(day) is not int or not 0 <= day <= 6 or not isinstance(clock, str) or not _HHMM.fullmatch(clock):
+        raise ValueError("Choose a weekday and local time.")
+    idle, locked = body.get("idle", 0), body.get("locked", False)
+    if type(idle) not in (float, int) or not 0 <= idle <= 10080 or not math.isfinite(idle) or type(locked) is not bool:
+        raise ValueError("Enter idle minutes from 0 to 10080 and choose a lock state.")
+    running, front = body.get("running", []), body.get("foreground", "")
+    if not isinstance(running, list) or len(running) > 64 or not isinstance(front, str):
+        raise ValueError("Enter up to 64 program filenames, such as game.exe.")
+    names = [*running, *([front] if front else [])]
+    if any(not isinstance(name, str) or not _EXE.fullmatch(name) for name in names):
+        raise ValueError("Use program filenames such as game.exe.")
+    sensors = {}
+    for key in ("cpu", "gpu", "liquid"):
+        temp = body.get(key)
+        if temp is not None and (type(temp) not in (float, int) or not -273.15 <= temp <= 1000 or not math.isfinite(temp)):
+            raise ValueError("Use a finite temperature in °C, or leave the reading empty.")
+        sensors[key + "_temp"] = temp
+    previous = body.get("previous", [])
+    if not isinstance(previous, list) or len(previous) > 50 or any(not isinstance(r, str) for r in previous):
+        raise ValueError("Previous matches must be rule IDs from an earlier rehearsal.")
+    # Only weekday/hour/minute participate in the production matcher. This is a synthetic local week.
+    now = time.struct_time((2026, 1, 5 + day, int(clock[:2]), int(clock[3:]), 0, day, 5 + day, -1))
+    return {"now": now, "running": {n.lower() for n in names}, "foreground": front.lower(),
+            "idle": idle * 60, "locked": locked}, sensors, set(previous)
+
+
+def matching(rules, signals, sensors, previous):
+    return {r["id"] for r in rules if r["enabled"] and is_active(r, signals, sensors, r["id"] in previous)}
+
+
+def rehearse(body, rules, presets, scene, curve, curve_points):
+    """Stateless rule rehearsal. Previous matches belong to the caller's hypothetical sequence."""
+    sig, sensors, previous = _scenario(body)
+    active = matching(rules, sig, sensors, previous)
+    light, fan = resolve(rules, active, presets)
+    result_scene, result_curve = rule_outputs(scene, curve, light, fan, presets, curve_points)
+    rows = []
+    for rank, r in enumerate(rules, 1):
+        trigger, rid = r["when"], r["id"]
+        row = {"rank": rank, "rule": r, "active": rid in active, "targets": targets(r, presets)}
+        if trigger["type"] == "temp_above":
+            row["temperature"] = trigger_temperature(trigger["source"], sensors)
+            row["threshold"] = trigger["temp"] - (TEMP_HYSTERESIS if rid in previous else 0)
+        rows.append(row)
+    return {"active": sorted(active), "rows": rows, "winners": {"lighting": light["id"] if light else None, "fans": fan["id"] if fan else None},
+            "scene": result_scene, "curve": result_curve, "base": {"scene": scene, "curve": curve}}
 
 
 def minutes_until(hour, now=None):
@@ -170,6 +262,6 @@ class Automations:
             return
         sig = self._signals()
         sensors = self._sensors() or {}
-        self.active = {r["id"] for r in rules if r["enabled"] and is_active(r, sig, sensors, r["id"] in self.active)}
+        self.active = matching(rules, sig, sensors, self.active)
         presets = {p["id"]: p for p in self.store.get_presets()}
         self.light_rule, self.fan_rule = resolve(rules, self.active, presets)

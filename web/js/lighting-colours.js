@@ -55,7 +55,7 @@ export function openColourEditor(spec, current, scope, apply) {
     <label class="field"><span class="lab">${multi ? "Hex colours" : "Hex colour"}</span>
       <input class="text" data-hex value="${esc(initial.join(" "))}" maxlength="${max * 10}" aria-describedby="colour-format" spellcheck="false" autocomplete="off">
       <span class="hint" id="colour-format">${hint}</span></label>
-    <div class="btn-row">${multi ? '<button type="button" class="btn quiet" data-reverse>Reverse order</button>' : ""}
+    <div class="btn-row"><button type="button" class="btn" data-photo-open>From a photo…</button>${multi ? '<button type="button" class="btn quiet" data-reverse>Reverse order</button>' : ""}
       <button type="button" class="text-link" data-default>Use effect default</button></div>
     ${multi ? `<div class="field"><span class="lab">Palettes</span><div class="colour-palettes"></div></div>
       <details class="colour-save"><summary>Save for Lighting and Studio</summary>
@@ -102,6 +102,27 @@ export function openColourEditor(spec, current, scope, apply) {
   }
   if (multi) paintPalettes();
   paint();
+  let photo = null;
+  function saveNamedPalette(value, colors) {
+    const list = addPalette(saved(), value, colors);
+    localStorage.setItem(PALETTE_KEY, JSON.stringify(list));
+    if (multi) paintPalettes();
+    return list[0].name;
+  }
+  const photoButton = find("[data-photo-open]");
+  photoButton.addEventListener("click", async () => {
+    if (photoButton.hasAttribute("aria-busy")) return;
+    photoButton.setAttribute("aria-busy", "true");
+    try {
+      const { createPhotoWorkbench } = await import("./photo-palette.js");
+      if (!ownsSheet() || busy) return;
+      photo ||= createPhotoWorkbench(form, { single: !multi, scope, min: multi ? min : 2, max: multi ? max : 4,
+        count: multi ? (draft() || initial).length : 3, save: saveNamedPalette,
+        use(colors) { choose(colors); (find("[data-apply]").disabled ? input : find("[data-apply]")).focus(); } });
+      photo.open();
+    } catch (err) { if (ownsSheet()) showError(err.message); }
+    finally { photoButton.removeAttribute("aria-busy"); }
+  });
   input.addEventListener("input", paint);
   find("[data-default]").addEventListener("click", () => choose(multi ? spec.default : [spec.default]));
   find("[data-reverse]")?.addEventListener("click", () => choose(draft().reverse()));
@@ -112,10 +133,8 @@ export function openColourEditor(spec, current, scope, apply) {
   find("[data-name]")?.addEventListener("input", paint);
   function savePalette() {
     try {
-      const list = addPalette(saved(), find("[data-name]").value, draft());
-      localStorage.setItem(PALETTE_KEY, JSON.stringify(list));
-      paintPalettes(); paint();
-      find("[data-saved]").textContent = `Saved ${list[0].name}.`;
+      const name = saveNamedPalette(find("[data-name]").value, draft());
+      paint(); find("[data-saved]").textContent = `Saved ${name}.`;
     } catch (err) { showError(err.message); }
   }
   find("[data-save]")?.addEventListener("click", savePalette);
@@ -156,6 +175,7 @@ export function openColourEditor(spec, current, scope, apply) {
   }
   form.addEventListener("submit", event => {
     event.preventDefault();
+    if (form.dataset.photo === "open") return;
     const colors = draft();
     if (colors && colors.join() !== initial.join()) void applyDraft(colors);
   });

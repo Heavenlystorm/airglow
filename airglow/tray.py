@@ -29,9 +29,10 @@ def curve_label(name, presets, trial=None):
 
 
 class Tray:
-    def __init__(self, ctrl, store, show_window, quit_app, updater=None):
+    def __init__(self, ctrl, store, show_window, quit_app, updater=None, open_desk=None):
         self.ctrl, self.store, self.updater = ctrl, store, updater
         self.show_window, self.quit_app = show_window, quit_app
+        self.open_desk = open_desk
         self._seen_rev = None
         self._icon_key = None
         self._stop = threading.Event()
@@ -124,9 +125,6 @@ class Tray:
         def toggle_lights(icon, item):
             self.ctrl.set_scene({"on": not self.ctrl.base_scene.get("on", True)})
 
-        def lights_text(item):
-            return "Lights (held off by an automation)" if self.held_off() else "Lights"
-
         def pause_for(minutes):
             def act(icon, item):
                 a = self.ctrl.automations
@@ -145,11 +143,12 @@ class Tray:
 
         return pystray.Menu(
             pystray.MenuItem("Open Airglow", lambda icon, item: self.show_window(), default=True),
+            pystray.MenuItem("Desk Display", lambda icon, item: self.open_desk(), visible=self.open_desk is not None),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Presets", pystray.Menu(preset_items)),
             pystray.MenuItem("Effect", pystray.Menu(effect_items)),
             pystray.MenuItem("Fan curve", pystray.Menu(curve_items)),
-            pystray.MenuItem(lights_text, toggle_lights, checked=lambda item: self.ctrl.base_scene.get("on", True)),
+            pystray.MenuItem(lambda item: self._lights_text(), toggle_lights, checked=lambda item: self.ctrl.base_scene.get("on", True)),
             pystray.MenuItem(lambda item: "Automations paused" if self.ctrl.automations.paused else "Pause automations",
                              pause_menu, visible=lambda item: bool(self.store.get_rules())),
             pystray.Menu.SEPARATOR,
@@ -174,10 +173,21 @@ class Tray:
             self._restart_pending = True
         self.quit_app()
 
-    def held_off(self):
-        """Lights are on by your choice, but an automation, sleep or the lock is keeping them dark."""
+    def _lights_text(self):
         c = self.ctrl
-        return c.base_scene.get("on", True) and not c.effective_scene.get("on", True)
+        if not c.effective_scene.get("on", True):
+            if c.sleeping or c.shutting_down:
+                return "Lights (off for Windows power)"
+            if c.locked and self.store.settings()["lights_off_on_lock"]:
+                return "Lights (off while locked)"
+            if c.base_scene.get("on", True):
+                return "Lights (held off by an automation)"
+        phase = c.engine.wind_down()["phase"]
+        if phase == "held":
+            return "Lights (Wind down holding at zero)"
+        if phase == "fading":
+            return "Lights (Wind down active)"
+        return "Lights"
 
     def refresh(self):
         c = self.ctrl
@@ -186,7 +196,7 @@ class Tray:
         if key != self._icon_key:
             self.icon.icon = self._image()
         self.icon.title = self._tooltip()
-        rev = (c.rev, len(self.store.get_presets()), c.automations.paused)
+        rev = (c.rev, len(self.store.get_presets()), c.automations.paused, self._lights_text())
         if rev != self._seen_rev:
             self._seen_rev = rev
             self.icon.update_menu()

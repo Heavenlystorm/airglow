@@ -1,6 +1,28 @@
 # Changelog
 
 ## Unreleased
+
+- Desk Display opens as a second window with a clock, a focus timer, and up to four readings with one-minute traces.
+  Choose its instruments independently of Overview, rotate the illustrated scenery daily, or keep the window on top.
+  The timer survives a restart. Both windows remember their monitor and size.
+- The offline Lighting lookbook includes six illustrated recipes. Preview one on your rig or the sample layout,
+  adjust brightness and area accents, compare it with a saved look, and save a personal copy.
+- Profile Library compares two looks at the same instant, including their zone colours and fan-curve points.
+  Local profile files can carry lighting, curves and linked rules. Imported rules start paused. Apply and export
+  detect changes made in another window between review and confirmation.
+- Build a palette from a local photo and reorder its colours. Arrange multiple lighting zones together using
+  keyboard nudges, grid snapping, alignment and equal spacing. Undo and redo preserve the group layout.
+- Light theatre can freeze and scrub recent LED frames. Choose a camera angle, landscape, square or portrait
+  framing, and the theatre backdrop or a transparent background when saving a PNG.
+- Studio keeps several drafts, named checkpoints and recoverable versions. Compare a checkpoint with the current
+  edit or open it as a separate copy.
+- Recordings support six additional signals, timestamped event markers and run notes. Compare traces at matching
+  elapsed times, then export readings, an event timeline or a chart. Interrupted recordings recover their latest checkpoint.
+- The fan curve sandbox shows the response to a temperature sweep or a missing reading. Rehearse automation
+  priorities with sample inputs. Wind down fades lighting over 5–120 minutes and holds it dark until released.
+- Overview has optional Lookbook and Desk Display tiles. The main window fits a Windows split-screen layout.
+  F1 opens searchable task and keyboard help. An optional Windows shortcut can recall Airglow or Desk Display.
+
 - Studio has two editable lighting templates. Lantern Walk moves a gold light and an apricot halo across plum
   LEDs. Rain Glass sends narrow streaks of light diagonally across a dark teal background.
 - In Lighting, open **Edit colour** or **Edit palette** on the whole rig or a zone to type or paste hex colours,

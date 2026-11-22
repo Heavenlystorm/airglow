@@ -4,6 +4,7 @@ import { reduced } from "./motion.js";
 import { R } from "./readings.js";
 import { closeSheet, openSheet } from "./sheet.js";
 import { fanCentres, ledRadius, matrixCorners, portraitBounds } from "./stage.js";
+import { createTheatreCapture } from "./theatre-capture.js";
 
 const TAU = Math.PI * 2;
 const plural = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
@@ -143,6 +144,29 @@ function fanOptics(zone) {
   return paths;
 }
 
+function drawEmitters(ctx, zones, frames, view, atlas, optics) {
+  ctx.globalCompositeOperation = "lighter";
+  for (const zone of zones) {
+    const hex = frames[zone.key];
+    if (!zone.device.online || !zone.config.enabled || typeof hex !== "string" || hex.length !== zone.positions.length * 6) continue;
+    const r = Math.max(1.5 / view.s, ledRadius(zone));
+    const reach = r * (zone.config.layout.shape === "fans" ? 7 : 5.5);
+    for (let i = 0; i < zone.positions.length; i++) {
+      const color = "#" + hex.slice(i * 6, i * 6 + 6);
+      if (color === "#000000" || !/^#[\da-f]{6}$/i.test(color)) continue;
+      const x = zone.positions[i][0] * 1000, y = zone.positions[i][1] * 1000, arc = optics.get(zone.key)?.[i];
+      if (arc) {
+        ctx.lineWidth = Math.max(1.2 / view.s, r * .65);
+        ctx.strokeStyle = color + "bb"; ctx.stroke(arc);
+      }
+      ctx.drawImage(emitterFor(color, atlas), x - reach, y - reach, reach * 2, reach * 2);
+      ctx.globalCompositeOperation = "source-over";
+      circle(ctx, x, y, r * .76, color, null);
+      ctx.globalCompositeOperation = "lighter";
+    }
+  }
+}
+
 export function openTheatre(firstFrame, onClose) {
   const sheet = openSheet(`<section class="light-theatre">
     <header class="theatre-head"><div class="theatre-heading"><svg aria-hidden="true"><use href="#i-effect"/></svg><h2>Light theatre</h2></div>
@@ -155,7 +179,8 @@ export function openTheatre(firstFrame, onClose) {
     <footer class="theatre-foot"><label>Focus<select class="select" data-zone aria-label="Focus a lighting zone"></select></label>
       <div class="theatre-controls"><div role="group" class="seg" aria-label="Theatre camera">
         <button type="button" data-angle="oblique" aria-pressed="true">Oblique</button><button type="button" data-angle="front" aria-pressed="false">Face-on</button></div>
-      <button type="button" class="btn" data-freeze>Hold frame</button></div></footer>
+      <button type="button" class="btn" data-freeze>Hold frame</button>
+      <button type="button" class="btn" data-capture>Capture frame</button></div></footer>
   </section>`);
   const root = sheet.querySelector(".light-theatre"), find = selector => root.querySelector(selector);
   const screen = find(".theatre-screen"), glass = find("[data-glass]"), lights = find("[data-emitters]");
@@ -166,14 +191,33 @@ export function openTheatre(firstFrame, onClose) {
   let packet = firstFrame, held = null, heldScene = null, still = reduced(), camera = "oblique", raf = 0, disposed = false;
   let zones = [], visible = [], active = [], view = null, structureDirty = true, paintKey = "", gate = "", selected = "", coverage = 0;
   let zoom = 1;
+  let presented = null, paintedSource = null, recent = [], capture = null;
+  const captureButton = find("[data-capture]");
+  const clearRecent = () => { presented = null; paintedSource = null; recent = []; };
+  function captureReady(frame) { return !gate && active.length && complete(frame) === active.length; }
+  function rememberPainted(frame) {
+    if (!captureReady(frame)) return;
+    if (paintedSource === frame) return;
+    paintedSource = frame;
+    const now = held === frame ? heldScene.time : Date.now();
+    const frames = Object.fromEntries(active.map(z => [z.key, frame.zones[z.key]]));
+    presented = { frames, time: now, name: find("h3").textContent };
+    // A small filmstrip lets the user reach back just before pressing Capture. Only frame strings are retained.
+    const encoded = active.reduce((size, z) => size + z.positions.length * 6, 0);
+    const limit = Math.min(9, Math.max(1, Math.floor(1500000 / Math.max(1, encoded))));
+    if (!recent.length || now - recent.at(-1).time >= 240) {
+      recent.push(presented);
+      recent = recent.slice(-limit).filter(f => now - f.time <= 2400);
+    }
+  }
   function requestPaint(structure = false) {
     structureDirty ||= structure;
-    if (!raf && !document.hidden && !disposed) raf = requestAnimationFrame(paint);
+    if (!raf && !document.hidden && !disposed && !capture?.open) raf = requestAnimationFrame(paint);
   }
 
   function paint() {
     raf = 0;
-    if (!root.isConnected || !sheet.open || document.hidden) return;
+    if (!root.isConnected || !sheet.open || document.hidden || capture?.open) return;
     const box = screen.getBoundingClientRect(), w = Math.round(box.width), h = Math.round(box.height);
     if (w < 1 || h < 1) return;
     // Bound the pixel cost of a maximized high-DPI display while retaining native resolution on small windows.
@@ -196,28 +240,10 @@ export function openTheatre(firstFrame, onClose) {
     }
     const ctx = clearLayer(lights);
     if (!view || gate) return;
-    ctx.setTransform(...view.transform.map(v => v * zoom)); ctx.globalCompositeOperation = "lighter";
-    const frames = (held || packet)?.zones || {};
-    for (const zone of visible) {
-      const hex = frames[zone.key];
-      if (!zone.device.online || !zone.config.enabled || typeof hex !== "string" || hex.length !== zone.positions.length * 6) continue;
-      const r = Math.max(1.5 / view.s, ledRadius(zone));
-      const reach = r * (zone.config.layout.shape === "fans" ? 7 : 5.5);
-      for (let i = 0; i < zone.positions.length; i++) {
-        const color = "#" + hex.slice(i * 6, i * 6 + 6);
-        if (color === "#000000" || !/^#[\da-f]{6}$/i.test(color)) continue;
-        const x = zone.positions[i][0] * 1000, y = zone.positions[i][1] * 1000;
-        const arc = optics.get(zone.key)?.[i];
-        if (arc) {
-          ctx.lineWidth = Math.max(1.2 / view.s, r * .65);
-          ctx.strokeStyle = color + "bb"; ctx.stroke(arc);
-        }
-        ctx.drawImage(emitterFor(color, atlas), x - reach, y - reach, reach * 2, reach * 2);
-        ctx.globalCompositeOperation = "source-over";
-        circle(ctx, x, y, r * .76, color, null);
-        ctx.globalCompositeOperation = "lighter";
-      }
-    }
+    ctx.setTransform(...view.transform.map(v => v * zoom));
+    const shown = held || packet;
+    drawEmitters(ctx, visible, shown?.zones || {}, view, atlas, optics);
+    rememberPainted(shown);
   }
 
   const complete = frame => active.reduce((count, z) => count + Number(typeof frame?.zones?.[z.key] === "string" &&
@@ -230,15 +256,15 @@ export function openTheatre(firstFrame, onClose) {
     const zoneEffect = z => z?.config.override?.effect || scene?.areas?.[z?.spot]?.effect || scene?.effect;
     gate = R.stale ? "Connection lost" : !visible.length ? "No configured LEDs" : !online.length ? "Devices offline"
       : !active.length ? "Zones disabled" : !scene ? "Waiting for Airglow" : scene.on === false ? "Lights off" : "";
-    if (gate) held = null;
-    if (R.stale) packet = null;
+    if (gate) { held = null; clearRecent(); }
+    if (R.stale || gate === "Lights off" && previousGate !== gate) packet = null;
     if (still && !held && !gate && complete(packet)) {
       held = packet;
-      heldScene = { effect: scene.effect, brightness: scene.brightness, zones: new Map(zones.map(z => [z.key, zoneEffect(z)])) };
+      heldScene = { effect: scene.effect, brightness: scene.brightness, time: Date.now(), zones: new Map(zones.map(z => [z.key, zoneEffect(z)])) };
     }
     const shown = held || packet;
     coverage = complete(shown);
-    const stateText = gate || (!coverage ? "Waiting for frames" : held ? "Frame held" :
+    const stateText = gate || (!coverage ? "Waiting for frames" : held ? (coverage < active.length ? "Partial frame held" : "Frame held") :
       coverage < active.length ? "Partial frame" : "Live output");
     write(find(".theatre-state"), stateText);
     const effect = held ? heldScene.zones.get(selected) || heldScene.effect : selected ? zoneEffect(visible[0]) : scene?.effect;
@@ -258,12 +284,16 @@ export function openTheatre(firstFrame, onClose) {
     write(find(".theatre-meter"), facts.join("  ·  "));
     screen.setAttribute("aria-label", `${name}, ${stateText}. ${facts.join(", ")}.`);
     stillButton.disabled = !held && (!coverage || !!gate);
+    captureButton.disabled = !captureReady(shown);
+    captureButton.title = captureButton.disabled ? gate || "Wait for a complete frame or focus a ready zone." : "Compose a PNG of this frame";
+    capture?.liveState(gate);
     write(stillButton, held ? "Resume live" : "Hold frame");
     stillButton.setAttribute("aria-pressed", String(!!held));
     if (gate !== previousGate || force) requestPaint();
   }
 
   function syncZones() {
+    clearRecent();
     zones = S.zones?.zones || [];
     const missing = selected && !zones.some(z => z.key === selected);
     setHTML(selector, '<option value="">Whole rig</option>' + zones.map(z =>
@@ -284,6 +314,29 @@ export function openTheatre(firstFrame, onClose) {
     requestPaint(true);
   }));
   listen(stillButton, "click", () => { still = !held; held = null; refresh(true); });
+  listen(captureButton, "click", () => {
+    if (!captureReady(held || packet) || capture?.open) return;
+    if (!presented || held && paintedSource !== held) paint();
+    if (!presented) return;
+    const moments = recent.filter(f => f !== presented && presented.time - f.time <= 2400).concat(presented);
+    const shapes = structuredClone(active), bounds = portraitBounds(shapes);
+    const paths = new Map(shapes.map(zone => [zone.key, fanOptics(zone)]));
+    const lightLayer = document.createElement("canvas");
+    capture = createTheatreCapture(root, {
+      camera, moments, shapes, focus: selected ? shapes[0].config.name : "Whole rig",
+      render(ctx, w, h, moment, angle) {
+        const projection = lens(bounds, w, h, angle === "oblique");
+        ctx.save(); ctx.setTransform(...projection.transform);
+        drawGlass(ctx, shapes, projection, getComputedStyle(root)); ctx.restore();
+        if (lightLayer.width !== w || lightLayer.height !== h) { lightLayer.width = w; lightLayer.height = h; }
+        const lightCtx = clearLayer(lightLayer);
+        lightCtx.setTransform(...projection.transform);
+        drawEmitters(lightCtx, shapes, moment.frames, projection, atlas, paths);
+        ctx.drawImage(lightLayer, 0, 0);
+      },
+      onBack() { capture = null; requestPaint(true); refresh(true); (captureButton.disabled ? find("[data-close]") : captureButton).focus({ preventScroll: true }); },
+    });
+  });
   function motionChanged() { if (reduced()) still = true; refresh(true); requestPaint(true); }
   listen(document, "appearancechange", motionChanged);
   listen(document, "designchange", () => requestPaint(true));
@@ -298,11 +351,12 @@ export function openTheatre(firstFrame, onClose) {
   function dispose() {
     if (disposed) return;
     disposed = true; cancelAnimationFrame(raf);
-    observer.disconnect(); replacement.disconnect(); listeners.abort(); atlas.clear();
+    observer.disconnect(); replacement.disconnect(); listeners.abort(); capture?.dispose(); clearRecent(); atlas.clear();
     root.remove();
     onClose();
   }
-  listen(sheet, "close", dispose);
+  // A native close event is queued. Another sheet can open in the same dialog before it is delivered.
+  listen(sheet, "close", () => { if (!sheet.open || !root.isConnected) dispose(); });
   syncZones();
   find("[data-close]").focus();
   return {

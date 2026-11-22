@@ -44,9 +44,12 @@ def effect_host_exe(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seconds", type=float, default=7200)
+    parser.add_argument("--wind-down", action="store_true", help="Exercise five-minute output fades and releases during scene switches")
     parser.add_argument("--exe", type=Path)
     parser.add_argument("--output", type=Path, default=ROOT / "output/qualification/soak")
     args = parser.parse_args()
+    if args.wind_down and args.seconds < 340:
+        parser.error("Allow at least 340 seconds to observe a complete five-minute wind down.")
     try:
         exe = effect_host_exe(args.exe) if args.exe else None
         web = exe.parent / "_internal" / "web" if exe else ROOT / "web"
@@ -218,12 +221,39 @@ def main():
             result["rapid_switches"] += 1
         activate(0)
         next_switch, next_sample, preview_at = started + 20, started + 1, 0
+        wind_at, wind_started, held_at, previous_cap = started + 8, None, None, None
+        if args.wind_down:
+            result["wind_down"] = {"starts": 0, "completed": 0, "early_releases": 0}
         while time.monotonic() - started < args.seconds:
             if stop_request.is_file():
                 result["stopped_early"] = True
                 logging.info("Soak stopped by %s", stop_request)
                 break
             now = time.monotonic()
+            if args.wind_down and now >= wind_at:
+                wind = result["wind_down"]
+                if wind_started is None:
+                    ctrl.engine.wind_down("start", minutes=5)
+                    wind_started, previous_cap, held_at = now, None, None
+                    wind["starts"] += 1
+                status = ctrl.engine.wind_down()
+                if status["phase"] == "idle" or previous_cap is not None and status["cap"] > previous_cap:
+                    raise AssertionError("A scene change interrupted the session fade")
+                previous_cap = status["cap"]
+                early = wind["starts"] % 3 == 0 and now - wind_started > 60
+                if status["phase"] == "held" and held_at is None:
+                    held_at = now
+                complete = held_at is not None and now - held_at >= 3
+                if complete or early:
+                    if complete:
+                        frames = ctrl.engine.frames
+                        if not frames or any(any(bytes.fromhex(value)) for value in frames.values()):
+                            raise AssertionError("A held wind down produced a nonzero hardware frame")
+                    after = ctrl.engine.wind_down("cancel", token=status["id"])
+                    if after["phase"] != "idle":
+                        raise AssertionError("Releasing the output hold failed")
+                    wind["completed" if complete else "early_releases"] += 1
+                    wind_started, wind_at = None, now + 90
             if now >= next_tree:
                 remember_tree()
                 next_tree = now + 2

@@ -3,6 +3,7 @@ import { activateOverviewWorkspace } from "./overview.js";
 import { closeSheet, openSheet } from "./sheet.js";
 import { groupedActions, initQuickPreferences, isFavorite, setFavorite } from "./quick-preferences.js";
 import { SETTINGS_SECTIONS } from "./settings-sections.js";
+import { openWorkspaceTool, workspaceTools } from "./workspace-tools.js";
 
 const categories = [
   { kind: "all", label: "All" },
@@ -12,6 +13,7 @@ const categories = [
   { kind: "workspace", label: "Workspaces", icon: "workspace" },
   { kind: "zone", label: "Zones", icon: "bulb" },
   { kind: "setting", label: "Settings", icon: "gear" },
+  { kind: "tool", label: "Tools", icon: "sliders" },
   { kind: "favorite", label: "Pinned" },
 ];
 const icons = Object.fromEntries(categories.map(({ kind, icon }) => [kind, icon]));
@@ -23,7 +25,8 @@ function commands(sections, ready) {
   const settings = SETTINGS_SECTIONS.map(([id, label, detail]) => ({
     kind: "setting", id, name: label, action: "Open settings", detail,
   }));
-  if (!ready) return [...navigation, ...settings];
+  const tools = workspaceTools.map(tool => ({ ...tool, kind: "tool", action: "Open tool" }));
+  if (!ready) return [...navigation, ...settings, ...tools];
   return [
     ...navigation,
     ...S.effects.map(({ id, name }) => ({ kind: "effect", id, name, action: "Apply effect" })),
@@ -37,7 +40,7 @@ function commands(sections, ready) {
     ...(S.zones?.zones || []).filter(zone => zone.device.online).map(({ key, config, device }) => ({
       kind: "zone", id: key, name: config.name, action: "Open lighting zone", detail: device.name,
     })),
-    ...settings,
+    ...settings, ...tools,
   ];
 }
 
@@ -71,6 +74,7 @@ function confirmedMessage(status, name, kind, on = true) {
 }
 
 async function activate(item) {
+  if (item.kind === "tool") return { tool: item.id };
   if (item.kind === "section") return { route: item.id };
   if (item.kind === "setting") return { route: `settings/${item.id}` };
   if (item.kind === "zone") return { route: `lighting/${encodeURIComponent(item.id)}` };
@@ -249,7 +253,9 @@ export function initQuickSwitcher(sections, catalogState) {
         }
         closeSheet();
       } else refresh();
-      if (outcome.route) {
+      if (outcome.tool) {
+        try { await openWorkspaceTool(outcome.tool); } catch (error) { toast(error.message, true); }
+      } else if (outcome.route) {
         if (location.hash === `#${outcome.route}` && (item.kind === "setting" || item.kind === "zone")) emit("route:revisit");
         else location.hash = `#${outcome.route}`;
       }

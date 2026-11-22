@@ -25,6 +25,19 @@ The screenshots show Firefly with sample hardware.
 - **Tune your cooling.** Follow a temperature with a fan curve or switch profiles when a game starts. [Fans and automations](#fans-and-automations)
 - **Find your favorites.** Pin frequently used effects and profiles. Press **Ctrl+K** to find them alongside your recent choices. Profiles that also change fans are labeled **Lighting and cooling**.
 
+### Things to try in the workspace
+
+| Open | What you can do |
+| --- | --- |
+| **Overview → Tools → Desk Display** | Put a clock and up to four live readings on a second screen. Pick a scene, start a focus timer, and pin the window above other apps. |
+| **Lighting → Library → Lighting lookbook** | Choose one of six illustrated lighting recipes, preview it on your layout, adjust it, and save a personal copy. The library can also compare two saved looks or exchange a local profile file. |
+| **Lighting → Light theatre** | Freeze a recent frame, choose a camera angle and background, and export a picture of your rig. |
+| **Overview → Tools → Recordings** | Record a workload with extra sensors and timestamped notes. Compare two runs at the same elapsed time, then save their readings or a chart. |
+| **Fans → Curve sandbox** | Move a simulated temperature through two curves and inspect expected fan duty. Bring the curve you prefer back to the editor for review. |
+| **Automations → Rehearse rules** | Try a time, temperature or foreground app and see which rules would win before changing a real setup. |
+
+Press **F1** for the task guide. **Ctrl+K** can open the lookbook, recordings or **Wind down**, which fades the lights over a chosen interval and holds them dark until released.
+
 Share a setup or ask a question in [GitHub Discussions](https://github.com/Heavenlystorm/airglow/discussions) or
 [r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/).
 

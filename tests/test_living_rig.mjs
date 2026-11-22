@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
+import { linkStage } from "./stage-fixture.mjs";
 
 async function renderer(rig = "frame") {
   const operations = [], gradients = [];
@@ -24,11 +25,7 @@ async function renderer(rig = "frame") {
     for (const name of names) this.setExport(name, core[name] || (() => {}));
   }, { context });
   const readings = new vm.SyntheticModule(["R"], function () { this.setExport("R", { stale: false }); }, { context });
-  await module.link(specifier => {
-    if (specifier === "./core.js") return coreModule;
-    if (specifier === "./readings.js") return readings;
-    throw new Error("Unexpected stage dependency: " + specifier);
-  });
+  await linkStage(module, context, coreModule, readings);
   await module.evaluate();
   return { ...module.namespace, canvas, zones, operations, gradients };
 }

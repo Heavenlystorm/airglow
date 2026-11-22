@@ -127,7 +127,7 @@ function validateLayout(raw) {
   const tiles = raw.tiles.map((t) => {
     if (!t || typeof t.id !== "string" || !/^[a-z0-9-]{1,32}$/.test(t.id) || seen.has(t.id)) throw new Error("Tile names must be unique short IDs.");
     seen.add(t.id);
-    if (!["sensor", "lighting", "presets", "fans", "control"].includes(t.type)) throw new Error("Unknown tile type.");
+    if (!["sensor", "lighting", "presets", "fans", "control", "lookbook", "desk-display"].includes(t.type)) throw new Error("Unknown tile type.");
     const w = t.w ?? 1, h = t.h ?? 1;
     if (!Number.isInteger(w) || w < 1 || w > 4 || !Number.isInteger(h) || h < 1 || h > 3) throw new Error("Invalid tile size.");
     const tile = { id: t.id, type: t.type, w, h };
@@ -137,11 +137,17 @@ function validateLayout(raw) {
       if (t.type !== "lighting" || !["2d", "3d"].includes(t.view)) throw new Error("Lighting view must be 2d or 3d.");
       tile.view = t.view;
     }
+    if (Object.hasOwn(t, "recipe")) {
+      if (t.type !== "lookbook" || !Number.isInteger(t.recipe) || t.recipe < 0 || t.recipe > 5) throw new Error("Choose one of the six included lookbook recipes.");
+      tile.recipe = t.recipe;
+    }
     if (t.type === "sensor") {
       if (!Array.isArray(t.sensors) || !t.sensors.length || t.sensors.length > 2) throw new Error("A tile shows one or two readings.");
       const style = Object.hasOwn(t, "style") ? t.style : "spark";
       if (!["auto", "spark", "ring", "graph", "bar"].includes(style)) throw new Error("Unknown tile style.");
       Object.assign(tile, { sensors: t.sensors.map(sensor), style });
+    }
+    if (["sensor","lookbook","desk-display"].includes(t.type)) {
       if (t.label != null && (typeof t.label !== "string" || t.label.length > 40)) throw new Error("Tile names can be up to 40 characters.");
       if (t.label?.trim()) tile.label = t.label.trim();
     }

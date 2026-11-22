@@ -28,6 +28,8 @@ DEFAULT_CURVES = {
 
 DEFAULT_APPEARANCE = {"accent": None, "density": "comfortable", "scale": 100,
                       "rig": "frame", "motion": "system"}
+SHORTCUT_KEYS = ("F7", "F8", "F9")
+SHORTCUT_OFF = {"key": "off", "action": "main"}
 
 DEFAULT_CONFIG = {
     "port": 8787,
@@ -37,6 +39,7 @@ DEFAULT_CONFIG = {
     "temp_unit": "C",
     "design": "firefly",              # how the window looks; the lights keep their real colours either way
     "appearance": DEFAULT_APPEARANCE,
+    "windows_shortcut": SHORTCUT_OFF,
     "quick_actions": {"favorites": [], "recents": []},
     "looks": [],                      # personal display recipes; no lighting or cooling settings
     "energy_price": 0.3797,           # €/kWh for the Cost per hour tile: the German household average, H1 2026
@@ -73,7 +76,7 @@ DEFAULT_PRESETS = [
 ]
 
 # The Overview: a grid of tiles (4 columns). Sensor tiles name readings by id ("auto/..." shortcuts work on any PC).
-TILE_TYPES = ("sensor", "lighting", "presets", "fans", "control")
+TILE_TYPES = ("sensor", "lighting", "presets", "fans", "control", "lookbook", "desk-display")
 TILE_STYLES = ("auto", "spark", "ring", "graph", "bar")
 GRID_COLUMNS = 4
 DEFAULT_OVERVIEW = {
@@ -108,7 +111,7 @@ SCHEMA_VERSION = 1
 RESETTABLE_SETTINGS = ("lhm_url", "temp_source", "temp_unit", "fan_failsafe_duty", "fan_max_step", "fancontrol_exe",
                        "fancontrol_configs_dir", "openrgb_enabled", "openrgb_host", "openrgb_port",
                        "lights_off_on_sleep", "lights_off_on_lock", "dynamic_lighting_enabled", "online_checks",
-                       "update_channel", "design", "appearance", "energy_price", "lighting_transition_ms")
+                       "update_channel", "design", "appearance", "energy_price", "lighting_transition_ms", "windows_shortcut")
 
 
 # ---------------------------------------------------------------- validation
@@ -144,6 +147,10 @@ def _int_in(value, lo, hi, name):
     if not lo <= v <= hi:
         raise ValueError(f"{name} must be between {lo} and {hi}")
     return v
+
+
+class CurveConflict(ValueError):
+    """A reviewed editor draft was based on an older saved curve."""
 
 
 def validate_curve(points):
@@ -250,6 +257,11 @@ def validate_settings(patch):
             out[key] = value
         elif key == "appearance":
             out[key] = validate_appearance(value)
+        elif key == "windows_shortcut":
+            if (not isinstance(value, dict) or set(value) != {"key", "action"} or
+                    value["key"] not in ("off", *SHORTCUT_KEYS) or value["action"] not in ("main", "desk")):
+                raise ValueError("Choose an offered Windows shortcut and a window to open.")
+            out[key] = dict(SHORTCUT_OFF) if value["key"] == "off" else dict(value)
         elif key == "quick_actions":
             out[key] = _quick_actions(value)
         elif key == "looks":
@@ -455,6 +467,11 @@ def _validate_overview_layout(o):
             if kind != "lighting" or t["view"] not in ("2d", "3d"):
                 raise ValueError("lighting view must be 2d or 3d")
             tile["view"] = t["view"]
+        if "recipe" in t:
+            recipe = t["recipe"]
+            if kind != "lookbook" or type(recipe) is not int or not 0 <= recipe <= 5:
+                raise ValueError("choose one of the six included lookbook recipes")
+            tile["recipe"] = recipe
         if kind == "sensor":
             ids = t.get("sensors")
             if not isinstance(ids, list) or not 1 <= len(ids) <= 2:
@@ -463,6 +480,9 @@ def _validate_overview_layout(o):
             if style not in TILE_STYLES:
                 raise ValueError(f"unknown tile style '{style}'")
             tile.update(sensors=[_sensor_id(i) for i in ids], style=style)
+        if kind in ("sensor", "lookbook", "desk-display"):
+            if kind != "sensor" and t.get("label") is not None and (not isinstance(t["label"], str) or len(t["label"]) > 40):
+                raise ValueError("tile names can be up to 40 characters")
             label = str(t.get("label") or "").strip()
             if len(label) > 40:
                 raise ValueError("tile names can be up to 40 characters")
@@ -878,11 +898,14 @@ class Store:
         with self._lock:
             return copy.deepcopy(self.config["fan_curves"])
 
-    def set_curve(self, name, points):
+    def set_curve(self, name, points, expected_points=None):
         clean = validate_curve(points)
+        expected = validate_curve(expected_points) if expected_points is not None else None
         with self._lock:
             if name not in self.config["fan_curves"]:
                 raise ValueError(f"unknown fan curve '{name}'")
+            if expected is not None and self.config["fan_curves"][name] != expected:
+                raise CurveConflict("The saved curve changed since this draft was opened.")
             self._save_config({"fan_curves": {**self.config["fan_curves"], name: clean}})
         return clean
 
@@ -902,6 +925,16 @@ class Store:
             self._save_config({"zones": {**self.config["zones"], key: clean}})
             self.zones_rev += 1
         return clean
+
+    def set_stage_placements(self, placements):
+        from .stageplacement import merge_placements
+        with self._lock:
+            zones = self.config["zones"]
+            changed = merge_placements(zones, placements)
+            if changed:
+                self._save_config({"zones": {**zones, **changed}})
+                self.zones_rev += 1
+            return list(changed)
 
     # -- fans and pumps driven through LibreHardwareMonitor
     def fan_channels(self):
@@ -1156,6 +1189,12 @@ class Store:
     def get_overview(self):
         with self._lock:
             return copy.deepcopy(self.overview)
+
+    def desk_preferences(self):
+        """Read just the presentation settings needed by the second window."""
+        with self._lock:
+            return {"pins": list(self.overview["pins"]), "design": self.config["design"],
+                    "temp_unit": self.config["temp_unit"], "appearance": copy.deepcopy(self.config["appearance"])}
 
     def set_overview(self, overview):
         with self._lock:

@@ -7,9 +7,10 @@ const profileCurve = (preset) => preset?.fan_points?.length ? `profile:${preset.
 
 // Apply a profile and return { reply, undo }. undo() puts back what ran before: the previous profile, or the previous
 // lighting and fan curve when no profile was active. A FanControl profile changes another program, so it gets none.
-export async function applyProfile(preset) {
+export async function applyProfile(preset, { reviewed = false, reviewedCurvePoints } = {}) {
   const undo = profileUndoPoint(preset);
-  const reply = await post(`/api/presets/${encodeURIComponent(preset.id)}/apply`);
+  const body = reviewed ? { reviewed: preset, reviewed_curve_points: reviewedCurvePoints } : {};
+  const reply = await post(`/api/presets/${encodeURIComponent(preset.id)}/apply`, body);
   if (reply.scene_status?.status === "pending")
     reply.scene_status = (await waitForLightingScene(reply.scene_status.desired_revision, reply.scene_status.session)).scene_status;
   return { reply, undo: undo() };

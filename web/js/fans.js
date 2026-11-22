@@ -1,6 +1,6 @@
 // Fans screen: temperature/power readouts with history, the curve editor, and fan speeds.
 
-import { $, $$, S, cap, clamp, curveLabel, emit, esc, fail, fmtTemp, on, post, rangeFill, setHTML, tempLevel, toUnit, toast, unitF } from "./core.js";
+import { $, $$, S, cap, clamp, curveLabel, emit, esc, fail, fmtTemp, get, on, post, rangeFill, setHTML, tempLevel, toUnit, toast, unitF } from "./core.js";
 import { openSheet } from "./sheet.js";
 
 const HISTORY_SECONDS = 600;
@@ -46,12 +46,12 @@ function renderReadouts() {
 const ED = { W: 900, H: 400, L: 52, R: 884, T: 16, B: 362, tMin: 20, tMax: 100 };
 const ex = (t) => ED.L + ((t - ED.tMin) / (ED.tMax - ED.tMin)) * (ED.R - ED.L);
 const ey = (d) => ED.B - (d / 100) * (ED.B - ED.T);
-const E = { curve: null, draft: null, sel: null, drag: null, drawn: "" };
+const E = { curve: null, draft: null, sel: null, drag: null, drawn: "", reviewing: false, expected: null };
 const curveSaves = new Map();
 const saved = () => S.curves.curves[E.curve];
 const dirty = () => E.draft && JSON.stringify(E.draft) !== JSON.stringify(saved());
 
-function interp(points, t) {
+export function interpolateCurve(points, t) {
   const p = [...points].sort((a, b) => a[0] - b[0]);
   if (t <= p[0][0]) return p[0][1];
   for (let i = 1; i < p.length; i++) if (t <= p[i][0]) return p[i - 1][1] + (p[i][1] - p[i - 1][1]) * (t - p[i - 1][0]) / (p[i][0] - p[i - 1][0]);
@@ -69,7 +69,10 @@ function renderEditor() {
   const F = S.state.fans;
   // a profile can bring its own curve: then none of the named ones is on, and the editor keeps the last one shown
   const named = F.base_curve in S.curves.curves ? F.base_curve : null;
-  if (!E.curve || (named && E.curve !== named && !dirty())) { E.curve = named || E.curve || "balanced"; E.draft = null; E.sel = null; }   // follow tray/profile changes
+  if (!(E.curve in S.curves.curves) || (named && E.curve !== named && !E.reviewing && !dirty())) {
+    E.curve = named || Object.keys(S.curves.curves)[0]; E.draft = null; E.sel = null; E.reviewing = false; E.expected = null;
+  }
+  if (!E.curve) return;
   if (!E.draft) E.draft = saved().map((p) => p.slice());
   const { min_duty: minDuty, safety_temp: safety } = S.curves;
   const src = S.settings?.settings?.temp_source;
@@ -78,13 +81,13 @@ function renderEditor() {
     : "whichever part is hotter";
   // Rebuilding the whole graph every two seconds threw away the focus of a point you had picked with the keyboard.
   // Only draw when something it shows has changed, and put the focus back when it does.
-  const key = JSON.stringify([E.curve, E.draft, E.sel, E.drag ? E.drag.i : null, F.curve, F.temp, F.duty, named, minDuty,
+  const key = JSON.stringify([E.curve, E.draft, E.sel, E.reviewing, E.drag ? E.drag.i : null, F.curve, F.temp, F.duty, named, minDuty,
                                safety, dirty(), unitF(), S.settings?.settings?.temp_source, S.state.sensors.liquid_temp]);
   if (key === E.drawn) return;
   E.drawn = key;
   const focusPt = document.activeElement?.matches?.("#editor .pt") ? +document.activeElement.dataset.i : null;
   setHTML($("#curve-seg"), Object.keys(S.curves.curves).map((c) =>
-    `<button role="radio" data-c="${c}" aria-checked="${!!named && c === E.curve}">${curveLabel(c)}</button>`).join(""));
+    `<button role="radio" data-c="${esc(c)}" aria-checked="${c === named}" title="Use ${esc(curveLabel(c))} as the base fan curve">${esc(curveLabel(c))}</button>`).join(""));
   const pts = E.draft;
   const line = (arr) => [[ED.tMin, arr[0][1]], ...arr, [ED.tMax, arr.at(-1)[1]]].map(([t, d]) => `${ex(t).toFixed(1)},${ey(d).toFixed(1)}`).join(" ");
   let g = `<defs><linearGradient id="fan-curve-wash" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
@@ -117,12 +120,14 @@ function renderEditor() {
   $("#curve-discard").disabled = !dirty();
   $("#curve-reset").disabled = !S.curves.defaults[E.curve];
   if ($("#curve-add")) $("#curve-add").disabled = E.draft.length >= 8;
-  $("#curve-lede").textContent = !(F.curve in S.curves.curves)
+  $("#curve-lede").textContent = E.reviewing
+    ? `Reviewing ${curveLabel(E.curve)}. ${F.curve === E.curve ? "Saving updates the active curve." : `${curveLabel(F.curve)} is active. Saving changes only the stored ${curveLabel(E.curve)} curve.`}`
+    : !(F.curve in S.curves.curves)
     ? `The fans follow ${F.curve === "trial" ? "the curve of the profile you're trying" : `${curveLabel(F.curve)}'s own curve`}. Pick a curve here to switch back to one of yours.`
     : F.curve !== F.base_curve
     ? `An automation has switched the fans to ${curveLabel(F.curve)} for now. ${curveLabel(F.base_curve)} comes back when it stops.`
     : `Fans in Airglow curve mode follow this curve, tracking ${tracking}.`;
-  $("#editor-hint").textContent = dirty() ? "Draft changes. The dashed line is the saved curve; fans keep following it until you save." : "Drag points or use Add curve point. Arrow keys fine-tune a focused point; Delete removes it.";
+  $("#editor-hint").textContent = dirty() ? "Draft changes. The dashed line shows the saved curve." : "Drag points or use Add curve point. Arrow keys fine-tune a focused point. Delete removes it.";
 }
 
 function svgPoint(e) {
@@ -173,9 +178,19 @@ function wireEditor() {
     const boundaries = [ED.tMin, ...E.draft.map((p) => p[0]), ED.tMax];
     const gaps = boundaries.slice(1).map((t, i) => [boundaries[i], t]).sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
     const t = Math.round((gaps[0][0] + gaps[0][1]) / 2);
-    addCurvePoint(t, Math.round(interp(E.draft, t)));
+    addCurvePoint(t, Math.round(interpolateCurve(E.draft, t)));
   });
   $("#cooling-workbench")?.addEventListener("click", () => import("./cooling-workbench.js").then((m) => m.openCoolingWorkbench()).catch(fail));
+  $("#curve-sandbox")?.addEventListener("click", () => {
+    import("./curve-sandbox.js").then(({ openCurveSandbox }) => openCurveSandbox({
+      name: E.curve, editorDraft: E.draft,
+      review(name, points, baseline) {
+        E.curve = name; E.draft = points.map(p => [...p]); E.reviewing = true; E.sel = null;
+        E.expected = baseline.map(p => [...p]); renderEditor();
+        (dirty() ? $("#curve-save") : $("#curve-sandbox")).focus({ preventScroll: true });
+      },
+    })).catch(fail);
+  });
   svg.addEventListener("keydown", (e) => {
     const c = e.target.closest(".pt");
     if (!c) return;
@@ -189,30 +204,47 @@ function wireEditor() {
   });
   $("#curve-seg").addEventListener("click", async (e) => {
     const c = e.target.closest("[data-c]")?.dataset.c;
-    if (!c || (c === E.curve && c === S.state.fans.base_curve)) return;
+    if (!c || (c === E.curve && c === S.state.fans.base_curve && !E.reviewing)) return;
     if (dirty() && !confirm(`Discard unsaved changes to the ${curveLabel(E.curve)} curve?`)) return;
-    E.curve = c; E.draft = null; E.sel = null;
-    try { await post("/api/fan_curve", { name: c }); S.state.fans.base_curve = c; toast(`Fans now follow the ${curveLabel(c)} curve`); emit("refresh"); }
+    E.curve = c; E.draft = null; E.sel = null; E.reviewing = false; E.expected = null;
+    try { if (c !== S.state.fans.base_curve) { await post("/api/fan_curve", { name: c }); S.state.fans.base_curve = c; toast(`Base fan curve set to ${curveLabel(c)}`); emit("refresh"); } }
     catch (err) { fail(err); }
     renderEditor();
   });
-  $("#curve-discard").addEventListener("click", () => { E.draft = null; E.sel = null; renderEditor(); });
+  $("#curve-discard").addEventListener("click", () => { E.draft = null; E.sel = null; if (E.reviewing) E.expected = saved(); renderEditor(); });
   $("#curve-reset").addEventListener("click", () => { if (!S.curves.defaults[E.curve]) return; E.draft = S.curves.defaults[E.curve].map((p) => p.slice()); E.sel = null; renderEditor(); if (dirty()) toast("Default curve loaded. Save to keep it."); });
   $("#curve-save").addEventListener("click", async () => {
     const name = E.curve, draft = E.draft, before = JSON.stringify(draft);
+    let expected = E.reviewing ? E.expected : null;
     const previous = curveSaves.get(name);
     const writing = (async () => {
-      if (previous) await previous;
+      if (previous) {
+        const prior = await previous;
+        if (expected && prior) expected = prior;
+      }
       try {
-        const r = await post(`/api/curves/${name}`, { points: JSON.parse(before) });
+        const r = await post(`/api/curves/${name}`, { points: JSON.parse(before), ...(expected ? { expected_points: expected } : {}) });
         S.curves.curves[name] = r.points;
         if (E.curve === name) {
+          if (expected && E.reviewing && E.draft === draft) E.expected = r.points;
           if (E.draft === draft && JSON.stringify(draft) === before && curveSaves.get(name) === writing) E.draft = null;
           renderEditor();
         }
         toast(`${curveLabel(name)} curve saved`);
+        return r.points;
       }
-      catch (err) { fail(err); }
+      catch (err) {
+        if (expected) {
+          try {
+            const latest = await get("/api/curves"), points = latest.curves[name];
+            if (points && JSON.stringify(points) !== JSON.stringify(expected) && E.curve === name && E.reviewing && E.draft === draft) {
+              S.curves.curves[name] = points; E.expected = points; E.drawn = ""; renderEditor();
+              toast("The saved curve changed. Review the updated dashed line before saving again.", true); return;
+            }
+          } catch { /* Keep the original write error and editable draft. */ }
+        }
+        fail(err);
+      }
     })();
     curveSaves.set(name, writing);
     try { await writing; }

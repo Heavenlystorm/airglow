@@ -151,6 +151,22 @@ class LayoutTests(unittest.TestCase):
     def test_default_is_valid(self):
         self.assertEqual(config.validate_overview(config.DEFAULT_OVERVIEW), config.DEFAULT_OVERVIEW)
 
+    def test_optional_companion_tiles_persist_and_reject_invalid_recipe_selections(self):
+        store = config.Store(self.tmp.name)
+        tiles = [{"id": "recipe", "type": "lookbook", "w": 2, "h": 1, "recipe": 5, "label": "After hours"},
+                 {"id": "clock", "type": "desk-display", "w": 1, "h": 2, "label": "My desk"}]
+        layout = {"tiles": tiles, "pins": [], "active_workspace": "night",
+                  "workspaces": [{"id": "night", "name": "Night", "tiles": tiles, "pins": []}]}
+        self.assertEqual(store.set_overview(layout), layout)
+        self.assertEqual(config.Store(self.tmp.name).get_overview(), layout)
+        for kind, recipe in (("lookbook", -1), ("lookbook", 6), ("lookbook", True),
+                             ("lookbook", "2"), ("lookbook", 1.2), ("desk-display", 2)):
+            bad = copy.deepcopy(layout)
+            bad["tiles"][0].update(type=kind, recipe=recipe)
+            with self.subTest(kind=kind, recipe=recipe), self.assertRaises(ValueError):
+                store.set_overview(bad)
+            self.assertEqual(store.get_overview(), layout)
+
     def test_tile_presentation_roundtrips_in_active_and_saved_workspaces(self):
         tiles = [
             {"id": "rig", "type": "lighting", "w": 3, "h": 2, "view": "3d",

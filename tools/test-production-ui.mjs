@@ -4,6 +4,9 @@ import { after, before, test } from "node:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { studioRecoveryCases } from "./studio-recovery-cases.mjs";
+import { rehearsalCase } from "./automation-rehearsal-case.mjs";
+import { helpCases } from "./help-workspace-cases.mjs";
 
 const BASE = "https://airglow.test";
 const WEB = new URL("../web/", import.meta.url);
@@ -388,6 +391,10 @@ async function staticPage(t, mock = () => false) {
   await page.goto(BASE);
   return page;
 }
+
+studioRecoveryCases(staticPage, OUTPUT);
+rehearsalCase(staticPage, OUTPUT);
+helpCases(staticPage, OUTPUT);
 
 async function overview(t, tiles) {
   const page = await staticPage(t);
@@ -1526,4 +1533,284 @@ test("Light theatre holds scene metadata with the optical frame and clears a dis
   await page.locator(".light-theatre").waitFor({ state: "detached" });
   await opener.click();
   await dialog.getByText("Waiting for frames", { exact: true }).waitFor();
+});
+
+async function openPhotoPalette(page, single = false) {
+  await page.evaluate(async () => (await import("/js/design.js")).applyDesign("firefly", { persist: false }));
+  if (single) await page.locator("#zone-pick").selectOption("hub/front");
+  await page.getByRole("button", { name: single ? "Edit colour" : "Edit palette" }).click();
+  await page.getByRole("button", { name: "From a photo…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Photo palette" });
+  await dialog.getByText("Firefly dusk · Built-in sample").waitFor();
+  return dialog;
+}
+
+async function bandedPhoto(page, name = "Dusk bands.png") {
+  const encoded = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 16; canvas.height = 4;
+    const ctx = canvas.getContext("2d");
+    ["#1f1235", "#6738a0", "#ff8d60", "#bdedd4"].forEach((c, i) => {
+      ctx.fillStyle = c; ctx.fillRect(i * 4, 0, 4, 4);
+    });
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
+  return { name, mimeType: "image/png", buffer: Buffer.from(encoded, "base64") };
+}
+
+test("Photo palette samples local files, shares reordered stops and applies only on confirmation", async t => {
+  const writes = [];
+  const page = await colourEditorPage(t, async (route, url) => {
+    if (route.request().method() !== "POST") return false;
+    const body = route.request().postDataJSON(); writes.push([url.pathname, body]);
+    await route.fulfill({ json: { scene: { effect: "gradient", params: body.params, brightness: 60 },
+      scene_status: { desired_revision: 5, session: "fixture", status: "ready" } } });
+    return true;
+  });
+  const dialog = await openPhotoPalette(page);
+  await dialog.getByLabel("Colours", { exact: true }).selectOption("4");
+  assert.equal(await dialog.getByRole("radio").count(), 4);
+  await dialog.getByLabel("Emphasis").selectOption("highlights");
+  await page.evaluate(() => document.fonts.ready);
+  if (OUTPUT) await page.screenshot({ path: join(OUTPUT, "photo-palette.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  if (OUTPUT) await page.screenshot({ path: join(OUTPUT, "photo-palette-narrow.png") });
+  await page.evaluate(async () => (await import("/js/appearance.js")).applyAppearance({ scale: 120 }, { persist: false }));
+  assert.ok(await dialog.evaluate(e => e.scrollWidth <= e.clientWidth + 1 && e.getBoundingClientRect().right <= innerWidth + 1));
+  await dialog.locator('[type="file"]').setInputFiles(await bandedPhoto(page));
+  await dialog.getByText("Dusk bands.png").waitFor();
+  await dialog.getByRole("radio", { name: "Stop 1, #1f1235" }).click();
+  await page.keyboard.press("ArrowRight");
+  assert.equal(await dialog.getByRole("radio", { checked: true }).getAttribute("aria-label"), "Stop 2, #6738a0");
+  await dialog.getByRole("button", { name: "Move selected stop earlier" }).click();
+  assert.equal(await dialog.getByRole("radio", { checked: true }).getAttribute("aria-label"), "Stop 1, #6738a0");
+  const pixel = dialog.getByRole("button", { name: "Pick a colour from the photo" });
+  await pixel.focus(); await pixel.press("Shift+ArrowRight"); await pixel.press("Enter");
+  await dialog.getByText("Stop 1 now uses #bdedd4.").waitFor();
+  const colors = ["#bdedd4", "#1f1235", "#ff8d60", "#bdedd4"];
+  await dialog.getByRole("button", { name: "Save to library…" }).click();
+  const paletteName = dialog.getByRole("textbox", { name: "Palette name" });
+  await paletteName.fill("Night walk"); await paletteName.press("Enter");
+  await dialog.getByRole("status").getByText(/Saved Night walk/).waitFor();
+  const saved = await page.evaluate(async () => {
+    const { PALETTE_KEY } = await import("/js/studio-document.js"); return JSON.parse(localStorage.getItem(PALETTE_KEY));
+  });
+  assert.deepEqual(saved, [{ name: "Night walk", colors }]);
+  await dialog.getByRole("button", { name: "Use palette in draft" }).click();
+  const editor = page.getByRole("dialog", { name: "Edit palette" });
+  assert.equal(await editor.getByLabel("Hex colours").inputValue(), colors.join(" "));
+  assert.ok(await editor.getByRole("button", { name: "Night walk" }).isVisible());
+  assert.equal(writes.length, 0);
+  await editor.getByRole("button", { name: "Apply palette" }).click();
+  await editor.waitFor({ state: "hidden" });
+  assert.deepEqual(writes.map(([p]) => p), ["/api/scene"]);
+  assert.deepEqual(writes[0][1].params, { colors, speed: 20 });
+  assert.equal(writes[0][1].expected_revision, 4);
+});
+
+test("Photo palette recovers from invalid files and applies just one sampled colour to the original zone", async t => {
+  const writes = [];
+  const page = await colourEditorPage(t, async (route, url) => {
+    if (route.request().method() !== "POST") return false;
+    const body = route.request().postDataJSON(); writes.push([url.pathname, body]);
+    await route.fulfill({ json: { previous_override: body.expected_override,
+      config: { name: "Front strip", enabled: true, layout: { shape: "strip", x: .4, y: .5, angle: 0, length: .2 }, override: body.override } } });
+    return true;
+  });
+  const dialog = await openPhotoPalette(page, true);
+  const file = dialog.locator('[type="file"]');
+  await file.setInputFiles({ name: "bad.png", mimeType: "image/png", buffer: Buffer.from("broken image") });
+  await dialog.getByRole("status").getByText(/could not be decoded/i).waitFor();
+  assert.ok(await dialog.getByRole("button", { name: "Use selected colour in draft" }).isEnabled());
+  const src = await bandedPhoto(page);
+  await dialog.locator(".photo-viewport").evaluate((el, { name, base64 }) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], name, { type: "image/png" }));
+    el.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  }, { name: src.name, base64: src.buffer.toString("base64") });
+  await dialog.getByText(src.name).waitFor();
+  const pixel = dialog.getByRole("button", { name: "Pick a colour from the photo" });
+  const box = await pixel.boundingBox();
+  await pixel.click({ position: { x: Math.floor(box.width * .66), y: Math.floor(box.height * .5) } });
+  await dialog.getByText("Stop 1 now uses #ff8d60.").waitFor();
+  await page.keyboard.press("Escape");
+  const editor = page.getByRole("dialog", { name: "Edit colour" });
+  await editor.waitFor();
+  assert.ok(await editor.getByRole("button", { name: "From a photo…" }).evaluate(el => el === document.activeElement));
+  assert.equal(await editor.getByLabel("Hex colour").inputValue(), "#123456");
+  await editor.getByRole("button", { name: "From a photo…" }).click();
+  await dialog.getByRole("button", { name: "Use selected colour in draft" }).click();
+  assert.equal(await editor.getByLabel("Hex colour").inputValue(), "#ff8d60");
+  assert.equal(writes.length, 0);
+  await editor.getByRole("button", { name: "Apply colour" }).click();
+  await editor.waitFor({ state: "hidden" });
+  assert.deepEqual(writes, [["/api/zones/hub%2Ffront", { override: { effect: "solid", params: { color: "#ff8d60" } },
+    expected_override: { effect: "solid", params: { color: "#123456" } } }]]);
+});
+
+test("Photo palette drops a late file decode after replacement and preserves a newer modal", async t => {
+  const page = await colourEditorPage(t);
+  const dialog = await openPhotoPalette(page);
+  const first = await bandedPhoto(page, "Slow photo.png");
+  await page.evaluate(() => {
+    const decode = window.createImageBitmap;
+    window.createImageBitmap = async function(file, ...args) {
+      if (file.name !== "Slow photo.png") return decode.call(window, file, ...args);
+      await new Promise(resolve => { window.finishPhotoDecode = resolve; });
+      const bitmap = await decode.call(window, file, ...args);
+      setTimeout(() => { window.slowPhotoSettled = true; }, 0);
+      return bitmap;
+    };
+  });
+  await dialog.locator('[type="file"]').setInputFiles(first);
+  await page.waitForFunction(() => !!window.finishPhotoDecode);
+  await dialog.locator('[type="file"]').setInputFiles({ ...first, name: "Newer photo.png" });
+  await dialog.getByText("Newer photo.png").waitFor();
+  await page.evaluate(() => window.finishPhotoDecode());
+  await page.waitForFunction(() => window.slowPhotoSettled);
+  assert.ok(await dialog.getByText("Newer photo.png").isVisible());
+  await dialog.getByRole("button", { name: "Use sample image" }).click();
+  await dialog.getByText("Firefly dusk · Built-in sample").waitFor();
+  await page.evaluate(() => { window.finishPhotoDecode = null; });
+  await dialog.locator('[type="file"]').setInputFiles(first);
+  await page.waitForFunction(() => !!window.finishPhotoDecode);
+  await page.evaluate(async () => { (await import("/js/help.js")).openShortcuts(); window.finishPhotoDecode(); });
+  const newer = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await newer.waitFor();
+  assert.equal(await page.locator(".photo-palette").count(), 0);
+  await page.keyboard.press("Escape"); await newer.waitFor({ state: "hidden" });
+});
+
+test("Photo palette stays keyboard accessible in forced colours in a compact zoomed window", async t => {
+  const page = await colourEditorPage(t);
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
+  await page.evaluate(async () => (await import("/js/appearance.js")).applyAppearance({ scale: 120 }, { persist: false }));
+  const dialog = await openPhotoPalette(page);
+  await dialog.getByLabel("Colours", { exact: true }).selectOption("4");
+  assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+  const selected = dialog.getByRole("radio", { checked: true });
+  await selected.focus(); await selected.press("End");
+  assert.match(await selected.getAttribute("aria-label"), /^Stop 4,/);
+  assert.equal(await selected.locator("i").evaluate(el => getComputedStyle(el).forcedColorAdjust), "none");
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog", { name: "Edit palette" }).waitFor();
+  await page.keyboard.press("Escape");
+  assert.ok(await page.getByRole("button", { name: "Edit palette" }).evaluate(el => el === document.activeElement));
+});
+
+async function arrangePage(t, onSave = () => {}) {
+  let zones;
+  const writes = [];
+  const page = await colourEditorPage(t, async (route, url) => {
+    if (url.pathname === "/api/zones") { await route.fulfill({ json: { zones } }); return true; }
+    if (route.request().method() !== "POST") return false;
+    const body = route.request().postDataJSON(); writes.push([url.pathname, body]);
+    assert.equal(url.pathname, "/api/stage/placement");
+    const error = await onSave(body, writes.length);
+    if (error) { await route.fulfill({ status: 409, json: { error } }); return true; }
+    for (const { key, position } of body.placements) {
+      const zone = zones.find(z => z.key === key);
+      zone.positions = zone.positions.map(([x, y]) => [x + position.x - zone.config.layout.x, y + position.y - zone.config.layout.y]);
+      Object.assign(zone.config.layout, position);
+    }
+    await route.fulfill({ json: { changed: body.placements.map(p => p.key) } }); return true;
+  });
+  zones = await page.evaluate(async () => {
+    const { S, emit } = await import("/js/core.js");
+    (await import("/js/design.js")).applyDesign("firefly", { persist: false });
+    const areas = [["Front fan", .38, .26], ["Rear fan", 1.28, .5], ["Accent strip", .55, .83]];
+    S.zones.zones = areas.map(([name, x, y], i) => {
+      const layout = i < 2 ? { shape: "fans", fans: 1, size: .24, leds_per_fan: 12, x, y, angle: 0 } :
+        { shape: "strip", leds: 16, length: .45, x, y, angle: 0 };
+      const positions = i < 2 ? Array.from({ length: 12 }, (_, j) => {
+        const a = j * Math.PI / 6; return [x + .12 * Math.sin(a), y - .12 * Math.cos(a)];
+      }) : Array.from({ length: 16 }, (_, j) => [x + .45 * (j / 15 - .5), y]);
+      return { key: "hub/" + i, device: { id: "hub", name: "Desk hub", online: true },
+        config: { name, enabled: true, order: "RGB", layout }, positions };
+    });
+    emit("zones"); emit("frames:live", { zones: Object.fromEntries(S.zones.zones.map((z,i) =>
+      [z.key, ["a871f2", "9cf1c5", "ffb36e"][i].repeat(z.positions.length)])) });
+    return S.zones.zones;
+  });
+  return { page, writes };
+}
+
+test("Stage Arrange aligns multiple zones, spaces centres, nudges, undoes and saves one guarded group", async t => {
+  const { page, writes } = await arrangePage(t, (_body, n) => n === 1 ? "Front fan moved in another window." : "");
+  await page.locator("#arrange").click();
+  const panel = page.getByRole("complementary", { name: "Arrange rig" });
+  for (const s of ["Front fan", "Rear fan", "Accent strip"]) await panel.getByRole("checkbox", { name: new RegExp(s) }).check();
+  assert.equal(await page.locator("#stage-svg .zone.selected").count(), 3);
+  await panel.getByRole("button", { name: "Make a row" }).click();
+  await panel.getByRole("button", { name: "Space across" }).click();
+  const stageZone = page.locator('#stage-svg [data-key="hub/0"]');
+  await stageZone.focus(); await stageZone.press("Shift+ArrowRight");
+  await stageZone.press("Control+z");
+  assert.ok(await stageZone.evaluate(el => el === document.activeElement));
+  await panel.getByRole("button", { name: "Redo" }).click();
+  assert.equal(writes.length, 0);
+  assert.deepEqual(await page.evaluate(async () => (await import("/js/core.js")).S.zones.zones.map(z => z.config.layout.x)), [.38,1.28,.55]);
+  await page.evaluate(() => document.fonts.ready);
+  if (OUTPUT) await page.screenshot({ path: join(OUTPUT, "stage-arrange.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  if (OUTPUT) await page.screenshot({ path: join(OUTPUT, "stage-arrange-narrow.png") });
+  assert.ok(await panel.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+  await panel.getByRole("button", { name: "Save layout" }).click();
+  await panel.getByRole("status").getByText(/moved in another window/).waitFor();
+  assert.ok(await panel.isVisible());
+  await panel.getByRole("button", { name: "Save layout" }).click();
+  await panel.waitFor({ state: "hidden" });
+  assert.equal(writes.length, 2);
+  assert.deepEqual(writes[0][1], writes[1][1]);
+  const changed = writes[0][1].placements;
+  assert.equal(changed.length, 3);
+  assert.deepEqual(changed.map(p => p.position.y), [.53, .53, .53]);
+  assert.deepEqual(changed.map(p => p.position.x), [.381, 1.281, .831]);
+  assert.deepEqual(changed.map(p => p.expected.x), [.38, 1.28, .55]);
+});
+
+test("Stage Arrange cancels pointer gestures, preserves unsaved work through view switches and restores the lighting inspector", async t => {
+  const { page, writes } = await arrangePage(t);
+  await page.locator("#arrange").click();
+  const panel = page.getByRole("complementary", { name: "Arrange rig" });
+  const point = async (x,y) => page.locator("#stage-svg").evaluate((svg, xy) => {
+    const p = new DOMPoint(...xy).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y };
+  }, [x,y]);
+  const source = await point(380,260), dest = await point(451,332);
+  await page.mouse.move(source.x, source.y); await page.mouse.down(); await page.mouse.move(dest.x, dest.y);
+  await page.locator("#stage-svg").dispatchEvent("pointercancel", { pointerId: 1, pointerType: "mouse" });
+  await page.mouse.up();
+  assert.ok(await panel.getByRole("button", { name: "Save layout" }).isDisabled());
+  await panel.getByRole("checkbox", { name: "Snap drag to grid" }).check();
+  await page.mouse.move(source.x, source.y); await page.mouse.down(); await page.mouse.move(dest.x, dest.y); await page.mouse.up();
+  await panel.getByText("0.450", { exact: true }).waitFor();
+  await panel.getByText("0.350", { exact: true }).waitFor();
+  await page.locator("#stage-view-3d").click();
+  await panel.getByText("Save or cancel the layout to switch views.").waitFor();
+  await page.keyboard.press("Escape");
+  assert.ok(await panel.getByRole("button", { name: "Cancel" }).evaluate(el => el === document.activeElement));
+  await panel.getByRole("button", { name: "Cancel" }).click();
+  assert.ok(await page.locator("#inspector").isVisible());
+  assert.equal(writes.length, 0);
+  assert.equal(await page.locator("#stage-svg .arrange-grid").count(), 0);
+  assert.ok(await page.locator("#arrange").evaluate(el => el === document.activeElement));
+});
+
+test("Stage Arrange preserves Setup's immediate linked placement and rejects a cancelled drag", async t => {
+  const { page, writes } = await arrangePage(t);
+  await page.evaluate(async () => (await import("/js/stage.js")).placing(["hub/0", "hub/1"]));
+  assert.equal(await page.locator(".arrange-panel").isVisible(), false);
+  const toScreen = async ([x,y]) => page.locator("#stage-svg").evaluate((svg, p) => {
+    const d = new DOMPoint(...p).matrixTransform(svg.getScreenCTM()); return [d.x,d.y];
+  }, [x,y]);
+  const from = await toScreen([380,260]), to = await toScreen([430,310]);
+  await page.mouse.move(...from); await page.mouse.down(); await page.mouse.move(...to); await page.mouse.up();
+  await page.waitForFunction(async () => (await import("/js/core.js")).S.zones.zones[0].config.layout.x > .4);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0][1].placements.map(p => p.key), ["hub/0", "hub/1"]);
+  const [a, b] = writes[0][1].placements.map(p => p.position);
+  assert.ok(Math.abs(b.x - a.x - .9) < .0001);
+  await page.evaluate(async () => (await import("/js/stage.js")).placing(null));
+  assert.equal(await page.locator("#arrange").getAttribute("aria-pressed"), "false");
 });

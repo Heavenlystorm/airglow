@@ -156,6 +156,18 @@ test("optional tile presentation defaults only inside an explicitly supplied app
   assert.equal(Object.hasOwn(imported.tiles[0], "view"), false);
 });
 
+test("included lookbook selections and companion names roundtrip with no impact on legacy tiles", () => {
+  const tiles = [{id:"look",type:"lookbook",w:2,h:1,recipe:0,label:"Reading nook"},
+    {id:"desk",type:"desk-display",w:2,h:2,label:"Study"}, ...original().tiles];
+  const clean = {format:"airglow-workspace",version:1,name:"Optional cards",tiles,pins:original().pins};
+  assert.deepEqual(W.importWorkspace(JSON.stringify(clean)).tiles,tiles);
+  for (const change of [{recipe:6},{recipe:-1},{recipe:"1"},{recipe:0.25},{recipe:true},{recipe:null},
+    {type:"desk-display",recipe:1},{label:24},{label:"a".repeat(41)}]) {
+    const bad = structuredClone(clean); Object.assign(bad.tiles[0],change);
+    assert.throws(()=>W.importWorkspace(JSON.stringify(bad)));
+  }
+});
+
 test("invalid presentation imports and workspace creation leave the entire document unchanged", () => {
   const doc = original(); W.initializeWorkspaces(doc);
   const before = structuredClone(doc);

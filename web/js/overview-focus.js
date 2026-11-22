@@ -108,6 +108,10 @@ function build() {
     if (e.target === dialog || e.target.closest("[data-close]")) return closeFocus();
     if (e.target.closest("[data-settings]")) return closeFocus(F.open?.onSettings);
     if (e.target.closest("[data-copy-summary]")) return void copySnapshot();
+    if (e.target.closest("[data-session-focus]")) {
+      const sensorIds = F.open.sensors.slice();
+      return closeFocus(() => import("./session-lab.js").then(m => m.openSessionLab({ sensorIds })).catch(error => toast(error.message)));
+    }
     if (e.target.closest("[data-hold]")) {
       if (!F.held) return selectSample(F.open.window.rows.length - 1);
       F.held = null;
@@ -291,6 +295,7 @@ export function openFocus({ sensors, label = "", from = null, color = "", onSett
       <span class="focus-sample-info"></span>
       <input class="focus-cursor" type="range" min="0" step="1" aria-label="Inspect recorded sample" hidden>
       <div class="btn-row"><button type="button" class="btn quiet" data-hold>Pause history</button>
+        <button type="button" class="btn quiet" data-session-focus>Record this ${sensors.length > 1 ? "pair" : "sensor"}</button>
         <button type="button" class="btn quiet" data-copy-summary><svg aria-hidden="true"><use href="#i-copy"/></svg>Copy summary</button></div>
       <textarea class="focus-copy-fallback" aria-label="Sensor summary to copy" rows="3" readonly hidden></textarea>
     </div>

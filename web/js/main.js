@@ -2,7 +2,7 @@
 
 import { $, $$, S, curveLabel, dismissMutation, emit, esc, fail, get, mutationStates, on, post, refreshZones, retryMutation, setHTML, toast } from "./core.js";
 import { adoptSceneState, applyLightingScene } from "./scene-commands.js";
-import { settleSceneMutation } from "./core.js";
+import { activeFanFailsafe, settleSceneMutation } from "./core.js";
 import { initStage } from "./stage.js";
 import { initAutomations, renderAutomations, pauseAutomations, sentence } from "./automations.js";
 import { openOnlineQuestion, openWelcome } from "./onboarding.js";
@@ -15,6 +15,7 @@ import { startLive, sync as syncLive } from "./live.js";
 import { applyDesign } from "./design.js";
 import { applyAppearance } from "./appearance.js";
 import { initQuickSwitcher } from "./quick-switcher.js";
+import { initWorkspaceTools } from "./workspace-tools.js";
 
 const TABS = ["overview", "lighting", "studio", "fans", "automations", "devices", "settings"];
 const views = {};                 // loaded on first use: Overview should not wait for Studio, Fans, Settings or Devices
@@ -56,6 +57,9 @@ async function route() {
   const seq = ++routeSeq;
   const [tab, arg] = (location.hash || "#overview").slice(1).split("/");
   const view = TABS.includes(tab) ? tab : "overview";
+  const panel = $(`.view[data-view="${view}"]`);
+  const loadingNotice = $("#view-loading");
+  loadingNotice.hidden = true;
   $$(".tabs a").forEach((a) => (a.dataset.tab === view ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
   $$(".view").forEach((v) => (v.hidden = v.dataset.view !== view));
   moveMarker($(".tab-ink"), $(`.tabs a[data-tab="${view}"]`), currentView === null);
@@ -66,9 +70,29 @@ async function route() {
   paintMutations();
   if (view === "overview") { renderOverview(); return; }
   if (view === "automations") { renderAutomations(); return; }
+  const firstLoad = !views[view];
+  panel.inert = firstLoad;
+  panel.setAttribute("aria-busy", String(firstLoad));
+  const label = panel.getAttribute("aria-label") || view;
+  const pending = firstLoad && setTimeout(() => {
+    if (seq !== routeSeq) return;
+    loadingNotice.querySelector("span").textContent = `Loading ${label}…`;
+    loadingNotice.querySelector("button").hidden = true;
+    loadingNotice.hidden = false;
+  }, 180);
   let m;
-  try { m = await loadView(view); } catch (e) { fail(e); return; }
+  try { m = await loadView(view); }
+  catch (e) {
+    if (seq !== routeSeq) return;
+    loadingNotice.querySelector("span").textContent = `Couldn’t open ${label}. ${e.message}`;
+    const retry = loadingNotice.querySelector("button");
+    retry.hidden = false; retry.onclick = () => location.reload();
+    loadingNotice.hidden = false;
+    return;
+  } finally { clearTimeout(pending); panel.removeAttribute("aria-busy"); }
   if (seq !== routeSeq) return;
+  panel.inert = false;
+  loadingNotice.hidden = true;
   if (view === "fans") { m.renderFans(); if (arg) m.showFan?.(decodeURIComponent(arg)); }
   else if (view === "devices") { if (arg) m.showZone(decodeURIComponent(arg)); m.renderDevices(); }
   else if (view === "settings") {
@@ -170,13 +194,15 @@ function renderPins() {
   }
 }
 
-// Why the lights are dark although you left them on (an automation, or the lock setting), or null.
+// Show the hold that currently determines the physical output.
 function heldOff() {
   const s = S.state;
+  if (s.effective.on && s.wind_down?.phase === "held") return { timer: true, text: "Wind down is holding the lighting at zero." };
   if (!s.scene.on || s.effective.on) return null;
+  if (s.override?.power) return { text: "Windows power settings are keeping the lights off." };
+  if (s.override?.locked) return { text: "They're off while the PC is locked (Settings)." };
   const rule = S.rules.find((r) => r.id === s.override?.lighting);
   if (rule) return { rule, text: `An automation is keeping them off: “${sentence(rule, false)}”` };
-  if (s.override?.locked) return { text: "They're off while the PC is locked (Settings)." };
   return { text: "Something is keeping them off right now." };
 }
 
@@ -192,6 +218,7 @@ function renderWhy() {
     text = held.text;
     action = held.rule
       ? `<button class="btn" data-why-pause>Pause all for an hour</button>`
+      : held.timer ? `<button class="btn" data-wind-down>Manage timer</button>`
       : `<a class="btn quiet" href="#settings">Settings</a>`;
   } else if (o.paused_until) {
     const until = new Date(o.paused_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -229,14 +256,17 @@ function renderBar() {
   renderPins();
   renderTrial();
   const fanAlert = $("#fan-alert");
-  fanAlert.hidden = !S.state.fans?.failsafe;
+  fanAlert.hidden = !activeFanFailsafe(S.state.fans);
   setHTML(fanAlert, fanAlert.hidden ? "" : `<span><strong>Fan failsafe.</strong> The fan curve is waiting for its temperature reading.</span>
     <a class="text-link" href="#settings/sensors">Check sensors</a>`);
   renderWhy();
   const held = heldOff();
   $("#power").setAttribute("aria-pressed", String(S.state.scene.on));
   $("#power").toggleAttribute("data-held", !!held);
-  $("#power").title = held ? `Lights are on, but dark. ${held.text}` : S.state.scene.on ? "Turn the lights off" : "Turn the lights on";
+  const switchLabel = S.state.scene.on ? "Turn the lights off" : "Turn the lights on";
+  $("#power").title = S.state.wind_down?.phase === "held" && (!held || held.timer)
+    ? `${switchLabel}. Wind down will hold the output at zero until released.`
+    : held ? `Lights are on, but dark. ${held.text}` : switchLabel;
 
   const c = S.state.conflicts || [];
   const n = $("#notice");
@@ -261,7 +291,7 @@ function renderBar() {
   } else if (S.state.onboarded && S.state.setup_pending > setupDismissed) {
     const k = S.state.setup_pending;
     n.hidden = false;
-    setHTML(n, `<span><b>${k} new light${k === 1 ? "" : "s"}</b> to set up. Tell Airglow what ${k === 1 ? "it is" : "they are"} so effects line up with your case.</span>
+    setHTML(n, `<span class="notice-setup"><b>${k} new light${k === 1 ? "" : "s"}</b> to set up.<span class="notice-setup-extra"> Tell Airglow what ${k === 1 ? "it is" : "they are"} so effects line up with your case.</span></span>
       <button class="btn" data-open-setup="start">Set up</button><button class="btn quiet" id="setup-later">Not now</button><span class="spacer"></span>`);
   } else if (fxProblem()) {
     const p = fxProblem();
@@ -286,6 +316,7 @@ function renderBar() {
 
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-why-pause]")) { pauseAutomations(60); return; }
+  if (e.target.closest("[data-wind-down]")) { import("./wind-down.js").then(m => m.openWindDown()).catch(fail); return; }
   if (e.target.closest("[data-why-resume]")) { pauseAutomations(0); return; }
   const b = e.target.closest("[data-open-setup]");
   if (b) import("./setup.js").then((m) => m.openSetup({ start: b.dataset.openSetup === "start", only: b.dataset.zone || null })).catch(fail);
@@ -423,3 +454,4 @@ async function boot() {
 
 boot();
 initShortcuts();
+initWorkspaceTools();

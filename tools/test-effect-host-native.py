@@ -79,7 +79,12 @@ def main():
             self.end_headers()
             self.wfile.write(b'{"ok":true}')
 
-    server = ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Handler, directory=str(ROOT / 'web')))
+    web = ROOT / 'web'
+    if args.exe:
+        packaged = Path(args.exe).resolve().parent / '_internal' / 'web'
+        if packaged.is_dir():
+            web = packaged
+    server = ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Handler, directory=str(web)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     user32 = ctypes.WinDLL('user32', use_last_error=True)
     callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -145,7 +150,7 @@ def main():
         result = {**received, 'distinct_frames': len(received['distinct_frames']),
                   'visible_windows': sorted(visible), 'unexpected_exit': exit_code,
                   'taskbar_windows': sorted(switchers),
-                  'visibility': visibility,
+                  'visibility': visibility, 'web_assets': str(web),
                   'duration': round(time.monotonic() - started, 2),
                   'stderr': (Path(data) / 'stderr.log').read_text(encoding='utf-8')}
         result['passed'] = (exit_code is None and not visible and not switchers and received['nonzero_frames'] > 10

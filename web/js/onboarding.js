@@ -1,6 +1,6 @@
 // First-run welcome: what was found, what needs attention, and a single way forward.
 
-import { $, S, emit, esc, fail, on, post, setHTML, toast } from "./core.js";
+import { $, S, activeFanFailsafe, emit, esc, fail, on, post, setHTML, toast } from "./core.js";
 import { refreshTools } from "./helpers.js";
 import { closeSheet, openSheet } from "./sheet.js";
 
@@ -38,7 +38,7 @@ function welcomeList(st) {
       : "Airglow gets these readings from LibreHardwareMonitor. Check the helper setup below.";
     attention.push(item(false, title, reason));
   }
-  if (st.fans?.failsafe) attention.unshift(item(false, "Fan failsafe is active", "The fan curve is waiting for its selected temperature reading."));
+  if (activeFanFailsafe(st.fans)) attention.unshift(item(false, "Fan failsafe is active", "Airglow is waiting for its selected temperature reading."));
   const readings = 2 - unavailable.length;
   const summary = [online.length && `${online.length} lighting device${online.length === 1 ? "" : "s"}`,
     readings && `${readings} temperature reading${readings === 1 ? "" : "s"}`].filter(Boolean).join(" · ");

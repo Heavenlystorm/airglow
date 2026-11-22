@@ -14,6 +14,13 @@ def _preset(store, pid):
     return p
 
 
+def _check_reviewed_curve(body, preset, curves):
+    name = preset.get("fan_curve")
+    if name and not preset.get("fan_points") and "reviewed_curve_points" in body:
+        if body["reviewed_curve_points"] != curves.get(name):
+            raise ApiError(409, "The named fan curve changed. Reopen the library to review its points again.")
+
+
 def _current_areas(ctrl, store):
     """Per-area effects for "save current": the scene's own, then each area's first zone you gave its own effect."""
     areas = dict(ctrl.base_scene.get("areas") or {})
@@ -46,6 +53,42 @@ def route(server, method, path, body, query=None):
         raise ApiError(404, "not found")
     if method != "POST":
         raise ApiError(404, "not found")
+    if path == "/api/profiles/export":
+        with store._lock:
+            preset = _preset(store, body.get("id"))
+            if "reviewed" in body and body["reviewed"] != preset:
+                raise ApiError(409, "This profile changed. Reopen the library to review it before exporting.")
+            curves = store.curves()
+            _check_reviewed_curve(body, preset, curves)
+            rules = store.get_rules()
+            if body.get("include_automations") is True:
+                linked = [r for r in rules if r["then"].get("type") == "preset" and r["then"].get("preset") == preset["id"]]
+                if len(linked) > profiles.MAX_AUTOMATIONS:
+                    raise ApiError(400, f"This profile has {len(linked)} linked rules. A portable file holds up to "
+                                        f"{profiles.MAX_AUTOMATIONS}. Uncheck linked rules to export the lighting and fan curve.")
+                if "reviewed_rules" in body and body["reviewed_rules"] != linked:
+                    raise ApiError(409, "The linked rules changed. Reopen the library to review them before exporting.")
+            shared = profiles.to_shared(preset, rules, curves=curves,
+                                        include_automations=body.get("include_automations") is True)
+        return {"profile": shared, "filename": shared["id"] + ".airglow-profile.json"}
+    if path == "/api/profiles/inspect-file":
+        return profiles.validate_shared(body.get("profile"))
+    if path == "/api/profiles/import":
+        shared = profiles.validate_shared(body.get("profile"))
+        with store._lock:
+            existing = store.get_presets()
+            if len(existing) >= 24:
+                raise ApiError(400, "Your library holds 24 profiles. Remove one before importing another.")
+            pid = profiles.new_id(shared["name"], {preset["id"] for preset in existing})
+            preset = profiles.to_preset(shared, pid, include_fans=body.get("include_fans") is True)
+            incoming = []
+            if body.get("include_automations") is True:
+                incoming = profiles.rules_to_install(shared, pid, {r["id"] for r in store.get_rules()})
+                for rule in incoming:
+                    rule["enabled"] = False
+            saved = store.install_profile(preset, incoming)
+            rules = store.get_rules()
+        return {"presets": saved, "id": pid, "paused_rules": len(incoming), "rules": rules}
     if path == "/api/presets":
         presets = store.set_presets(body.get("presets"))
         ctrl.presets_changed()
@@ -153,10 +196,12 @@ def route(server, method, path, body, query=None):
         return {"ok": True}
     m = re.fullmatch(r"/api/presets/([a-z0-9\-]{1,64})/apply", path)
     if m:
-        preset = next((p for p in store.get_presets() if p["id"] == m.group(1)), None)
-        if not preset:
-            raise ApiError(404, "That preset no longer exists.")
-        with ctrl._lock:
+        with ctrl._lock, store._lock:
+            preset = _preset(store, m.group(1))
+            if "reviewed" in body and body["reviewed"] != preset:
+                raise ApiError(409, "This profile changed in another window. Reopen the library to review it again.")
+            if "reviewed_curve_points" in body:
+                _check_reviewed_curve(body, preset, store.curves())
             steps = ctrl.apply_preset(preset)
             return {"ok": all(s["ok"] for s in steps), "steps": steps, "scene_status": ctrl.scene_status()}
     raise ApiError(404, "not found")

@@ -1,6 +1,8 @@
 // Screen previews exchange colours with a separate memory-watched process; effect code never runs in this window.
 import { post } from "./core.js";
 
+const release = id => post("/api/studio/preview/stop", { id }).catch(() => {});
+
 export class PreviewRunner {
   constructor(handlers = {}) {
     this.h = handlers;
@@ -10,12 +12,23 @@ export class PreviewRunner {
   }
 
   async load(effect, points) {
+    if (this.destroyed) return;
     this.effect = structuredClone(effect);
     this.points = structuredClone(points);
+    this.loading = this.acquire(effect, points);
+    return this.loading;
+  }
+
+  async acquire(effect, points) {
     try {
       const { id } = await post("/api/studio/preview/load", { effect, points });
+      if (this.destroyed) {
+        // Loading describes acquisition only. The caller can observe its completion while
+        // destroy() independently waits for the server to release this late allocation.
+        this.lateRelease = release(id);
+        return;
+      }
       this.id = id;
-      if (this.destroyed) { this.destroy(); return; }
       this.ready = true;
       this.h.onReady?.();
     } catch (error) { this.failed(error); }
@@ -85,13 +98,15 @@ export class PreviewRunner {
   }
 
   destroy() {
+    if (this.stopping) return this.stopping;
     this.destroyed = true;
     this.ready = false;
     clearTimeout(this.retry);
     this.wakeRetry?.();
-    if (this.id) {
-      post("/api/studio/preview/stop", { id: this.id }).catch(() => {});
-      this.id = null;
-    }
+    // A pending load can already hold server slots before its id reaches this window.
+    const late = Promise.resolve(this.loading).then(() => this.lateRelease);
+    this.stopping = Promise.all([late, this.id ? release(this.id) : null]).then(() => {});
+    this.id = null;
+    return this.stopping;
   }
 }

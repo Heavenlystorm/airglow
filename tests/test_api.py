@@ -364,6 +364,23 @@ class ApiTests(unittest.TestCase):
         self.request("POST", "/api/automations/pause", {"minutes": 0})
         self.request("POST", "/api/automations", {"rules": []})
 
+    def test_rehearsal_http_reads_rules_without_changing_live_outputs_or_persistence(self):
+        rule = {"id": "dark", "enabled": True, "when": {"type": "locked"}, "then": {"type": "lights_off"}}
+        before = (dict(self.ctrl.base_scene), dict(self.ctrl.effective_scene), set(self.ctrl.automations.active),
+                  self.ctrl.automations.paused_until, self.ctrl.effective_curve)
+        with mock.patch.object(self.store, "get_rules", return_value=[rule]), mock.patch.object(self.store, "set_rules") as write, \
+                mock.patch.object(self.ctrl.automations, "evaluate") as evaluate, mock.patch.object(self.ctrl, "apply") as apply:
+            status, result = self.request("POST", "/api/automations/rehearse", {"weekday": 2, "clock": "18:30", "locked": True})
+            self.assertEqual(status, 200)
+            self.assertEqual(result["winners"], {"lighting": "dark", "fans": None})
+            self.assertFalse(result["scene"]["on"])
+            self.assertEqual(self.request("POST", "/api/automations/rehearse", {"weekday": 9, "clock": "18:30"})[0], 400)
+            write.assert_not_called()
+            evaluate.assert_not_called()
+            apply.assert_not_called()
+        self.assertEqual(before, (self.ctrl.base_scene, self.ctrl.effective_scene, self.ctrl.automations.active,
+                                  self.ctrl.automations.paused_until, self.ctrl.effective_curve))
+
     def test_malformed_automations_are_refused_not_crashes(self):
         before = self.store.get_rules()
         lights_off = {"type": "lights_off"}

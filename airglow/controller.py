@@ -291,8 +291,16 @@ class Controller:
     def scene_response(self):
         with self._lock:
             status = self.scene_status()
-            return {"scene": copy.deepcopy(self.base_scene), "effective": copy.deepcopy(self.effective_scene),
-                    "scene_status": status}
+            effective, wind_down = self._visible_scene()
+            return {"scene": copy.deepcopy(self.base_scene), "effective": copy.deepcopy(effective),
+                    "scene_status": status, "wind_down": wind_down}
+
+    def _visible_scene(self):
+        wind = self.engine.wind_down()
+        scene = self.effective_scene
+        if wind["phase"] != "idle":
+            scene = {**scene, "brightness": min(scene["brightness"], wind["cap"])}
+        return scene, wind
 
     def apply_preset(self, preset):
         steps = []
@@ -331,9 +339,7 @@ class Controller:
     @staticmethod
     def preset_curve(preset):
         """The curve a profile switches to: its own ("profile:<id>"), a named one, or None to leave fans alone."""
-        if preset.get("fan_points"):
-            return f"profile:{preset['id']}"
-        return preset.get("fan_curve")
+        return automation.preset_curve(preset)
 
     def curve_points(self, name):
         """Points of a curve by name: a named curve, a profile's own, or the one being tried. None if unknown."""
@@ -470,30 +476,11 @@ class Controller:
                         if pending["end_trial"]:
                             self.trial = None
                             self.engine.set_trial_zones(())
-            scene, curve = dict(self.base_scene), self.base_curve
             presets = {p["id"]: p for p in self.store.get_presets()}
             lr, fr = self.automations.light_rule, self.automations.fan_rule
-            if lr:
-                t = lr["then"]
-                if t["type"] == "preset" and t["preset"] in presets:
-                    p = presets[t["preset"]]
-                    scene = {"effect": p["effect"], "params": p["params"], "brightness": p["brightness"], "on": True}
-                    if p.get("areas"):
-                        scene["areas"] = p["areas"]
-                elif t["type"] == "lights_off":
-                    scene["on"] = False
-                elif t["type"] == "dim":
-                    scene["brightness"] = min(scene["brightness"], t["brightness"])
-            if fr:
-                t = fr["then"]
-                if t["type"] == "fan_curve":
-                    curve = t["curve"]
-                elif t["type"] == "preset" and t["preset"] in presets and self.preset_curve(presets[t["preset"]]):
-                    curve = self.preset_curve(presets[t["preset"]])
+            scene, curve = automation.rule_outputs(self.base_scene, self.base_curve, lr, fr, presets, self.curve_points)
             if safety_off:
                 scene["on"] = False
-            if not self.curve_points(curve):
-                curve = "balanced"
             if scene != self.effective_scene or pending:
                 # The override owns its frames even when its output is identical to the pending scene.
                 self.engine.set_scene(scene, transition_ms=self.store.settings().get("lighting_transition_ms", 350))
@@ -835,7 +822,7 @@ class Controller:
         if not self.cooling.active_summary():
             return
         try:
-            self._record_cooling()
+            self._record_cooling(stale=stale)
             self.cooling.sample_error = None
         except Exception as e:
             message = str(e) or type(e).__name__
@@ -844,21 +831,24 @@ class Controller:
                 self.control.event("cooling", "failure", message)
             self.cooling.sample_error = message
 
-    def _record_cooling(self):
-        s = self.sensors
+    def _record_cooling(self, stale=False):
+        s = {} if stale else self.sensors
         channels = [{"id": f"{dev.id}/{i}", "name": f"{dev.name} · Fan {i + 1}", "mode": "curve",
                      "rpm": hub.fans[i].get("rpm"), "duty": hub.fans[i].get("duty"), "target": self.fan_duty}
                     for dev, hub in self._fan_devices() for i in hub.connected_fans()]
         channels += self.fan_channels
+        if stale:
+            channels = [{**channel, "rpm": None, "duty": None, "target": None} for channel in channels]
         rpms = [c["rpm"] for c in channels if c.get("rpm") is not None]
         with self._lock:
             cfg = self.store.settings()
             curve = {"name": self.effective_curve, "points": self.curve_points(self.effective_curve),
                      "source": cfg["temp_source"], "failsafe": cfg["fan_failsafe_duty"]}
         self.cooling.sample({"cpu": s.get("cpu_temp"), "gpu": s.get("gpu_temp"), "liquid": s.get("liquid_temp"),
-                             "temp": self.fan_temp, "duty": self.fan_duty if self.hubs or
-                             any(c.get("mode") == "curve" for c in self.fan_channels) else None,
-                             "rpm": sum(rpms) / len(rpms) if rpms else None, "channels": channels, "curve": curve})
+                             "temp": None if stale else self.fan_temp, "duty": self.fan_duty if not stale and
+                             (self.hubs or any(c.get("mode") == "curve" for c in self.fan_channels)) else None,
+                             "rpm": sum(rpms) / len(rpms) if rpms else None, "channels": channels, "curve": curve,
+                             "readings": {} if stale else self.readings})
 
     def _apply_device_params(self):
         saved = self.store.device_params()
@@ -903,8 +893,8 @@ class Controller:
             flat = self._poll_sensors()
             sampled_at = time.monotonic()  # slow fan I/O cannot renew an old sensor sample
             self._run_fans()
-            self._record(sampled_at)
             self._update_readings(flat, sampled_at)
+            self._record(sampled_at)
 
     def _loop(self):
         failures = 0
@@ -1008,7 +998,8 @@ class Controller:
     def snapshot(self, devs=None, reading_ids=None):
         with self._lock:
             scene_status = self.scene_status()
-            scene, effective, active_preset = self.base_scene, self.effective_scene, self.active_preset
+            scene, active_preset = self.base_scene, self.active_preset
+            effective, wind_down = self._visible_scene()
         fan_devs = self._fan_devices()
         a = self.automations
         rules = {r["id"]: r for r in self.store.get_rules()}
@@ -1026,6 +1017,7 @@ class Controller:
             "scene": scene,
             "scene_status": scene_status,
             "effective": effective,
+            "wind_down": wind_down,
             "active_preset": active_preset,
             "trial": {"name": trial.get("name", ""), "fans": bool(trial.get("fan_points")),
                       "kind": trial.get("kind", "profile")} if trial else None,
@@ -1035,6 +1027,7 @@ class Controller:
                 "active": sorted(a.active & set(rules)),
                 "paused_until": a.paused_until if a.paused else None,
                 "locked": self.locked and self.store.settings()["lights_off_on_lock"],
+                "power": self.sleeping or self.shutting_down,
             },
             "fans": {"curve": self.effective_curve, "base_curve": self.base_curve, "temp": None if stale else self.fan_temp,
                      "target": None if stale else self.fan_target, "duty": None if stale else self.fan_duty,

@@ -115,13 +115,21 @@ async function previewHarness() {
 
 test("destroying a preview during load releases the late session without reviving it", async () => {
   const h = await previewHarness();
-  h.runner.destroy();
+  const stopping = h.runner.destroy();
+  assert.equal(h.runner.destroy(), stopping, "repeat disposal shares the same completion");
+  let released = false;
+  stopping.then(() => { released = true; });
   h.requests[0].resolve({ id: "p1" });
   await h.loading;
   assert.deepEqual(h.events, []);
+  assert.equal(h.runner.tick(0, 0), false);
   assert.equal(h.requests[1].path, "/api/studio/preview/stop");
   assert.equal(h.requests[1].body.id, "p1");
+  assert.equal(released, false, "acquisition completed while cleanup still awaits its stop response");
   h.requests[1].resolve({});
+  await stopping;
+  assert.equal(released, true);
+  assert.equal(h.requests.length, 2, "the late lease was stopped exactly once");
 });
 
 test("preview ticks coalesce updates and never paint a response after close", async () => {

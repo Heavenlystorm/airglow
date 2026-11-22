@@ -1,42 +1,24 @@
 """Native app window (pywebview on Edge WebView2). Closing hides it to the tray; Quit is in the tray menu."""
 
-import ctypes
 import logging
 import threading
 
 import webview
 
 from . import APP_NAME, paths
+from .deskdisplay import DeskWindow
+from .windowlayout import foreground_window
+from .windowtheme import TITLEBAR, style_caption
 
 log = logging.getLogger(__name__)
 
-# design id -> (window/caption ground, caption text, dark title bar). The palette's ground, so a light design doesn't
-# sit in a black frame. test_designs keeps these ids in step with the design lists.
-TITLEBAR = {
-    "firefly": ("#221d30", "#fff4e4", True),
-    "graphite": ("#111315", "#f2f0e9", True),
-    "ascii": ("#060806", "#d9ffd9", True),
-    "paper": ("#e8e4db", "#1c1d19", False),
-    "amber": ("#0c0903", "#ffd39a", True),
-    "contrast": ("#000000", "#ffffff", True),
-    "neon": ("#07070d", "#f1edff", True),
-    "kiln": ("#0b0605", "#f2eadd", True),
-    "lumen": ("#060510", "#f3f0f8", True),
-    "midnight": ("#02071d", "#e7f0f9", True),
-    "spore": ("#0f0a06", "#efe7d8", True),
-    "rim": ("#030201", "#efebe4", True),
-    "darkroom": ("#090604", "#e9e4dc", True),
-}
-
-
-def _colorref(hex_color):
-    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
-    return ctypes.c_int(r | (g << 8) | (b << 16))
-
 
 class Window:
-    def __init__(self, url, start_hidden=False, on_first_hide=None, design="firefly"):
+    def __init__(self, url, start_hidden=False, on_first_hide=None, design="firefly", layout=None):
+        # WebView2 opens its native Save As dialog for files exported by the local UI.
+        webview.settings["ALLOW_DOWNLOADS"] = True
         self.design = design if design in TITLEBAR else "graphite"
+        self.desk = DeskWindow(url, webview.create_window, layout, self.design)
         self.quitting = False
         self._native_shown = False
         self._destroy_requested = False
@@ -47,11 +29,13 @@ class Window:
         # Created visible unless launched in the background: showing a hidden window from another thread during
         # start-up can deadlock pythonnet/WinForms (seen in the frozen build).
         self.win = webview.create_window(
-            APP_NAME, url, width=1280, height=840, min_size=(1040, 720),
+            APP_NAME, url, width=1280, height=840, min_size=(560, 440),
             hidden=start_hidden, background_color=TITLEBAR[self.design][0], text_select=False,
         )
         self.win.events.closing += self._closing
         self.win.events.shown += self._style_title_bar
+        if layout:
+            layout.watch("main", self.win)
 
     def _closing(self):
         if self.quitting:
@@ -79,25 +63,13 @@ class Window:
     def apply_design(self, design):
         """Match the Windows title bar to an interface design. Cosmetic: if DWM ignores it, the window still works."""
         self.design = design if design in TITLEBAR else "graphite"
-        try:
-            hwnd = self._hwnd or self.win.native.Handle.ToInt64()
-            self._hwnd = hwnd
-            ground, text, dark = TITLEBAR[self.design]
-            dwm = ctypes.windll.dwmapi
-            on = ctypes.c_int(1 if dark else 0)
-            dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(on), ctypes.sizeof(on))          # immersive dark mode
-            color = _colorref(ground)
-            dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(color), ctypes.sizeof(color))    # caption colour
-            caption = _colorref(text)
-            dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(caption), ctypes.sizeof(caption))  # caption text
-        except Exception as e:  # cosmetic only
-            log.debug("title bar styling skipped: %s", e)
+        style_caption(self.win, self.design)
+        self.desk.apply_design(self.design)
 
     def show(self):
         try:
             self.win.show()
             self._webview_visible(True)
-            self.win.restore()
             self._foreground()
         except Exception:
             log.exception("could not show window")
@@ -134,13 +106,15 @@ class Window:
 
     def _foreground(self):
         """Bring the window forward with plain Win32 calls (no cross-thread WinForms Invoke)."""
-        user32 = ctypes.windll.user32
-        hwnd = self._hwnd or user32.FindWindowW(None, APP_NAME)
+        hwnd = self._hwnd or (self.win.native.Handle.ToInt64() if self.win.native else None)
         if hwnd:
-            user32.ShowWindow(hwnd, 9)               # SW_RESTORE
-            user32.SetForegroundWindow(hwnd)
+            foreground_window(hwnd)
 
     def destroy(self):
+        try:
+            self.desk.shutdown()
+        except Exception:
+            log.exception("could not close Desk Display")
         with self._destroy_lock:
             self.quitting = True
             # pywebview ignores destroy() until it creates its native window. The shown event retries it.

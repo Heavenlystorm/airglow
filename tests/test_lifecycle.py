@@ -4,7 +4,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
-from airglow import app, system, tools, tray, window
+from airglow import app, config, system, tools, tray, window
 from airglow.lighting import studio
 from airglow.transactions import RecoveryError
 from tests.fakes import FakeManager
@@ -27,12 +27,15 @@ class StartupTests(unittest.TestCase):
         self.runtime = self.patch(app.webview2, "installed", return_value=True)
         self.store = self.patch(app, "Store")
         self.store.return_value.config = {"port": 8787}
+        self.store.return_value.dir = temp
+        self.store.return_value.settings.return_value = {"design": "firefly", "windows_shortcut": config.SHORTCUT_OFF}
         self.ctrl = self.patch(app, "Controller")
         self.ctrl.return_value.shutdown.side_effect = self.record("controller stop")
         self.updater = self.patch(app.updates, "Updater").return_value
         self.updater.stop.side_effect = self.record("updater stop")
         self.server = self.patch(app, "start_server").return_value
         self.server.server_address = ("127.0.0.1", 8787)
+        self.server.hooks = {}
         self.server.shutdown.side_effect = self.record("api stop")
         self.server.server_close.side_effect = self.record("api close")
         self.thread = self.patch(app.threading, "Thread").return_value
@@ -101,6 +104,22 @@ class StartupTests(unittest.TestCase):
         for event in ("tray stop", "controller stop", "marker clear"):
             self.assertEqual(self.events.count(event), 1, self.events)
         self.assertEqual(self.events[-1], "mutex close")
+
+    def test_native_shortcut_service_becomes_available_with_the_window_and_defaults_to_off(self):
+        loaded = self.window.return_value.win.events.loaded
+        loaded.__iadd__.return_value = loaded
+
+        def run(on_start):
+            shortcut = self.server.hooks["window_shortcut"]
+            self.assertFalse(shortcut.status()["available"])
+            loaded.__iadd__.call_args.args[0]()
+            self.assertTrue(shortcut.status()["available"])
+            self.assertFalse(shortcut.status()["registered"])
+            self.assertEqual(shortcut.status()["saved"], config.SHORTCUT_OFF)
+
+        self.window.run.side_effect = run
+        self.assertEqual(app.main([]), 0)
+        self.assertFalse(self.server.hooks["window_shortcut"].status()["available"])
 
     def test_quit_can_retry_when_the_first_window_destruction_fails(self):
         def quitting(on_start):
@@ -171,7 +190,10 @@ class RestartTests(unittest.TestCase):
                 mock.patch.object(system, "current_process_started_at", create=True, return_value=4321), \
                 mock.patch.object(tools, "self_command", side_effect=lambda args: ("Airglow.exe", args)), \
                 mock.patch.object(tray.subprocess, "Popen", side_effect=lambda args, **kw: events.append(args)):
-            icon = tray.Tray(mock.Mock(), mock.Mock(), mock.Mock(), quit_app)
+            ctrl = mock.Mock()
+            ctrl.effective_scene = {"on": True}
+            ctrl.engine.wind_down.return_value = {"phase": "idle"}
+            icon = tray.Tray(ctrl, mock.Mock(), mock.Mock(), quit_app)
             restart = next(item for item in icon._menu().items if item.text == "Restart Airglow")
             restart(icon.icon)
             restart(icon.icon)

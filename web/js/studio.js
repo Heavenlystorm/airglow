@@ -12,7 +12,7 @@ import { ledPoints, runtimeAssets, sampleZones, testAudio, zoneFrames } from "./
 import { PreviewRunner } from "./fxpreview.js";
 import { CODE_TEMPLATES, LAYER_TEMPLATES, REMIX, surprise } from "./studio-start.js";
 import { closeSheet, openSheet } from "./sheet.js";
-import { MASTER, uid, newDoc, normalizeDoc, snapDoc as snapshotDocument, createHistory, createDraftStorage,
+import { MASTER, uid, newDoc, normalizeDoc, snapDoc as snapshotDocument, createHistory, createDraftStorage, createCheckpointStorage,
   DRAFT_KEY, PALETTE_KEY, cleanPalettes, addPalette, workflowStatus } from "./studio-document.js";
 import { createLivePreview } from "./studio-preview.js";
 import { cardMedia, createStudioGallery } from "./studio-gallery.js";
@@ -22,6 +22,7 @@ import { VARIATION_LIMIT, documentKey, captureVariation, restoreVariation, inter
 import { PAINT_LIMIT, paintPoints, cleanPaint, invertMask, setLedMask, bindPaintCanvas, drawPaintOverlay } from "./studio-paint.js";
 import { openBlend, closeBlend } from "./studio-blend.js";
 import { animateMotion, enter, reduced } from "./motion.js";
+import { draftShelf, openCheckpoints } from "./studio-recovery.js";
 
 const AREAS = { all: "Whole case", front: "Front", top: "Top", rear: "Rear", bottom: "Bottom", side: "Side panel",
   cooler: "CPU cooler", ram: "Memory", board: "Motherboard", gpu: "Graphics card", desk: "Desk" };
@@ -34,8 +35,8 @@ const slug = (s) => String(s || "effect").toLowerCase().replace(/[^a-z0-9]+/g, "
 const H = { lib: null, gallery: null, info: null, view: "home", search: "", tag: "" };   // home and community
 const E = { doc: null, runner: null, slices: [], sel: "effect", lights: false, beat: false, raf: 0, last: 0,
             backdrop: null, frames: {}, ms: 0, fps: 0, frameCount: 0, framesSeen: 0, painted: -1, fpsAt: 0,
-            problem: null, cm: null, logs: [], layersCopy: null, watch: null, gen: 0,
-            t: 0, paused: false, scale: 1, overlay: false, strobeHz: 0, userParams: null,
+            problem: null, cm: null, logs: [], watch: null, gen: 0,
+            t: 0, paused: false, stillNeeded: false, scale: 1, overlay: false, strobeHz: 0, userParams: null,
             auto: 0, saved: null, applying: false, solo: null, errLine: null };
 const HIST = createHistory();       // undo/redo: snapshots of the document, coalesced per gesture
 const SW = { last: 0, dir: 0, peaks: [], warned: 0 };
@@ -51,13 +52,13 @@ function arrive(surface) {
 }
 const gallery = createStudioGallery({ H, E, box, remember, save, queueStills, addStill, effectRunnable });
 const { renderCommunity, paintCommunity, shareIt, galleryDetail } = gallery;
-const draftStore = createDraftStorage({
+const localStudioStorage = {
   getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value),
   removeItem: key => localStorage.removeItem(key),
-});
-const variationStore = createVariationStore({
-  getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value),
-});
+};
+const draftStore = createDraftStorage(localStudioStorage);
+const checkpointStore = createCheckpointStorage(localStudioStorage);
+const variationStore = createVariationStore(localStudioStorage);
 let V = null; // Editor-local A/B captures; the named tray and locks are stored separately from effect files.
 const P = { enabled: false, erase: false, radius: 24, selected: 0, cursor: null, map: null, binding: null, gesture: null };
 const LIVE = createLivePreview({ post, onChange: state => {
@@ -77,8 +78,7 @@ function rememberDraft() {
   clearTimeout(draftTimer);
   draftTimer = setTimeout(saveDraftNow, 700);
 }
-function readDraft() { return draftStore.read(); }
-function forgetDraft() { clearTimeout(draftTimer); draftStore.clear(); }
+function forgetDraft(...keys) { clearTimeout(draftTimer); E.recoveryError = !draftStore.remove(...keys); }
 function saveDraftNow() {
   clearTimeout(draftTimer);
   if (E.doc?.dirty) E.recoveryError = !draftStore.write(E.doc);
@@ -86,10 +86,9 @@ function saveDraftNow() {
 }
 
 function draftBanner() {
-  const d = readDraft();
-  if (!d) return "";
-  return `<div class="banner" id="st-draft"><span>You have unsaved changes to <b>${esc(d.name)}</b>.</span>
-    <div class="btn-row"><button class="btn" data-draft="resume">Resume</button><button class="btn quiet" data-draft="discard">Discard</button></div></div>`;
+  let hasCheckpoints = false;
+  try { hasCheckpoints = checkpointStore.list().length > 0; } catch { hasCheckpoints = true; }
+  return draftShelf(draftStore.list(), draftStore.temporary, hasCheckpoints);
 }
 
 function workflowHTML() {
@@ -108,7 +107,7 @@ function paintWorkflow() {
   note.textContent = LIVE.state.pending ? "Updating the live preview..." : status.detail;
   const error = $("#st-workflow-error");
   const message = [LIVE.state.error, E.saveError ? `Save failed: ${E.saveError}. Your draft is kept here; try Save again.` : "",
-    E.recoveryError ? "Draft recovery storage is unavailable. Keep this editor open and save or export your work." : ""].filter(Boolean).join(" ");
+    E.recoveryError ? "Draft recovery storage is unavailable. This window keeps recent edits. Save or export before closing Airglow." : ""].filter(Boolean).join(" ");
   if (error) { error.textContent = message; error.hidden = !message; }
   const stop = $("#st-stop-preview");
   if (stop) { stop.hidden = !(LIVE.state.confirmed || LIVE.state.wanted || LIVE.state.error || S.state?.trial?.kind === "studio"); stop.disabled = LIVE.state.pending; }
@@ -148,13 +147,13 @@ function cancelPaintEdit() {
   if (!P.gesture || !E.doc) return;
   const before = P.gesture; P.gesture = null;
   E.doc.dirty = before.dirty; E.doc.paintPending = before.pending;
-  pushLayers(); E.painted = -1; setSavedLabel(); saveDraftNow(); refreshLayerRow(); paintPaintStatus();
+  pushLayers(); redrawEditor(); setSavedLabel(); saveDraftNow(); refreshLayerRow(); paintPaintStatus();
 }
 function changedPaint() {
-  changed(true, { hist: false, auto: false }); E.painted = -1; refreshLayerRow(); paintPaintStatus();
+  changed(true, { hist: false, auto: false }); redrawEditor(); refreshLayerRow(); paintPaintStatus();
 }
 function stopPainting() {
-  P.binding?.finish(); P.enabled = false; P.cursor = null; E.painted = -1;
+  P.binding?.finish(); P.enabled = false; P.cursor = null; redrawEditor();
   $("#st-canvas")?.classList.remove("is-painting");
   $("[data-paint=toggle]")?.setAttribute("aria-pressed", "false");
   paintPaintStatus();
@@ -165,7 +164,7 @@ async function startPainting() {
   if (LIVE.state.wanted || LIVE.state.confirmed || LIVE.state.pending) await setLights(false);
   if (E.doc !== doc || paintLayer() !== layer) return false;
   if (LIVE.state.error || LIVE.state.confirmed) { toast("Stop live preview before painting.", true); return false; }
-  P.enabled = true; E.painted = -1;
+  P.enabled = true; redrawEditor();
   $("#st-canvas")?.classList.add("is-painting");
   $("[data-paint=toggle]")?.setAttribute("aria-pressed", "true");
   paintPaintStatus(); return true;
@@ -199,7 +198,7 @@ async function paintAction(action) {
   if (action === "brush" || action === "erase") {
     P.binding?.finish(); P.erase = action === "erase";
     for (const tool of ["brush", "erase"]) $(`[data-paint=${tool}]`)?.setAttribute("aria-pressed", String((tool === "erase") === P.erase));
-    E.painted = -1; return;
+    redrawEditor(); return;
   }
   if (!await startPainting()) return;
   P.binding?.finish(); const layer = paintLayer(), points = currentPaintPoints();
@@ -218,7 +217,7 @@ function wirePaintControls() {
       if (!Number.isFinite(e.target.valueAsNumber)) return;
       P.radius = Math.round(Math.max(4, Math.min(80, e.target.valueAsNumber)));
       for (const other of ["st-paint-radius", "st-paint-radius-number"]) if (other !== id) $("#" + other).value = String(P.radius);
-      E.painted = -1;
+      redrawEditor();
     });
     for (const event of ["change", "blur"]) input.addEventListener(event, () => { input.value = String(P.radius); });
   }
@@ -226,7 +225,7 @@ function wirePaintControls() {
   number?.addEventListener("input", e => {
     if (!Number.isFinite(e.target.valueAsNumber)) return;
     P.selected = Math.round(Math.max(0, Math.min(currentPaintPoints().length - 1, e.target.valueAsNumber - 1)));
-    E.painted = -1; paintPaintStatus();
+    redrawEditor(); paintPaintStatus();
   });
   for (const event of ["change", "blur"]) number?.addEventListener(event, () => { number.value = String(P.selected + 1); });
   paintPaintStatus();
@@ -236,13 +235,13 @@ function wirePaintCanvas() {
   const canvas = $("#st-canvas"); if (!canvas) return;
   P.binding = bindPaintCanvas(canvas, { getLayer: paintLayer, getPoints: currentPaintPoints, getMap: () => P.map, getSettings: () => P,
     onBegin: beginPaintEdit, onChange: changedPaint, onCommit: finishPaintEdit, onCancel: cancelPaintEdit, onError: fail,
-    onHover: cursor => { if (P.enabled) { P.cursor = cursor; E.painted = -1; } } });
+    onHover: cursor => { if (P.enabled) { P.cursor = cursor; redrawEditor(); } } });
   canvas.addEventListener("keydown", e => {
     if (!P.enabled || !paintLayer()) return;
     if (["ArrowLeft", "ArrowDown", "ArrowRight", "ArrowUp"].includes(e.key)) {
       e.preventDefault(); e.stopPropagation();
       P.selected = Math.max(0, Math.min(currentPaintPoints().length - 1, P.selected + (["ArrowLeft", "ArrowDown"].includes(e.key) ? -1 : 1)));
-      E.painted = -1; paintPaintStatus();
+      redrawEditor(); paintPaintStatus();
     } else if (e.key === " ") { e.preventDefault(); e.stopPropagation(); paintAction(P.erase ? "remove-led" : "add-led"); }
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); P.binding?.cancel(); stopPainting(); }
   });
@@ -318,17 +317,17 @@ function variationAction(action) {
   paintInstrument();
 }
 
+function controlSelector(active) {
+  if (!active) return null;
+  if (active.id) return `#${CSS.escape(active.id)}`;
+  const attributes = [...(active.attributes || [])].filter(a => a.name.startsWith("data-"));
+  return attributes.map(a => `[${a.name}="${CSS.escape(a.value)}"]`).join("") || null;
+}
+
 // A rerender must keep keyboard position and the details the creator chose to open.
 function preserveEditorFocus() {
   const root = box(), active = document.activeElement;
-  let selector = null;
-  if (active && root.contains(active)) {
-    if (active.id) selector = `#${CSS.escape(active.id)}`;
-    else {
-      const attr = [...(active.attributes || [])].find(a => a.name.startsWith("data-"));
-      if (attr) selector = `[${attr.name}="${CSS.escape(attr.value)}"]`;
-    }
-  }
+  const selector = active && root.contains(active) ? controlSelector(active) : null;
   const start = active?.selectionStart, end = active?.selectionEnd;
   const opened = $$("details[data-details][open]", root).map(el => el.dataset.details);
   const scroll = [$("#st-left")?.scrollTop, $("#st-right")?.scrollTop];
@@ -344,19 +343,16 @@ function preserveEditorFocus() {
   };
 }
 
-function wireDraft() {
-  const d = readDraft();
-  if (!d) return;
-  box().querySelector('[data-draft="resume"]')?.addEventListener("click", () => {
-    openEditor(d);                    // E.doc is set straight away
-    saveDraftNow();                   // keep the safety net until it's actually saved
-  });
-  box().querySelector('[data-draft="discard"]')?.addEventListener("click", () => { forgetDraft(); renderHome(false); });
-}
-
 // ------------------------------------------------------------ entry points
 export function initStudio() {
   box().addEventListener("click", onClick);
+  box().addEventListener("change", e => {
+    if (!e.target.matches("#st-import, #st-pack-file")) return;
+    const file = e.target.files?.[0]; e.target.value = "";
+    if (!file) return;
+    if (e.target.id === "st-import") importFile(file);
+    else scenePackImport(file, async () => { await loadLibrary(); if (!E.doc && H.view === "home") renderHome(); });
+  });
   box().addEventListener("dragover", (e) => {
     if ([...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault();
   });
@@ -377,10 +373,15 @@ export function initStudio() {
   // One listener on the shared sheet, so opening a sheet twice never runs an action twice.
   $("#sheet").addEventListener("click", onSheetClick);
   document.addEventListener("keydown", onKey);
-  window.addEventListener("resize", () => { E.painted = -1; });      // the preview canvas changed size: repaint it
+  window.addEventListener("resize", () => redrawEditor());
   on("state", () => { followLights(); if (!box().closest(".view").hidden) paintProblems(); });
   on("zones", () => { if (E.runner) restartRunner(); });
   document.addEventListener("visibilitychange", () => {
+    if (document.hidden && E.doc?.dirty) saveDraftNow();
+    if (E.doc && H.view === "edit") {
+      if (document.hidden) stopScreenRunner();
+      else { E.last = performance.now(); restartRunner(); }
+    }
     refreshSceneMotion();
     if (!document.hidden && H.view !== "edit") {
       for (const [key, frame] of STILL.frames) {
@@ -390,8 +391,15 @@ export function initStudio() {
       pump();
     }
   });
-  window.matchMedia?.("(prefers-reduced-motion: reduce)").addEventListener("change", refreshSceneMotion);
-  new MutationObserver(refreshSceneMotion).observe(document.documentElement, { attributes: true, attributeFilter: ["data-motion"] });
+  window.addEventListener("pagehide", () => { if (E.doc?.dirty) saveDraftNow(); });
+  let wasReduced = reduced();
+  function motionChanged() {
+    const reduce = reduced();
+    if (E.doc && reduce && !wasReduced) setScreenPaused(true);
+    wasReduced = reduce; refreshSceneMotion();
+  }
+  window.matchMedia?.("(prefers-reduced-motion: reduce)").addEventListener("change", motionChanged);
+  new MutationObserver(motionChanged).observe(document.documentElement, { attributes: true, attributeFilter: ["data-motion"] });
   document.addEventListener("designchange", () => {
     if (H.view === "home" && !box().closest(".view").hidden && $("#st-start") &&
         !!$("#st-feature-gallery") !== (document.documentElement.dataset.design === "firefly")) renderHome();
@@ -406,6 +414,10 @@ export function openStudio(req) {
 
 function onKey(e) {
   if (!E.doc) return;
+  if ($("#sheet[open] .st-checkpoints")) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") e.preventDefault();
+    return;
+  }
   if (e.key === "Escape" && P.enabled) { e.preventDefault(); P.binding?.cancel(); stopPainting(); return; }
   const menu = $("#st-menu");
   if (e.key === "Escape" && menu && !menu.hidden) {
@@ -450,11 +462,17 @@ export async function renderStudio(arg) {
     if (eff) return openEditor(docFromEffect(eff, { remix: eff.origin !== "mine" }));
   }
   if (E.doc && arg === "edit") return;
-  if (E.doc && arg !== "edit") closeEditor();
+  const returning = !!E.doc && arg !== "edit";
+  const returnSelector = returning ? E.returnSelector : null;
+  if (returning) closeEditor();
   H.view = arg === "community" ? "community" : "home";
   if (H.view === "community") return renderCommunity();
   await loadLibrary();
+  if (H.view !== "home") return;
   renderHome(arg === "new");
+  if (returning && !box().closest(".view").hidden) {
+    ((returnSelector && box().querySelector(returnSelector)) || box().querySelector('[data-st="new"]'))?.focus();
+  }
 }
 
 export function leaveStudio() {
@@ -687,18 +705,20 @@ async function histGo(dir) {
     if (LIVE.state.wanted || LIVE.state.confirmed || LIVE.state.pending) void setLights(false);
   }
   const fx = E.doc.fx_id;
+  const priorMode = E.doc.mode;
   E.applying = true;
   Object.assign(E.doc, snap);
+  E.doc.fromLayers = !!snap.fromLayers;
   E.doc.fx_id = fx;
   normalizeDoc(E.doc);
   E.applying = false;
   E.solo = null;
   if (typeof E.sel === "number") E.sel = Math.min(E.sel, Math.max(0, E.doc.layers.length - 1));
-  if (E.doc.mode === "code") {
+  if (E.doc.mode === "code" || E.doc.mode !== priorMode) {
+    clearInterval(E.watch); E.watch = null;
     renderEditor();
+    changed(false, { hist: false });
     await restartRunner();
-    E.doc.dirty = true;
-    setSavedLabel();
   } else {
     rerenderSides();
     changed(true, { hist: false });
@@ -788,13 +808,7 @@ function renderHome(pickStart) {
       if (accent) animateMotion(heading, [{ color: accent }, { color: accent, offset: .35 }, { color: style.color }], 1200);
     }
   }
-  wireDraft();
   paintWorkflow();
-  $("#st-pack-file")?.addEventListener("change", ev => {
-    const file = ev.target.files?.[0]; ev.target.value = "";
-    if (file) scenePackImport(file, async () => { await loadLibrary(); if (!E.doc && H.view === "home") renderHome(); });
-  });
-  $("#st-import")?.addEventListener("change", (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importFile(f); });
   queueStills([
     ...LAYER_TEMPLATES.map((t) => ({ key: t.id, poster: true, eff: { kind: "layers", layers: { v: 2, layers: t.layers, master: t.master || {}, expose: t.expose || {} }, params: {} } })),
     ...CODE_TEMPLATES.map((t) => ({ key: `code-${t.id}`, poster: true, eff: { kind: "code", code: t.code, params: Object.fromEntries(t.params.map((p) => [p.id, p.default])) } })),
@@ -810,6 +824,34 @@ function effectRunnable(e) {
 
 // ------------------------------------------------------------ the preview rig: real lights, or the sample case
 const rigZones = () => (litZones().length ? litZones() : sampleZones());
+
+// Compare documents at the same time on the same rig. Render one isolated frame and immediately release its process.
+function checkpointFrame(canvas, doc, zones, audio) {
+  const { points, slices } = ledPoints(zones);
+  const note = canvas.nextElementSibling;
+  let complete, timer, settled = false;
+  const done = new Promise(resolve => { complete = resolve; });
+  function finish() {
+    if (settled) return;
+    settled = true; clearTimeout(timer); runner.destroy(); complete();
+  }
+  function failed() { note.textContent = "Preview unavailable"; finish(); }
+  const runner = new PreviewRunner({
+    onReady: () => runner.tick(2, 1 / 30, audio),
+    onFrame: colors => {
+      if (canvas.isConnected && !document.hidden) {
+        paintRig(canvas, zoneFrames(colors, slices), { pad: 10, zones });
+        note.hidden = true;
+      }
+      finish();
+    },
+    onError: failed, onStopped: finish,
+  });
+  timer = setTimeout(failed, 15000);
+  const eff = doc.mode === "layers" ? { kind: "layers", layers: { v: 2, layers: doc.layers, master: doc.master, expose: doc.expose }, params: {} } : runnable(doc);
+  runner.load(eff, points);
+  return { done, cancel: finish };
+}
 
 // ------------------------------------------------------------ live cards: a still for each, live while pointed at
 const STILL = { queue: [], items: [], running: false, live: null, cancel: null, gen: 0, cache: new Map(), frames: new Map() };
@@ -988,21 +1030,35 @@ function playOn(canvas, eff, key) {
 // ------------------------------------------------------------ community
 // ------------------------------------------------------------ the editor
 async function openEditor(doc) {
+  const opener = document.activeElement;
+  if (!E.doc) E.returnSelector = opener?.closest?.(".st-home") ? controlSelector(opener) : null;
   stopPainting(); P.binding?.destroy(); P.binding = null; P.map = null;
   stopStills();
   H.view = "edit";
   H.io?.disconnect();
   clearTimeout(H.t);
+  let baseline = null;
+  if (doc.fx_id && !doc.dirty) {
+    const recovered = draftStore.list().find(entry => entry.key === documentKey(doc));
+    if (recovered && snapDoc(recovered.doc) === snapDoc(doc) && !recovered.doc.paintPending) {
+      draftStore.remove(recovered.key);
+    } else if (recovered) {
+      baseline = snapDoc(doc);
+      doc = structuredClone(recovered.doc);
+      toast("Resumed the unsaved edits to this effect.");
+    }
+  }
   E.doc = normalizeDoc(doc);
   V = { key: documentKey(E.doc), ...variationStore.read(documentKey(E.doc)), a: null, b: null, blend: 0, gesture: false, error: false };
   E.sel = "effect";
   E.saveError = ""; E.saving = false; E.recoveryError = false;
   E.logs = [];
   E.problem = null;
-  E.layersCopy = null;
   E.solo = null;
   E.userParams = null;
-  E.paused = false;
+  E.paused = reduced();
+  E.frames = {};
+  E.frameCount = E.framesSeen = 0; E.fpsAt = performance.now(); E.ms = 0;
   E.scale = 1;
   E.overlay = false;
   E.t = 0;
@@ -1013,27 +1069,27 @@ async function openEditor(doc) {
   // A brand-new effect that follows the music is easier to build with the test beat already on.
   if (!E.doc.fx_id && !E.beat && usesAudio(E.doc)) E.beat = true;
   // Where Revert goes back to: this, or the last time Save was pressed. Autosave does not move it.
-  E.saved = snapDoc();
+  E.saved = baseline || snapDoc();
   histReset();
   renderEditor();
-  await restartRunner();
+  $("#st-name")?.focus({ preventScroll: true });
   E.last = performance.now();
-  cancelAnimationFrame(E.raf);
-  E.raf = requestAnimationFrame(loop);
+  await restartRunner();
+  if (E.doc !== doc) return;
   setSavedLabel();
 }
 
 function closeEditor(keepHash) {
+  if ($("#sheet[open] .st-checkpoints")) closeSheet();
   stopPainting(); P.binding?.destroy(); P.binding = null; P.map = null;
   finishVariationGesture();
   if (LIVE.state.wanted || LIVE.state.confirmed || LIVE.state.pending) setLights(false);
   clearTimeout(E.auto);
   saveDraftNow();
-  cancelAnimationFrame(E.raf);
-  E.runner?.destroy();
-  E.runner = null;
+  stopScreenRunner();
   clearInterval(E.watch);
   E.watch = null;
+  E.cm = null; E.errMark = null;
   E.doc = null;
   V = null;
   E.saved = null;
@@ -1044,6 +1100,7 @@ function renderEditor() {
   stopPainting();
   const restoreFocus = preserveEditorFocus();
   const d = E.doc;
+  if (d.mode !== "code") { E.cm = null; E.errMark = null; }
   queueMicrotask(() => arrive("edit"));
   setHTML(box(), `<div class="st-edit ${d.mode === "code" ? "is-code" : ""}">
     <header class="st-top">
@@ -1053,6 +1110,7 @@ function renderEditor() {
       <span class="spacer"></span>
       <span class="st-saved" id="st-saved" aria-live="polite">${d.dirty ? "Not saved" : "Saved"}</span>
       <button class="btn" data-st="revert" title="Back to where this session started, or your last Save" ${E.saved && snapDoc() !== E.saved ? "" : "disabled"}>Revert</button>
+      <button class="btn" id="st-editor-checkpoints" data-st="checkpoints">Checkpoints</button>
       <button class="btn" data-st="check">Check</button>
       <button class="btn${d.dirty ? " primary" : ""}" data-st="save">Save</button>
       <button class="btn" data-st="use">Use on my lights</button>
@@ -1065,7 +1123,7 @@ function renderEditor() {
         <label class="st-sw"><span class="switch"><input type="checkbox" id="st-lights"${E.lights ? " checked" : ""}><span></span></span> Live draft preview</label>
         <label class="st-sw"><span class="switch"><input type="checkbox" id="st-beat"${E.beat ? " checked" : ""}><span></span></span> Test beat</label>
         <div class="st-dbg" role="group" aria-label="Preview controls">
-          <button class="btn quiet" data-dbg="pause" aria-pressed="${E.paused}" title="Pause the preview">${E.paused ? "Play" : "Pause"}</button>
+          <button class="btn quiet" data-dbg="pause" aria-pressed="${E.paused}" title="${E.paused ? "Play" : "Pause"} the preview">${E.paused ? "Play" : "Pause"}</button>
           <button class="btn quiet" data-dbg="slow" aria-pressed="${E.scale !== 1}" title="Slow motion">${E.scale === 1 ? "1×" : "¼×"}</button>
           <button class="icon-btn" data-dbg="restart" title="Start the clock again" aria-label="Start the clock again"><svg><use href="#i-rotate"/></svg></button>
           <button class="icon-btn" data-dbg="overlay" aria-pressed="${E.overlay}" title="Show the coordinates and LED numbers" aria-label="Show the coordinates and LED numbers"><svg><use href="#i-sliders"/></svg></button>
@@ -1229,8 +1287,7 @@ function wireEditor() {
     changed(false);
   });
   $("#st-lights").addEventListener("change", (e) => setLights(e.target.checked));
-  $("#st-beat").addEventListener("change", (e) => { E.beat = e.target.checked; });
-  $("#st-import")?.addEventListener("change", (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importFile(f); });
+  $("#st-beat").addEventListener("change", (e) => { E.beat = e.target.checked; redrawEditor(true); });
   wireInspector();
   wireDrag();
 }
@@ -1242,7 +1299,7 @@ function wireInspector() {
     const root = $("#st-cparams");
     if (root) wireFields(root, { params: p.params }, Object.fromEntries(p.params.map((s) => [s.id, d.values[s.id] ?? s.default])), (vals) => {
       d.values = vals;
-      E.runner?.setParams(vals);
+      E.runner?.setParams(vals); redrawEditor(true);
     });
     return;
   }
@@ -1292,7 +1349,7 @@ function wireInspector() {
     });
   const general = GENERAL_SPECS;
   wireFields($("#st-general"), { params: general }, { opacity: l.opacity ?? 100, blend: l.blend || "normal", mask: l.mask || "all" }, (v) => {
-    P.binding?.finish(); Object.assign(l, v); changed(true); refreshLayerRow(); paintPaintStatus(); E.painted = -1;
+    P.binding?.finish(); Object.assign(l, v); changed(true); refreshLayerRow(); paintPaintStatus(); redrawEditor();
   });
   wirePaintControls();
   $$("[data-expose]").forEach((cb) => cb.addEventListener("change", () => {
@@ -1387,7 +1444,7 @@ function toggleSolo() {
 }
 
 // ------------------------------------------------------------ changes: preview, lights, saved state
-const pushLayers = coalesce(() => E.runner?.setLayers(layerConfig()), 30);
+const pushLayers = coalesce(() => { if (E.runner && E.doc) { E.runner.setLayers(layerConfig()); redrawEditor(true); } }, 30);
 
 function changed(visual, { hist = true, auto = true } = {}) {
   if (!E.doc) return;
@@ -1433,23 +1490,47 @@ async function setLights(on) {
   paintWorkflow();
 }
 
+function stopScreenRunner() {
+  E.gen++;
+  cancelAnimationFrame(E.raf); E.raf = 0;
+  E.runner?.destroy(); E.runner = null;
+  E.backdrop?.close?.(); E.backdrop = null;
+}
+
+function queueEditor() {
+  if (E.doc && E.runner && H.view === "edit" && !document.hidden && !E.raf) E.raf = requestAnimationFrame(loop);
+}
+function redrawEditor(frame = false) {
+  E.painted = -1;
+  if (frame) E.stillNeeded = true;
+  queueEditor();
+}
+function setScreenPaused(paused) {
+  E.paused = paused; E.last = performance.now();
+  E.frameCount = 0; E.fpsAt = E.last;
+  const button = $('[data-dbg="pause"]');
+  if (button) {
+    button.textContent = paused ? "Play" : "Pause"; button.title = button.textContent + " the preview";
+    button.setAttribute("aria-pressed", String(paused));
+  }
+  redrawEditor();
+}
+
 async function restartRunner() {
-  E.runner?.destroy();
-  E.backdrop = null;
-  E.painted = -1;                  // a new runner: draw its first frame even if the counter happens to match
+  stopScreenRunner();
   const d = E.doc;
-  if (!d) return;
+  if (!d || document.hidden || H.view !== "edit") return;
   const zones = rigZones();
   const { points, slices } = ledPoints(zones);
   E.slices = slices;
-  const gen = ++E.gen;
+  const gen = E.gen;
   E.runner = new PreviewRunner({
     onFrame: (colors, ms) => {
       if (gen !== E.gen) return;
-      E.frames = zoneFrames(colors, E.slices); E.ms = E.ms * 0.9 + ms * 0.1; E.frameCount++; E.framesSeen++;
-      measure(colors);
+      E.frames = zoneFrames(colors, E.slices); E.ms = E.framesSeen ? E.ms * 0.9 + ms * 0.1 : ms; E.frameCount++; E.framesSeen++;
+      measure(colors); queueEditor();
     },
-    onBackdrop: (bmp) => { if (gen === E.gen) { E.backdrop?.close?.(); E.backdrop = bmp; } else bmp.close?.(); },
+    onBackdrop: (bmp) => { if (gen === E.gen) { E.backdrop?.close?.(); E.backdrop = bmp; redrawEditor(); } else bmp.close?.(); },
     onLog: (t) => { E.logs.push({ t }); E.logs = E.logs.slice(-40); paintConsole(); },
     onError: (err) => {
       if (gen !== E.gen) return;
@@ -1459,19 +1540,25 @@ async function restartRunner() {
       paintConsole();
     },
   });
-  await E.runner.load(runnable(d), points);
-  if (E.userParams) E.runner.setParams(E.userParams);
+  const runner = E.runner;
+  await runner.load(runnable(d), points);
+  if (E.runner === runner && runner.ready) {
+    if (E.userParams) runner.setParams(E.userParams);
+    redrawEditor(true);
+  }
 }
 
 function loop(now) {
-  if (!E.doc) return;
-  if (now - E.last < 15) { E.raf = requestAnimationFrame(loop); return; }      // 60 fps is plenty on any monitor
+  E.raf = 0;
+  if (!E.doc || document.hidden || H.view !== "edit") return;
+  if (!E.paused && now - E.last < 15) { queueEditor(); return; }      // 60 fps is plenty on any monitor
   const real = Math.min(0.25, Math.max(0.001, (now - E.last) / 1000));
   E.last = now;
-  if (!E.paused) {
-    E.t += real * E.scale;
+  if (!E.paused || E.stillNeeded) {
+    const dt = E.paused ? 0 : real * E.scale;
+    E.t += dt;
     const audio = E.beat ? testAudio(E.t) : null;
-    E.runner?.tick(E.t, real * E.scale, audio, E.doc?.mode === "code" && E.framesSeen % 4 === 0);
+    if (E.runner?.tick(E.t, dt, audio, E.doc?.mode === "code" && (E.paused || E.framesSeen % 4 === 0))) E.stillNeeded = false;
   }
   // Repaint only when the effect sent a new frame: the canvas is expensive (one glow per LED), and a still effect
   // was being drawn 60 times a second on top of that.
@@ -1479,12 +1566,12 @@ function loop(now) {
     paintStage();
     E.painted = E.framesSeen;
   }
-  if (now - E.fpsAt > 1000) {
-    E.fps = E.frameCount; E.frameCount = 0; E.fpsAt = now;
+  if (E.framesSeen && (E.paused || now - E.fpsAt >= 1000)) {
+    E.fps = Math.round(1000 * E.frameCount / Math.max(1, now - E.fpsAt)); E.frameCount = 0; E.fpsAt = now;
     const m = $("#st-meter");
-    if (m) m.innerHTML = `${E.fps} fps · <b class="${E.ms > 15 ? "warm" : ""}">${E.ms.toFixed(1)} ms</b> a frame · ${rigZones().reduce((n, z) => n + z.positions.length, 0)} LEDs${E.ms > 15 ? " · close to the 20 ms limit" : ""}`;
+    if (m) setHTML(m, `${E.paused ? "Frame held" : E.fps + " fps"} · <b class="${E.ms > 15 ? "warm" : ""}">${E.ms.toFixed(1)} ms</b> a frame · ${rigZones().reduce((n, z) => n + z.positions.length, 0)} LEDs${E.ms > 15 ? " · close to the 20 ms limit" : ""}`);
   }
-  E.raf = requestAnimationFrame(loop);
+  if (!E.paused && E.runner?.ready) queueEditor();
 }
 
 function paintStage() {
@@ -1591,22 +1678,25 @@ function loadCodeMirror() {
 }
 
 async function mountCode() {
+  const doc = E.doc, host = $("#st-code");
   await loadCodeMirror();
-  const host = $("#st-code");
-  if (!host || !E.doc) return;
-  E.cm = window.CodeMirror(host, { value: E.doc.source, mode: "htmlmixed", lineNumbers: true, indentUnit: 2, tabSize: 2,
+  if (!host || !host.isConnected || E.doc !== doc || doc.mode !== "code") return;
+  const cm = E.cm = window.CodeMirror(host, { value: doc.source, mode: "htmlmixed", lineNumbers: true, indentUnit: 2, tabSize: 2,
     matchBrackets: true, autoCloseBrackets: true, autoCloseTags: true, styleActiveLine: true, lineWrapping: false });
   let timer = 0;
-  E.cm.on("change", () => {
-    E.doc.source = E.cm.getValue();
+  cm.on("change", () => {
+    if (E.doc !== doc || !host.isConnected) return;
+    doc.source = cm.getValue();
     changed(false);
     clearTimeout(timer);
-    timer = setTimeout(codeChanged, 450);
+    timer = setTimeout(() => { if (E.doc === doc && host.isConnected) codeChanged(); }, 450);
   });
 }
 
 async function codeChanged() {
   if (!E.doc || E.doc.mode !== "code") return;
+  const doc = E.doc, source = doc.source;
+  const current = () => E.doc === doc && doc.mode === "code" && doc.source === source;
   E.logs = [];
   E.errLine = null;
   markError(null);
@@ -1616,29 +1706,34 @@ async function codeChanged() {
   $$("#st-right input[type=range]").forEach(rangeFill);
   wireInspector();
   await restartRunner();
+  if (!current()) return;
   try {
-    const r = await post("/api/studio/check", { source: codeSource(E.doc) });
+    const r = await post("/api/studio/check", { source: codeSource(doc) });
+    if (!current()) return;
     E.problem = null;
     if (r.flags.length) E.logs.push({ t: `Reviewer note: it ${r.flags.join("; ")}.` });
-  } catch (e) { E.problem = e.message; }
+  } catch (e) { if (!current()) return; E.problem = e.message; }
   paintConsole();
 }
 
 async function toCode() {
+  stopPainting(); finishVariationGesture();
   const d = E.doc;
+  const previous = snapDoc(d);
   try {
     const built = await post("/api/studio/build", payload(d));
+    if (E.doc !== d || snapDoc(d) !== previous) return;
     const cfg = { v: 2, layers: d.layers, master: d.master, expose: d.expose };
     const code = `// Made from layers in the Studio. AirglowLayers draws them (it comes with every effect): change the list,
 // or add your own code after it, e.g. point(led, frame) { ... }.
 const EFFECT = ${JSON.stringify(cfg)};
 airglow.effect(AirglowLayers.effect(EFFECT));`;
     const r = await post("/api/studio/build", { name: d.name, description: d.description, tags: d.tags, remix_of: d.remix_of, code, params: built.effect.params });
-    E.layersCopy = { layers: structuredClone(d.layers), master: structuredClone(d.master), expose: structuredClone(d.expose) };
-    d.mode = "code"; d.source = r.source; d.values = {};
+    if (E.doc !== d || snapDoc(d) !== previous) return;
+    d.fromLayers = true; d.mode = "code"; d.source = r.source; d.values = {};
     renderEditor();
+    HIST.at = -Infinity; changed(false); HIST.at = -Infinity;
     await restartRunner();
-    changed(false);
   } catch (e) { fail(e); }
 }
 
@@ -1672,38 +1767,37 @@ function parseLayersConfig(source) {
 }
 
 function toLayers() {
-  if (!E.layersCopy) {
-    const cfg = parseLayersConfig(E.doc.source);
-    if (!cfg) { toast("This effect was written in code, so it has no layers to go back to.", true); renderEditor(); return; }
-    E.layersCopy = cfg;
-  }
+  const cfg = E.doc.fromLayers ? E.doc : parseLayersConfig(E.doc.source);
+  if (!cfg) { toast("This effect was written in code, so it has no layers to go back to.", true); renderEditor(); return; }
   if (!confirm("Go back to the layers? Changes you made in the code are dropped.")) { renderEditor(); return; }
   clearInterval(E.watch);                         // the editor's file watcher belongs to Code mode
   E.watch = null;
   E.doc.mode = "layers";
-  E.doc.layers = E.layersCopy.layers || [];
-  E.doc.master = E.layersCopy.master || structuredClone(MASTER);
-  E.doc.expose = E.layersCopy.expose || {};
-  E.layersCopy = null;
+  E.doc.layers = cfg.layers || [];
+  E.doc.master = cfg.master || structuredClone(MASTER);
+  E.doc.expose = cfg.expose || {};
+  E.doc.fromLayers = false;
   normalizeDoc(E.doc);
   E.sel = Math.max(0, E.doc.layers.length - 1);
   renderEditor();
   restartRunner();
-  changed(true);
+  HIST.at = -Infinity; changed(true); HIST.at = -Infinity;
 }
 
 async function openInEditor() {
+  const doc = E.doc;
   try {
     const r = await post("/api/studio/editor", { source: E.doc.mode === "code" ? codeSource(E.doc) : payload(E.doc) });
+    if (E.doc !== doc || doc.mode !== "code") return;
     const note = $("#st-editor-note");
     if (note) note.textContent = `Opened ${r.path} in ${r.editor}. Save it there and the preview reloads.`;
     clearInterval(E.watch);
     let seen = r.mtime;
     E.watch = setInterval(async () => {
-      if (!E.doc) return clearInterval(E.watch);
+      if (E.doc !== doc || doc.mode !== "code") return;
       try {
         const f = await get(`/api/studio/editor?file=${encodeURIComponent(r.file)}`);
-        if (f.mtime !== seen) { seen = f.mtime; E.doc.source = f.source; E.cm?.setValue(f.source); codeChanged(); }
+        if (E.doc === doc && doc.mode === "code" && f.mtime !== seen) { seen = f.mtime; doc.source = f.source; E.cm?.setValue(f.source); }
       } catch { /* file moved; keep the last version */ }
     }, 700);
   } catch (e) { fail(e); }
@@ -1746,7 +1840,11 @@ async function save({ quiet = false } = {}) {
       d.dirty = snapDoc(d) !== before || queue.tail !== writing;
       if (!quiet && !d.dirty) d.paintPending = false;
       if (E.doc === d) {
-        if (!d.dirty) forgetDraft();
+        if (!d.dirty) forgetDraft(oldScope, nextScope);
+        else if (oldScope !== nextScope) {
+          saveDraftNow();
+          if (!E.recoveryError) forgetDraft(oldScope);
+        }
         if (!quiet) E.saved = before;          // Revert goes back to this deliberate save
         E.saving = queue.tail !== writing; E.saveError = ""; setSavedLabel();
         paintPaintStatus();
@@ -1778,6 +1876,7 @@ async function revert() {
   const snap = JSON.parse(E.saved), fx = E.doc.fx_id;
   E.applying = true;
   Object.assign(E.doc, snap);
+  E.doc.fromLayers = !!snap.fromLayers;
   E.doc.fx_id = fx;
   normalizeDoc(E.doc);
   E.applying = false;
@@ -2001,6 +2100,42 @@ async function onClick(e) {
   const t = e.target.closest("button, a, [data-sel]");
   if (!t) return;
   const ds = t.dataset;
+  if (ds.draft) {
+    const entry = draftStore.list().find(d => d.key === ds.key);
+    if (!entry) { renderHome(); return; }
+    if (ds.draft === "resume") {
+      const opening = openEditor(structuredClone(entry.doc)); saveDraftNow(); return opening;
+    }
+    if (ds.draft === "discard" && confirm(`Discard the unsaved draft “${entry.doc.name || "Untitled effect"}”?`)) {
+      if (!draftStore.remove(entry.key)) toast("Draft removal could not be written to local storage.", true);
+      renderHome(); ($('#st-draft [data-draft="resume"]') || $("#st-home-checkpoints") || $('[data-st="new"]'))?.focus();
+    }
+    return;
+  }
+  if (ds.st === "checkpoints") {
+    P.binding?.finish(); finishVariationGesture();
+    stopCard();
+    const original = E.doc, zones = litZones(), previewZones = zones.length ? zones : sampleZones(), audio = testAudio(2);
+    openCheckpoints({ doc: original, storage: checkpointStore, sample: !zones.length,
+      renderFrame: (canvas, doc) => checkpointFrame(canvas, doc, previewZones, audio),
+      restore: async (version, isOpen) => {
+        if (LIVE.state.wanted || LIVE.state.confirmed || LIVE.state.pending || LIVE.state.error || S.state?.trial?.kind === "studio") {
+          await setLights(false);
+          if (LIVE.state.error || LIVE.state.confirmed) throw new Error("Stop live preview and retry opening this copy.");
+        }
+        if (!isOpen() || E.doc !== original) return;
+        const copy = newDoc(version);
+        const baseName = (copy.mode === "code" && parseSource(copy.source).name) || copy.name || "Untitled effect";
+        copy.name = `${baseName.slice(0, 33)} (copy)`;
+        if (copy.mode === "code") copy.source = copy.source.replace(/<title>[\s\S]*?<\/title>/i, () => `<title>${esc(copy.name)}</title>`);
+        closeSheet();
+        if (E.doc) closeEditor(true);
+        const opening = openEditor(copy); saveDraftNow();
+        $("#st-name")?.focus(); await opening;
+      },
+    });
+    return;
+  }
   if (ds.feature) {
     if (ds.feature !== featuredId) {
       stopCard();
@@ -2118,10 +2253,10 @@ async function onClick(e) {
     return;
   }
   if (ds.dbg) {
-    if (ds.dbg === "pause") { E.paused = !E.paused; E.painted = -1; t.textContent = E.paused ? "Play" : "Pause"; }
+    if (ds.dbg === "pause") setScreenPaused(!E.paused);
     else if (ds.dbg === "slow") { E.scale = E.scale === 1 ? 0.25 : 1; }
-    else if (ds.dbg === "restart") { E.t = 0; E.last = performance.now(); E.logs.push({ t: "Clock back to 0 s." }); paintConsole(); }
-    else if (ds.dbg === "overlay") { E.overlay = !E.overlay; E.painted = -1; }
+    else if (ds.dbg === "restart") { E.t = 0; E.last = performance.now(); redrawEditor(true); E.logs.push({ t: "Clock back to 0 s." }); paintConsole(); }
+    else if (ds.dbg === "overlay") { E.overlay = !E.overlay; redrawEditor(); }
     else if (ds.dbg === "snap") return snapshotPNG();
     if (ds.dbg === "pause" || ds.dbg === "overlay") t.setAttribute("aria-pressed", String(ds.dbg === "pause" ? E.paused : E.overlay));
     if (ds.dbg === "slow") { t.textContent = E.scale === 1 ? "1×" : "¼×"; t.setAttribute("aria-pressed", String(E.scale !== 1)); }
@@ -2184,9 +2319,9 @@ async function userPanel() {
       <div class="actions"><span class="spacer"></span><button class="btn primary" data-close>Done</button></div></div>`);
     const root = $("#st-user");
     root.innerHTML = schema.map((s) => fieldHTML(s, vals[s.id], "uv")).join("");
-    wireFields(root, { params: schema }, vals, (v) => { E.userParams = v; E.runner?.setParams(v); });
+    wireFields(root, { params: schema }, vals, (v) => { E.userParams = v; E.runner?.setParams(v); redrawEditor(true); });
     E.userParams = vals;
-    E.runner?.setParams(vals);
+    E.runner?.setParams(vals); redrawEditor(true);
     const sheet = $("#sheet");
     const done = () => {
       sheet.removeEventListener("close", done);

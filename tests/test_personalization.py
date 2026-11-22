@@ -132,9 +132,14 @@ class PersonalizationTests(unittest.TestCase):
             raise AssertionError("appearance must not reapply hardware")
         server = SimpleNamespace(store=self.store, ctrl=SimpleNamespace(apply=unexpected_control),
                                  hooks={}, updater=None)
-        with mock.patch.object(api, "_settings_view", side_effect=lambda store, updater: {"settings": store.settings()}):
+        with mock.patch.object(api.autostart, "is_enabled", return_value=False), \
+                mock.patch.object(api.fancontrol, "profiles", return_value=[]), \
+                mock.patch.object(api.fancontrol, "exe_path", return_value=None), \
+                mock.patch.object(api.paths, "data_dir", return_value=self.directory):
             result = api.route(server, "POST", "/api/settings", {"appearance": LOOK["appearance"], "looks": [LOOK]})
         self.assertEqual(result["settings"]["appearance"]["scale"], 110)
+        self.assertIsNone(result["windows_shortcut"])
+        self.assertEqual(result["settings"]["windows_shortcut"], config.SHORTCUT_OFF)
         self.assertEqual(config.Store(self.directory).settings()["looks"][0]["id"], "my-desk")
 
 

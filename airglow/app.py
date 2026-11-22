@@ -241,8 +241,10 @@ def _run_app(store, port, background):
     from .lighting import studio
     from .tray import Tray
     from .window import Window
+    from .windowlayout import WindowLayout
+    from .windowshortcut import WindowShortcut
 
-    ctrl = updater = server = api_thread = window = tray = None
+    ctrl = updater = server = api_thread = window = tray = shortcut = None
     marked_running = False
     quit_lock = threading.Lock()
     quitting = False
@@ -263,6 +265,8 @@ def _run_app(store, port, background):
             if not quitting:
                 quitting = True
                 log.info("quitting")
+        if shortcut is not None:
+            _stop_resource("the Windows shortcut", shortcut.stop)
         if window is not None:
             _stop_resource("the window", window.destroy)
 
@@ -286,9 +290,13 @@ def _run_app(store, port, background):
         studio.HOST.url = origin
         window = Window(f"{origin}/", start_hidden=background,
                         on_first_hide=lambda: tray and tray.notify("Still running in the tray. Right-click the Airglow icon to quit."),
-                        design=store.settings()["design"])
+                        design=store.settings()["design"], layout=WindowLayout(store.dir / "window-layout.json"))
+        server.hooks["desk_display"] = window.desk
+        shortcut = WindowShortcut(store, show_window, lambda: not quitting and window.desk.open())
+        window.win.events.loaded += shortcut.start
+        server.hooks["window_shortcut"] = shortcut
         updater.quit_app = quit_app
-        tray = Tray(ctrl, store, show_window=show_window, quit_app=quit_app, updater=updater)
+        tray = Tray(ctrl, store, show_window=show_window, quit_app=quit_app, updater=updater, open_desk=window.desk.open)
 
         ctrl.start()
         api_thread = threading.Thread(target=server.serve_forever, name="api", daemon=True)
@@ -297,10 +305,12 @@ def _run_app(store, port, background):
         tray.start()
         marked_running = True
         install.mark_running()
-        Window.run(None)            # blocks until the window is destroyed (Quit)
+        Window.run(None)
     finally:
         if not quitting:
             quit_app()
+        if shortcut is not None:
+            _stop_resource("the Windows shortcut", shortcut.stop)
         # Stop accepting work before tearing down the device controller. shutdown() blocks if serve_forever never ran.
         if server is not None:
             if api_thread is not None and api_thread.is_alive():

@@ -1,9 +1,9 @@
 // Settings screen.
 
-import { $, $$, S, emit, esc, fail, get, on, post, rangeFill, setHTML, toast } from "./core.js";
+import { $, $$, S, activeFanFailsafe, emit, esc, fail, get, on, post, rangeFill, setHTML, toast } from "./core.js";
 import { paintTools, refreshTools } from "./helpers.js";
 import { openWelcome } from "./onboarding.js";
-import { openShortcuts } from "./help.js";
+import { openGuide, openShortcuts } from "./help.js";
 import { openSheet, closeSheet } from "./sheet.js";
 import { DESIGNS, applyDesign } from "./design.js";
 import { DEFAULT_APPEARANCE, applyAppearance, normalizeAppearance, createAppearanceTransaction,
@@ -11,6 +11,7 @@ import { DEFAULT_APPEARANCE, applyAppearance, normalizeAppearance, createAppeara
 import { exportRig, openRigImport } from "./rig-migration.js";
 
 import { SETTINGS_SECTIONS as SECTIONS } from "./settings-sections.js";
+import { openWindowsShortcut, shortcutSummary } from "./windows-shortcut.js";
 
 const row = (label, help, ctl) => `<div class="set-row"><div><div class="label">${label}</div>${help ? `<p>${help}</p>` : ""}</div><div class="ctl">${ctl}</div></div>`;
 const sw = (id, on, label) => `<label class="switch"><input type="checkbox" id="${id}"${on ? " checked" : ""}${label ? ` aria-label="${esc(label)}"` : ""}><span></span></label>`;
@@ -259,7 +260,7 @@ function paintSensorStatus() {
   if (!status) return;
   if (!S.state?.sensors?.online) {
     setHTML(status, "LibreHardwareMonitor isn't responding. Open it and turn on Options → Remote Web Server → Run.");
-  } else if (S.state.fans?.failsafe) {
+  } else if (activeFanFailsafe(S.state.fans)) {
     setHTML(status, 'Connected. The fan curve is waiting for its temperature reading. Check the selected source in <a href="#settings/fans">Fan settings</a>.');
   } else {
     setHTML(status, "Connected to LibreHardwareMonitor.");
@@ -280,6 +281,7 @@ export function renderSettings() {
         <button type="button" class="btn" id="s-appearance" aria-haspopup="dialog">Edit appearance</button></div>
         <span class="design-current"><span class="dsg-preview" data-design="${esc(s.design)}" aria-hidden="true">${previewHTML()}</span></span></div>
       ${row("Start with Windows", "Opens quietly in the tray when you sign in, so lighting and fan curves apply right away.", sw("s-startup", v.start_with_windows, "Start with Windows"))}
+      ${row("Windows shortcut", esc(shortcutSummary(s.windows_shortcut, v.windows_shortcut)), '<button class="btn quiet" id="s-windows-shortcut" aria-haspopup="dialog">Configure shortcut</button>')}
       ${row("Temperature unit", "", `<div class="seg" id="s-unit" role="radiogroup" aria-label="Temperature unit"><button role="radio" data-v="C" aria-checked="${s.temp_unit === "C"}">°C</button><button role="radio" data-v="F" aria-checked="${s.temp_unit === "F"}">°F</button></div>`)}
       ${row("Electricity price", "Feeds the Cost per hour tile. It starts at the German household average of 37.97 ct/kWh (Destatis, first half of 2026); Hamburg tariffs run from about 35 ct to 45 ct. Only the processor and graphics card power Airglow already reads is counted.",
         `<input class="text num" id="s-price" type="number" min="0.01" max="5" step="0.01" value="${s.energy_price}" aria-label="Electricity price per kilowatt hour" style="width:110px"><span class="hint">€/kWh</span>`)}
@@ -324,6 +326,7 @@ export function renderSettings() {
       ${row(`Airglow ${esc(v.version)}`, `Free and open source under the MIT licence. Settings and logs are stored in <span class="path">${esc(v.data_dir)}</span>`, `<button class="btn" id="s-logs">Open log folder</button>`)}
       ${row("Diagnostics report", "For a bug report: what Airglow found, its settings, a sensor list and the logs, in one zip. Your user name, PC name and device serial numbers are taken out. Nothing is sent; you attach it yourself.", `<button class="btn" id="s-diag">Save a report</button>`)}
       ${updateRows(v)}
+      ${row("Airglow help", "Find first steps and tools for lighting, cooling and automations.", `<button class="btn quiet" id="s-help">Open task guide</button>`)}
       ${row("Keyboard shortcuts", "Sections, the fan curve and the Studio, without the mouse.", `<button class="btn quiet" id="s-keys">View shortcuts</button>`)}
       ${row("Welcome guide", "Shows what Airglow found on this PC and what to check.", `<button class="btn quiet" id="s-welcome">Show it again</button>`)}
       ${row("Reset settings", "Puts the settings on this page back to how they start on a new PC. Your zones, presets, fan curves and overview tiles are kept.", `<button class="btn quiet" id="s-reset">Reset</button>`)}
@@ -454,6 +457,8 @@ export function initSettings() {
     if (e.target.closest("#s-diag")) post("/api/diagnostics", {}).then((r) => toast(`Saved ${r.name}. Explorer shows where.`)).catch(fail);
     if (e.target.closest("#s-welcome")) openWelcome();
     if (e.target.closest("#s-keys")) openShortcuts();
+    if (e.target.closest("#s-windows-shortcut")) openWindowsShortcut(loadSettings);
+    if (e.target.closest("#s-help")) openGuide();
     if (e.target.closest("#s-appearance")) openAppearance().catch(fail);
     if (e.target.closest("#s-rig-import")) openRigImport();
     if (e.target.closest("#s-rig-export")) {

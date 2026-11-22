@@ -15,6 +15,7 @@ from ..devices import DeviceError, ORDERS
 from ..openrgb import OpenRGBError
 from . import effects, geometry, studio
 from .inputs import AudioAnalyzer, ScreenSampler
+from .winddown import WindDown
 
 # a channel order's index list, built once instead of per zone per frame
 ORDER_INDEX = {name: list(idx) for name, idx in ORDERS.items()}
@@ -114,6 +115,9 @@ class Engine:
         self._trial_zones = frozenset()  # zone overrides suppressed during a trial, never saved to the store
         self.screen, self.audio = ScreenSampler(), AudioAnalyzer()
         self._frames = ({}, {})          # (zone key -> the last frame's bytes, the same as hex once someone asked)
+        self._source_frames, self._source_levels = {}, {}
+        self._prepared_levels = {}
+        self._wind_down = WindDown()
         self.frame_id = 0
         self.fps = 0.0
         self._identify = {}              # zone key -> deadline
@@ -164,8 +168,35 @@ class Engine:
     @frames.setter
     def frames(self, value):
         self._frames = ({}, dict(value))
+        self._source_frames, self._source_levels = {}, {}
 
     # ------------------------------------------------------------ commands
+    def wind_down(self, action=None, *, minutes=None, token=None, session=None, version=None):
+        with self._lock:
+            now = time.monotonic()
+            level = self.scene["brightness"] if self.scene.get("on") else 0
+            if action == "start":
+                if session is not None and (session != self._wind_down.session or version != self._wind_down.version):
+                    raise ValueError("The wind-down status changed. Review it before starting a timer.")
+                initial = level
+                if level and self._transition:
+                    # A crossfade may still be displaying its old level. Ignore identify/setup flashes.
+                    initial = max((self._source_levels[k] for k in self._prepared if k in self._source_levels
+                                   and k not in self._probe and self._identify.get(k, 0) <= now), default=level)
+                self._wind_down.start(minutes, initial, now)
+            elif action == "cancel":
+                self._wind_down.cancel(token)
+            elif action is not None:
+                raise ValueError("Choose Start or Cancel for the wind-down timer.")
+            if action:
+                self._kick.set()
+            return self._wind_down.status(level, now)
+
+    def _transition_source(self):
+        # Previously displayed frames may have been dimmed by a timer. Always blend the original colours
+        # and their brightness levels, then cap the finished frame exactly once at the output boundary.
+        return {"from": {k: v.copy() for k, v in self._source_frames.items()}, "levels": self._source_levels.copy()}
+
     def set_scene(self, scene, *, revision=None, transition_ms=0, commit_required=False):
         scene = dict(scene)
         try:                                         # never render with missing or bad parameters
@@ -178,7 +209,7 @@ class Engine:
             self.scene_generation += 1
             self.scene_state, self.scene_error = "pending", None
             self.scene_capacity_error = None
-            self._transition = {"from": {k: v.copy() for k, v in self._frames[0].items()},
+            self._transition = {**self._transition_source(),
                                 "started": time.monotonic(), "ready_at": None,
                                 "duration": transition_ms / 1000, "committed": not commit_required}
             if not scene.get("on", True):
@@ -188,6 +219,7 @@ class Engine:
                 self._studio_groups = []
                 self._studio_zones.clear()
                 self._identify.clear()
+                self._probe_done.update(self._probe)
                 self._probe.clear()
                 self._dev_sent.clear()
             self.scene = scene
@@ -292,17 +324,18 @@ class Engine:
         with self._lock:
             self.scene_state, self.scene_error = "failed", message
             if self._transition:
-                self._transition["from"] = {k: v.copy() for k, v in self._frames[0].items()}
+                self._transition.update(self._transition_source())
 
     def _prepare_scene_frame(self, zones, now, t, active=None):
         """Prepare all renderers before any device receives the candidate frame."""
         if self.scene_state == "failed" and self._transition:
             self._prepared = self._transition["from"]
+            self._prepared_levels = self._transition["levels"]
             return
         requirements = self._requirements(self.scene, zones=zones, active=active)
         accepted = self._admit_studio_zones(self._effect_groups(requirements))
         required = studio.HOST.reconcile([(e, p, z) for key, _, e, p, z in requirements if key in accepted])
-        candidate, error = {}, None
+        candidate, levels, error = {}, {}, None
         for key, cfg, eff, params, z in requirements:
             if isinstance(eff, studio.JsEffect) and key not in accepted:
                 candidate[key] = np.zeros((z.n, 3), dtype=np.uint8)
@@ -312,6 +345,7 @@ class Engine:
                 error = f"{eff.name} did not produce a valid frame"
                 continue
             candidate[key] = self._to_bytes(rgb, bri)
+            levels[key] = bri
             if isinstance(eff, studio.JsEffect) and eff.fx_id in studio.HOST.problems:
                 error = studio.HOST.problems[eff.fx_id]["text"]
         ready, problems = studio.HOST.readiness(required)
@@ -321,7 +355,7 @@ class Engine:
         if transition and not transition["committed"] and self.scene_capacity_error:
             error = self.scene_capacity_error
         if error and transition is None:
-            transition = self._transition = {"from": {k: v.copy() for k, v in self._frames[0].items()},
+            transition = self._transition = {**self._transition_source(),
                                             "started": now, "ready_at": None, "duration": 0, "committed": True}
         if transition:
             if error or (not ready and now - transition["started"] >= studio.START_GRACE):
@@ -332,11 +366,13 @@ class Engine:
                     self.scene_state = "pending"
                 self._prepared = {k: transition["from"].get(k, np.zeros((z.n, 3), dtype=np.uint8))
                                   for k, _, _, _, z in requirements}
+                self._prepared_levels = transition["levels"]
                 return
             if transition["ready_at"] is None:
                 self.scene_state = "ready"
                 if not transition["committed"]:
                     self._prepared = {k: transition["from"].get(k, np.zeros_like(v)) for k, v in candidate.items()}
+                    self._prepared_levels = transition["levels"]
                     return
                 transition["ready_at"] = now
             duration = transition["duration"]
@@ -345,13 +381,24 @@ class Engine:
                 old = transition["from"].get(key)
                 if old is not None and old.shape == value.shape:
                     candidate[key] = np.floor(old * (1 - alpha) + value * alpha + .5).astype(np.uint8)
+                    levels[key] = transition["levels"].get(key, 100) * (1 - alpha) + levels.get(key, 100) * alpha
             if alpha >= 1:
                 self._transition = None
         self._prepared = candidate
+        self._prepared_levels = levels
 
     def identify(self, zone_key):
-        self._identify[zone_key] = time.monotonic() + self.IDENTIFY_SECONDS
+        with self._lock:
+            now = time.monotonic()
+            self._check_flash_allowed(now)
+            self._identify[zone_key] = now + self.IDENTIFY_SECONDS
         self._kick.set()
+
+    def _check_flash_allowed(self, now):
+        if not self.scene.get("on", True):
+            raise ValueError("The lights are off. Turn lighting on or wait for the power hold to end before testing a zone.")
+        if self._wind_down.cap(now) == 0:
+            raise ValueError("Wind down is holding the lights at zero. Release the timer before testing a zone.")
 
     def probe(self, zone_key, mode, n=0):
         """Light a zone for the setup guide, over every LED the header can drive, whatever is configured:
@@ -362,7 +409,9 @@ class Engine:
                 if self._probe.pop(zone_key, None):
                     self._probe_done.add(zone_key)
             else:
-                self._probe[zone_key] = (mode, int(n), time.monotonic() + self.PROBE_SECONDS)
+                now = time.monotonic()
+                self._check_flash_allowed(now)
+                self._probe[zone_key] = (mode, int(n), now + self.PROBE_SECONDS)
             self._last.pop(zone_key, None)
         self._kick.set()
 
@@ -540,7 +589,9 @@ class Engine:
 
         t = now - self._t0
         zones = self.store.zones()
-        frames = {}
+        frames, source_levels = {}, {}
+        cap = self._wind_down.cap(now)
+        source_frames = {} if cap is not None else frames
         self._moving = False
         seen = set()
         current = self.manager.all()
@@ -586,6 +637,7 @@ class Engine:
                 key = f"{dev.id}/{zone.id}"
                 seen.add(key)
                 zcfg = zones.get(key)
+                level = None
                 with self._lock:
                     probe = self._probe.get(key)
                     if probe and probe[2] <= now:
@@ -612,6 +664,7 @@ class Engine:
                             prepared = self._prepared.get(key)
                             if prepared is not None:
                                 rgb, bri = prepared / 255.0, 100
+                                level = self._prepared_levels.get(key, 100)
                             else:
                                 rgb, bri = self.render_zone(key, zcfg, now, t)
                         except Exception:
@@ -622,6 +675,12 @@ class Engine:
                             rgb, bri = np.zeros((max(zcfg["layout"].get("leds", 1) if isinstance(zcfg.get("layout"), dict)
                                                      else 1, 1), 3)), 0
                 rgb_ints = self._to_bytes(rgb, bri)
+                level = bri if level is None else level
+                source_levels[key] = level
+                if cap is not None:
+                    source_frames[key] = rgb_ints
+                    if cap < level:
+                        rgb_ints = np.floor(rgb_ints * (cap / level) + .5).astype(np.uint8)
                 frames[key] = rgb_ints                                      # preview shows true colours
                 order = zcfg.get("order", "RGB") if zcfg else "RGB"
                 ints = rgb_ints[:, ORDER_INDEX[order]] if order != "RGB" else rgb_ints
@@ -682,6 +741,7 @@ class Engine:
         for key in list(self._probe_done):
             if key not in seen:
                 self._probe_done.discard(key)
+        self._source_frames, self._source_levels = source_frames, source_levels
         self._frames = (frames, None)
         studio.HOST.tick(t, self.audio.frame if self.audio.active else None)
         if self._preview and self._preview[1] <= now:

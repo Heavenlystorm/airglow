@@ -35,6 +35,10 @@ def protection_args(args):
             if args.protected_pid is not None else [])
 
 
+def packaged_args(args):
+    return ["--packaged-app", str(args.packaged_app)] if args.packaged_app else []
+
+
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,6 +58,153 @@ def color_for(generation):
     return f"#{(generation * 19 + 31) % 220 + 20:02x}507b"
 
 
+def read_report(path):
+    # The child atomically replaces this file as it records progress. Windows can briefly deny a reader.
+    for attempt in range(40):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (PermissionError, FileNotFoundError):
+            if attempt == 39:
+                raise
+            time.sleep(.025)
+
+
+def qualify_blob_download(window, directory):
+    """Let the real WebView2 download handler save into this fixture, without displaying an OS file picker."""
+    from unittest.mock import patch
+    from webview.platforms import edgechromium
+
+    forms = edgechromium.WinForms
+    destination = directory / "native-export.txt"
+    suggested = []
+
+    class FixtureSaveDialog:
+        def ShowDialog(self, _owner):
+            suggested.append(self.FileName)
+            self.FileName = str(destination)
+            return forms.DialogResult.OK
+
+    class FixtureForms:
+        SaveFileDialog = FixtureSaveDialog
+
+        def __getattr__(self, name):
+            return getattr(forms, name)
+
+    with patch.object(edgechromium, "WinForms", FixtureForms()):
+        window.evaluate_js("""(() => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob(['Airglow native export'], {type:'text/plain'}));
+            a.download = 'airglow-probe.txt'; a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 20000);
+        })()""")
+        deadline = time.monotonic() + 12
+        while time.monotonic() < deadline:
+            try:
+                if destination.read_bytes() == b"Airglow native export":
+                    break
+            except OSError:
+                pass
+            time.sleep(.05)
+        else:
+            raise AssertionError(f"WebView2 did not finish the fixture export (suggested {suggested!r})")
+    if suggested != ["airglow-probe.txt"]:
+        raise AssertionError(f"Unexpected export name: {suggested!r}")
+
+
+def qualify_desk_preferences(main_window, desk_window, generation, directory):
+    """Use the Desk UI, then read back the same focus deadline in both native windows and across restart."""
+    if generation == 0:
+        desk_window.evaluate_js("""(() => {
+          const layout = document.querySelector('#desk-layout');
+          layout.value = 'instruments';
+          layout.dispatchEvent(new Event('change', { bubbles: true }));
+          document.querySelector('#desk-timer-open').click();
+          document.querySelector('[data-minutes="15"]').click();
+          document.querySelector('#desk-timer [type="submit"]').click();
+          return true;
+        })()""")
+    timer_js = "JSON.parse(localStorage.getItem('airglow.desk.timer.v1'))"
+    timer = desk_window.evaluate_js(timer_js)
+    layout = desk_window.evaluate_js("document.body.dataset.layout")
+    if layout != "instruments" or not timer or timer.get("minutes") != 15 or timer.get("deadline", 0) < time.time() * 1000:
+        raise AssertionError(f"Unexpected Desk Display state: {layout!r}, {timer!r}")
+    if main_window.evaluate_js(timer_js) != timer:
+        raise AssertionError("The main window cannot read the companion's focus timer")
+    marker = directory / "desk-focus.json"
+    if generation == 0:
+        write_json(marker, timer)
+    elif json.loads(marker.read_text(encoding="utf-8")) != timer:
+        raise AssertionError("The running focus deadline changed across the native restart")
+    return timer
+
+
+def caption_colour(window):
+    hwnd = ctypes.c_void_p(window.native.Handle.ToInt64())
+    colour = ctypes.c_uint()
+    result = ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 35, ctypes.byref(colour), ctypes.sizeof(colour))
+    return colour.value if result == 0 else None  # A hidden window or older DWM may not expose this attribute.
+
+
+def qualify_packaged_lookbook(window):
+    """Open the bundled lookbook through the main window, including its real local illustrations."""
+    def wait(js):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            result = window.evaluate_js(js)
+            if result:
+                return result
+            time.sleep(.08)
+        raise AssertionError(f"Packaged workspace did not become ready: {js}")
+
+    wait("!!document.querySelector('.tile-sensor')")
+    window.evaluate_js("document.querySelector('#ov-tools').click(); document.querySelector('#ov-profile-library').click();")
+    wait("!!document.querySelector('#pl-lookbook')")
+    window.evaluate_js("document.querySelector('#pl-lookbook').click()")
+    wait("document.querySelectorAll('.lb-card').length === 6")
+    names = window.evaluate_js("Array.from(document.querySelectorAll('.lb-card strong'), e => e.textContent)")
+    window.evaluate_js("""(() => {
+      window.qualificationPlate = new Image();
+      window.qualificationPlate.src = '/art/lookbook-plates.webp';
+      document.querySelectorAll('.lb-card')[3].click();
+    })()""")
+    wait("document.querySelector('.lb-cover h3')?.textContent === 'Fern house' && window.qualificationPlate.naturalWidth > 0")
+    art_width = window.evaluate_js("window.qualificationPlate.naturalWidth")
+    window.evaluate_js("document.querySelector('#sheet').close(); delete window.qualificationPlate")
+    return {"recipe_count": 6, "names": names, "illustration_width": art_width}
+
+
+def qualify_window_bounds(window, kind, move, directory):
+    """Resize without SWP_SHOWWINDOW and verify the exact native rectangle across a process handoff."""
+    from System.Windows.Forms import Screen
+    form = window.native
+    hwnd = ctypes.c_void_p(form.Handle.ToInt64())
+    marker = directory / f"{kind}-bounds.json"
+    if move:
+        screen = Screen.FromControl(form).WorkingArea
+        width, height = (max(form.MinimumSize.Width, 680), max(form.MinimumSize.Height, 548)) if kind == "main" else (490, 332)
+        width, height = min(width, screen.Width), min(height, screen.Height)
+        x = screen.X + (screen.Width-width)//3
+        y = screen.Y + (screen.Height-height)//4
+        if not ctypes.windll.user32.SetWindowPos(hwnd, None, x, y, width, height, 0x214):
+            raise OSError("Could not position the hidden fixture window")
+        expected = [x, y, width, height]
+        write_json(marker, expected)
+    else:
+        expected = json.loads(marker.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        bounds = form.Bounds
+        actual = [bounds.X, bounds.Y, bounds.Width, bounds.Height]
+        if all(abs(a-b) <= 1 for a,b in zip(actual, expected)):
+            break
+        time.sleep(.05)
+    else:
+        raise AssertionError(f"{kind} window bounds {actual!r}, expected {expected!r}")
+    if ctypes.windll.user32.IsWindowVisible(hwnd):
+        raise AssertionError("The hidden qualification window became visible")
+    return actual
+
+
 def child(args):
     # This installs the existing hardware, subprocess, external-network and registry-write guards
     # before any production application module is imported.
@@ -71,6 +222,8 @@ def child(args):
     data = run_dir / "data"
     data.mkdir(parents=True, exist_ok=True)
     paths.data_dir = lambda: data
+    if args.packaged_app:
+        paths.WEB_DIR = args.packaged_app.parent / "_internal" / "web"
     app.MUTEX_NAME = args.mutex
     app.PORT_TRIES = 1
     os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = "--disable-background-networking --disable-component-update --no-first-run"
@@ -104,7 +257,8 @@ def child(args):
         seed._save_config({"port": args.port})
         seed.update_settings({"online_checks": False, "openrgb_enabled": False,
                               "dynamic_lighting_enabled": False, "lighting_transition_ms": 0})
-        seed.save_state(scene={"effect": "solid", "params": {"color": color_for(-1)}, "brightness": 73, "on": True})
+        seed.save_state(onboarded=True, online_asked=True,
+                        scene={"effect": "solid", "params": {"color": color_for(-1)}, "brightness": 73, "on": True})
 
     objects = {}
 
@@ -148,6 +302,8 @@ def child(args):
         def __init__(self, *arguments, **kwargs):
             kwargs["start_hidden"] = True
             super().__init__(*arguments, **kwargs)
+            # The secondary WebView is real too. Its fixture starts hidden like the main window.
+            self.desk._create = lambda *a, **kw: window_module.webview.create_window(*a, **kw, hidden=True)
             objects["window"] = self
             self.win.events.loaded += lambda: record("native_page_loaded")
 
@@ -163,7 +319,7 @@ def child(args):
             raise AssertionError("Restart did not pass exact process creation time")
         return sys.executable, ["-B", str(Path(__file__).resolve()), "--child", "--run-dir", str(run_dir),
                                 "--generation", str(args.generation + 1), "--restarts", str(args.restarts),
-                                "--port", str(args.port), "--mutex", args.mutex, *protection_args(args), *extra]
+                                "--port", str(args.port), "--mutex", args.mutex, *protection_args(args), *packaged_args(args), *extra]
 
     tools.self_command = next_command
 
@@ -204,6 +360,42 @@ def child(args):
             native_visible = bool(ctypes.windll.user32.IsWindowVisible(ctypes.c_void_p(hwnd)))
             if native_visible:
                 raise AssertionError("Qualification app window unexpectedly became visible")
+            shortcut = request("/api/windows-shortcut")
+            if not shortcut["available"] or shortcut["registered"]:
+                raise AssertionError(f"Unexpected default Windows shortcut state: {shortcut}")
+            record("windows_shortcut_ready", default_off=True)
+            if args.generation <= 1:
+                record("main_window_bounds", bounds=qualify_window_bounds(window.win, "main", args.generation == 0, run_dir))
+                if args.generation == 0:
+                    if args.packaged_app:
+                        record("packaged_lookbook", **qualify_packaged_lookbook(window.win))
+                    qualify_blob_download(window.win, run_dir)
+                    record("native_export_saved", bytes=21, file="native-export.txt")
+                desk = request("/api/desk-display/open", {})
+                child_window = window.desk._window
+                if not (desk["open"] and child_window and child_window.events.loaded.wait(args.start_timeout)):
+                    raise AssertionError("Native Desk Display did not load")
+                title = child_window.evaluate_js("document.title")
+                timer = qualify_desk_preferences(window.win, child_window, args.generation, run_dir)
+                record("desk_focus_saved", deadline=timer["deadline"], layout="instruments")
+                if args.generation == 0:
+                    for design, expected_colour in (("paper", 0xdbe4e8), ("firefly", 0x301d22)):
+                        request("/api/settings", {"design": design})
+                        captions = [caption_colour(w) for w in (window.win, child_window)]
+                        if any(colour is not None and colour != expected_colour for colour in captions):
+                            raise AssertionError(f"Native captions did not match {design}: {captions}")
+                        record("native_caption", design=design, colours=captions)
+                record("desk_window_bounds", bounds=qualify_window_bounds(child_window, "desk", args.generation == 0, run_dir))
+                if args.generation == 1 and not desk["pinned"]:
+                    raise AssertionError("Desk Display lost the saved keep-on-top preference")
+                if title != "Airglow · Desk Display" or not request("/api/desk-display/pin", {"pinned": True})["pinned"]:
+                    raise AssertionError("Desk Display did not initialize or pin")
+                if request("/api/desk-display/pin", {"pinned": False})["pinned"]:
+                    raise AssertionError("Desk Display did not unpin")
+                if args.generation == 0:
+                    request("/api/desk-display/pin", {"pinned": True})
+                record("desk_display_loaded", pinned_and_unpinned=True, title=title)
+                # Leave the companion open: Quit/Restart must close both windows and their processes.
             state = request("/api/state")
             expected = color_for(args.generation - 1)
             if state["scene"]["params"]["color"] != expected:
@@ -280,7 +472,7 @@ def parent(args):
     args.protected_started = psutil.Process(args.protected_pid).create_time() if args.protected_pid is not None else None
     command = [sys.executable, "-B", str(Path(__file__).resolve()), "--child", "--run-dir", str(run_dir),
                "--generation", "0", "--restarts", str(args.restarts), "--port", str(port), "--mutex", mutex,
-               "--start-timeout", str(args.start_timeout), *protection_args(args)]
+               "--start-timeout", str(args.start_timeout), *protection_args(args), *packaged_args(args)]
     started = time.monotonic()
     timed_out = False
     with (run_dir / "process-output.log").open("w", encoding="utf-8") as output:
@@ -290,10 +482,10 @@ def parent(args):
         while time.monotonic() < deadline:
             final = run_dir / f"child-{args.restarts:02d}.json"
             if final.exists():
-                state = json.loads(final.read_text(encoding="utf-8"))
+                state = read_report(final)
                 if any(e["event"] == "app_main_returned" for e in state["events"]):
                     break
-            reports = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(run_dir.glob("child-*.json"))]
+            reports = [read_report(p) for p in sorted(run_dir.glob("child-*.json"))]
             if any(r.get("errors") or r.get("blocked_operations") or any(e["event"] == "app_main_returned" and not e.get("cleanup_verified")
                    for e in r["events"]) for r in reports):
                 break
@@ -306,7 +498,7 @@ def parent(args):
             time.sleep(.1)
         else:
             timed_out = True
-    reports = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(run_dir.glob("child-*.json"))]
+    reports = [read_report(p) for p in sorted(run_dir.glob("child-*.json"))]
     owned = {}
     for report in reports:
         owned[report["pid"]] = report["started_at"] / 10_000_000 - 11644473600
@@ -379,6 +571,7 @@ def parent(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--result", default=str(ROOT / ".superpowers/sdd/2026-11-15-production-readiness/native-app-lifecycle-result.json"))
+    parser.add_argument("--packaged-app", type=Path, help="Serve this executable's bundled interface in the isolated native lifecycle fixture")
     parser.add_argument("--restarts", type=int, default=10)
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--start-timeout", type=float, default=25)
@@ -391,6 +584,10 @@ def main():
     parser.add_argument("--mutex")
     parser.add_argument("--restart-from-pid", nargs=2)
     args = parser.parse_args()
+    if args.packaged_app:
+        args.packaged_app = args.packaged_app.resolve()
+        if not args.packaged_app.is_file() or not (args.packaged_app.parent / "_internal/web/desk.html").is_file():
+            parser.error("Choose a one-folder Airglow executable with its bundled Desk Display")
     if not 0 <= args.restarts <= 30:
         parser.error("restarts must be between zero and thirty")
     if args.protected_pid is not None and args.protected_pid <= 0:
