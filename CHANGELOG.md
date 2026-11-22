@@ -1,43 +1,53 @@
 # Changelog
 
-## Unreleased
+## 1.21.0
 
-- Desk Display opens as a second window with a clock, a focus timer, and up to four readings with one-minute traces.
-  Choose its instruments independently of Overview, rotate the illustrated scenery daily, or keep the window on top.
-  The timer survives a restart. Both windows remember their monitor and size.
-- The offline Lighting lookbook includes six illustrated recipes. Preview one on your rig or the sample layout,
-  adjust brightness and area accents, compare it with a saved look, and save a personal copy.
-- Profile Library compares two looks at the same instant, including their zone colours and fan-curve points.
-  Local profile files can carry lighting, curves and linked rules. Imported rules start paused. Apply and export
-  detect changes made in another window between review and confirmation.
-- Build a palette from a local photo and reorder its colours. Arrange multiple lighting zones together using
-  keyboard nudges, grid snapping, alignment and equal spacing. Undo and redo preserve the group layout.
-- Light theatre can freeze and scrub recent LED frames. Choose a camera angle, landscape, square or portrait
-  framing, and the theatre backdrop or a transparent background when saving a PNG.
-- Studio keeps several drafts, named checkpoints and recoverable versions. Compare a checkpoint with the current
-  edit or open it as a separate copy.
-- Recordings support six additional signals, timestamped event markers and run notes. Compare traces at matching
-  elapsed times, then export readings, an event timeline or a chart. Interrupted recordings recover their latest checkpoint.
-- The fan curve sandbox shows the response to a temperature sweep or a missing reading. Rehearse automation
-  priorities with sample inputs. Wind down fades lighting over 5–120 minutes and holds it dark until released.
-- Overview has optional Lookbook and Desk Display tiles. The main window fits a Windows split-screen layout.
-  F1 opens searchable task and keyboard help. An optional Windows shortcut can recall Airglow or Desk Display.
+Put a clock and your rig’s live readings on a second screen, then choose a lighting scene to match.
+Press **Ctrl+K** and open **Desk Display** or **Lighting lookbook** to try either feature. Your existing
+settings, design and profiles carry over when you update.
 
-- Studio has two editable lighting templates. Lantern Walk moves a gold light and an apricot halo across plum
-  LEDs. Rain Glass sends narrow streaks of light diagonally across a dark teal background.
-- In Lighting, open **Edit colour** or **Edit palette** on the whole rig or a zone to type or paste hex colours,
-  preview a gradient, reverse its stops, or try the effect default before applying. Pick from recent colours or
-  four named palettes, and save your own palettes for both Lighting and Studio.
-- Automations can be searched and filtered by status. Filtered rules keep their original priority numbers.
-  Duplicate a rule to edit a switched-off copy beside the original, or save a new rule switched off.
-  Time rules have day-group shortcuts, a duration preview and an explicit next-day finish for overnight schedules.
-- Open a sensor tile to pause its history, inspect a timestamped sample by keyboard or touch, jump to the low or
-  peak, or copy the window's statistics. Sample counts and missing readings stay visible when comparing sensors.
-- Quick Switch finds settings by topic and lighting zones by zone or controller name. Search tolerates accents
-  and punctuation, can show only pinned favorites, and supports Page Up and Page Down. It shows the result count
-  and marks the current section and workspace.
-- The 3D lighting view clears its whole canvas on every repaint. The bottom pixel row was only partly cleared and
-  could keep a faint trace of lights that had reached the edge.
+### Set the scene
+
+- **Desk Display** gives up to four readings their own one-minute traces. Pick the instruments independently
+  of Overview, rotate the illustrated scenery daily, and keep the window above other apps. Its focus timer
+  survives a restart. Both windows remember their monitor and size.
+- Six illustrated **Lighting lookbook** recipes work offline. Try the soft glow of *Lamplight* or watch
+  *Meteor watch* move across your rig or the sample layout. Adjust brightness and area accents, compare
+  the result with a saved look, and keep a personal copy.
+- **Profile Library** shows two looks at the same instant, down to zone colours and fan-curve points.
+  Local profile files can include lighting, curves and linked rules. Imported rules start paused.
+  Applying or exporting a profile checks for changes made in another window since you reviewed it.
+
+### Make a look of your own
+
+- Pull colours from a local photo, paste a hex value, reverse a gradient or reuse a saved palette in
+  Lighting and Studio. Start an effect from the editable **Lantern Walk** or **Rain Glass** template.
+- Select several lighting zones together, nudge them with the keyboard, snap them to the grid, align or
+  evenly space them. Undo and redo preserve the group layout.
+- Freeze **Light theatre** and scrub back to the frame you want. Choose a camera angle, frame it as landscape,
+  square or portrait, and save a PNG with the theatre backdrop or a transparent background.
+- Studio keeps multiple drafts and named checkpoints. Compare a checkpoint with the current edit or open
+  it as a separate copy. Recoverable versions protect work between sessions.
+
+### Watch what changes
+
+- Record a workload with six additional signals to choose from. Add timestamped markers and notes, compare
+  two runs at the same elapsed time, and export readings, an event timeline or a chart. After an interruption,
+  Airglow recovers the latest recording checkpoint.
+- Pause a sensor tile’s history, inspect individual samples by keyboard or touch, jump to its low or peak,
+  or copy the statistics. Missing readings and sample counts stay visible during comparisons.
+- Sweep a simulated temperature through two fan curves or see how they handle a missing reading.
+  Rehearse automation priorities with sample inputs. Search and filter rules, duplicate a rule as a
+  switched-off copy, and check which day an overnight schedule ends.
+- **Wind down** fades the lights over 5–120 minutes and holds them dark until you release the timer.
+
+### Find your way around
+
+- Add a Lookbook or Desk Display tile to Overview, fit the main window into a Windows split-screen layout,
+  or use an optional global shortcut to recall the app or Desk Display. **F1** opens searchable task and keyboard help.
+- Quick Switch finds settings by topic and zones by name or controller. Filter to pinned favorites,
+  page through results, and search across accents and punctuation.
+- The 3D view clears the complete canvas on every repaint, including the bottom edge.
 
 ## 1.20.1
 - The Overview uses far less processor time, most of all on fast displays. In 1.20.0 every graph redrew on its own
