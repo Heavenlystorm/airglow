@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.21.0
+## 1.21.1
 
 Put a clock and your rig’s live readings on a second screen, then choose a lighting scene to match.
 Press **Ctrl+K** and open **Desk Display** or **Lighting lookbook** to try either feature. Your existing
@@ -39,6 +39,8 @@ settings, design and profiles carry over when you update.
 - Sweep a simulated temperature through two fan curves or see how they handle a missing reading.
   Rehearse automation priorities with sample inputs. Search and filter rules, duplicate a rule as a
   switched-off copy, and check which day an overnight schedule ends.
+- After you hand a fan back to the BIOS, its channel shows the saved choice even if an older sensor
+  poll finishes during the change or you immediately reload the Fans view.
 - **Wind down** fades the lights over 5–120 minutes and holds them dark until you release the timer.
 
 ### Find your way around
@@ -48,6 +50,10 @@ settings, design and profiles carry over when you update.
 - Quick Switch finds settings by topic and zones by name or controller. Filter to pinned favorites,
   page through results, and search across accents and punctuation.
 - The 3D view clears the complete canvas on every repaint, including the bottom edge.
+
+## 1.21.0
+
+The 1.21.0 tag was used for release qualification. The public Firefly update ships as 1.21.1.
 
 ## 1.20.1
 - The Overview uses far less processor time, most of all on fast displays. In 1.20.0 every graph redrew on its own

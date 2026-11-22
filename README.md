@@ -16,7 +16,7 @@ Airglow brings your case lights, fan curves, and sensors into one free, open-sou
 Make a rain-lit palette from a photo, set the fans to follow your GPU temperature, and save both as a profile.
 Your settings stay on your PC. No account or telemetry.
 
-## New in 1.21.0
+## New in 1.21.1
 
 ### A lookbook for your lights
 
@@ -55,7 +55,7 @@ can rotate daily. Press **Ctrl+K** and type **Desk Display** to open it.
 **F1** opens searchable tasks and shortcuts. Open **Settings → Appearance** to choose a different theme or adjust the scale.
 The application screenshots use sample hardware.
 
-[Release notes](https://github.com/Heavenlystorm/airglow/releases/tag/v1.21.0) ·
+[Release notes](https://github.com/Heavenlystorm/airglow/releases/tag/v1.21.1) ·
 [Firefly dashboard](docs/screenshots/firefly-preview.png) · [Project website](https://airglowrgb.com) ·
 [GitHub Discussions](https://github.com/Heavenlystorm/airglow/discussions) · [r/AirglowRGB](https://www.reddit.com/r/AirglowRGB/)
 
