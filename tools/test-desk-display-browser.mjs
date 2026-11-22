@@ -147,7 +147,8 @@ test("reading chooser retries discovery and protects a selection saved by anothe
   await page.locator("#desk-choose-readings").click();
   assert.equal(requests,0,"Following Overview pins does not request the entire sensor catalog");
   await page.locator("#desk-pick-mode").selectOption("desk");
-  await page.locator("#desk-pick-retry").press("Enter");
+  await page.getByRole("status").filter({hasText:"Could not load available readings"}).waitFor();
+  await page.getByRole("button",{name:"Retry loading readings"}).press("Enter");
   await page.locator("#desk-pick-list input").first().waitFor();
   assert.equal(requests,2);
   assert.ok(await page.locator("#desk-pick-search").evaluate(e=>e===document.activeElement));
