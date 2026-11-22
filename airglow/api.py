@@ -500,9 +500,7 @@ def route(server, method, path, body, query=None):
         cfg = None if mode in (None, "", "off") else {"mode": mode, "duty": body.get("duty", 60)}
         if cfg and mode != "bios" and sid not in {c["id"] for c in ctrl.fan_channels}:
             raise ApiError(404, "LibreHardwareMonitor doesn't list that fan right now.")
-        store.set_fan_channel(sid, cfg)
-        ctrl.fan_channels_changed()
-        return {"channels": ctrl.fan_channels}
+        return {"channels": ctrl.set_fan_channel(sid, cfg)}
     m = re.fullmatch(r"/api/curves/([a-z0-9-]{1,64})(/reset)?", path)
     if m:
         try:

@@ -48,6 +48,7 @@ class Controller:
         self.lhm = sensors.LhmPoller(lambda: store.settings()["lhm_url"], tools.lhm_headers,
                                      on_change=self._sensor_ready.set)
         self.lhm_fans = lhm_fans or lhmfans.LhmFans(lambda: store.settings()["lhm_url"], tools.lhm_headers)
+        self._fan_channels_lock = threading.Lock()
         self.fan_channels = []                   # what LHM can drive, with what Airglow does with each
         self._system = sensors.SystemSensors()
         self.sensors = dict(sensors.OFFLINE)
@@ -614,7 +615,10 @@ class Controller:
                     log.warning("%s: %s", dev.name, e)
                     dev.error = str(e)
                     dev.close()
-        self._run_lhm_fans(duty, temp, cfg["fan_failsafe_duty"], hottest=hottest)
+        # An ownership save must follow any writes and status publication based on the previous choice.
+        # Slow LHM requests must not take the controller lock used by lighting and state reads.
+        with self._fan_channels_lock:
+            self._run_lhm_fans(duty, temp, cfg["fan_failsafe_duty"], hottest=hottest)
 
     def _run_lhm_fans(self, duty, temp, failsafe, hottest=None):
         """Motherboard headers, pumps and cooler fans through LibreHardwareMonitor: the ones you chose follow the
@@ -718,16 +722,21 @@ class Controller:
         if n:
             log.info("%d fan%s through LibreHardwareMonitor set to at least %d%%", n, "" if n == 1 else "s", duty)
 
-    def fan_channels_changed(self):
-        """A channel's setting changed: show it right away; the next fan tick sends it."""
-        chosen = self.store.fan_channels()
-        self.fan_channels = [{**c, "mode": (chosen.get(c["id"]) or {}).get("mode"),
-                              "steady": (chosen.get(c["id"]) or {}).get("duty")} for c in self.fan_channels]
+    def set_fan_channel(self, sid, cfg):
+        """Publish the saved choice now. The next hardware tick applies it or hands the channel back."""
+        with self._fan_channels_lock:
+            choice = self.store.set_fan_channel(sid, cfg)
+            self.fan_channels = [
+                {**channel, "mode": choice["mode"], "steady": choice.get("duty"), "target": None}
+                if channel["id"] == sid else channel for channel in self.fan_channels
+            ]
+            return self.fan_channels
 
     def release_fans(self):
         """Quitting: fans driven through LHM go back to the BIOS or the cooler's own curve."""
         try:
-            self.lhm_fans.release_all()
+            with self._fan_channels_lock:
+                self.lhm_fans.release_all()
         except Exception:
             log.exception("could not hand fans back to their own control")
 

@@ -4,11 +4,13 @@ import tempfile
 import threading
 import unittest
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
-from airglow import config, fans, lhmfans, sensors
+from airglow import api, config, fans, lhmfans, sensors
 from airglow.controller import Controller
 from tests.fakes import FakeManager, FakeNzxt, signals
 
@@ -490,11 +492,52 @@ class ControllerTests(unittest.TestCase):
     def test_leaving_a_channel_alone_again_hands_it_back(self):
         self.store.set_fan_channel(BOARD, {"mode": "curve"})
         self.ctrl.tick()
-        self.store.set_fan_channel(BOARD, None)
-        self.ctrl.fan_channels_changed()
+        self.ctrl.set_fan_channel(BOARD, None)
         self.ctrl.tick()
         self.ctrl.tick()
         self.assertEqual(self.rec.calls[-1], (BOARD, None))
+
+    def test_inflight_fan_tick_cannot_restore_curve_after_bios_save(self):
+        self.ctrl.tick()
+        self.store.set_fan_channel(BOARD, {"mode": "curve"})
+        server = SimpleNamespace(ctrl=self.ctrl, store=self.store, hooks={})
+        writing, finish_write = threading.Event(), threading.Event()
+        saving, accepted = threading.Event(), threading.Event()
+        order = []
+
+        def send(base, sid, duty, headers):
+            writing.set()
+            if not finish_write.wait(3):
+                raise AssertionError("The test fan write was never released")
+            self.rec(base, sid, duty, headers)
+            order.append("speed" if duty is not None else "release")
+
+        def save():
+            saving.set()
+            result = api.route(server, "POST", "/api/fans/channel", {"id": BOARD, "mode": "bios"})
+            order.append("accepted")
+            accepted.set()
+            return result["channels"]
+
+        with mock.patch.object(self.ctrl.lhm_fans, "_send", send), ThreadPoolExecutor(max_workers=3) as pool:
+            tick = pool.submit(self.ctrl._run_fans)
+            try:
+                self.assertTrue(writing.wait(2))
+                request = pool.submit(save)
+                self.assertTrue(saving.wait(2))
+                # Lighting and state reads remain available while hardware and its ownership edit wait.
+                pool.submit(self.ctrl.snapshot).result(timeout=1)
+                accepted.wait(0.15)
+            finally:
+                finish_write.set()
+            tick.result(timeout=2)
+            reply = request.result(timeout=2)
+        self.assertLess(order.index("speed"), order.index("accepted"))
+        for rows in (reply, self.ctrl.fan_channels):
+            channel = next(row for row in rows if row["id"] == BOARD)
+            self.assertEqual((channel["mode"], channel["target"]), ("bios", None))
+        self.ctrl._run_fans()
+        self.assertEqual(self.rec.calls, [(BOARD, self.ctrl.fan_duty), (BOARD, None)])
 
     def test_failsafe_then_quit_hands_fans_back(self):
         self.store.set_fan_channel("/hid/nzxt-kraken/0/control/0", {"mode": "steady", "duty": 80})
