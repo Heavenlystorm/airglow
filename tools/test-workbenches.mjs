@@ -63,8 +63,10 @@ test("fan controls display measured duty separately from requests and focus a li
       sensors: { online: true },
     } } },
   });
-  ui.renderFans();
   const row = '#channels [data-chan="/fan/1"]';
+  node(row + " [data-steady]").nextElementSibling = node(row + " output");
+  ui.renderFans();
+  assert.equal(node(row + " output").textContent, "50%", "the steady-speed editor shows its initial duty");
   assert.equal(node(row + " .bar i").style.width, "25%", "the displayed bar is reported duty, never the request");
   assert.match(node(row + " .chan-note").textContent, /Requested 75%/);
   assert.match(node(row + " .chan-note").textContent, /Reported 25%/);

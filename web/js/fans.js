@@ -357,10 +357,7 @@ async function writeChannel(body) {
   channelWrites.set(body.id, write);
   try { await done; }
   finally {
-    if (channelWrites.get(body.id) === write) {
-      channelWrites.delete(body.id);
-      renderPorts();
-    }
+    if (channelWrites.get(body.id) === write) channelWrites.delete(body.id);
   }
 }
 
@@ -371,6 +368,7 @@ async function saveChannel(row, patch) {
     await writeChannel(body);
     toast(!body.mode || body.mode === "bios" ? `${c?.name || "That fan"} will use BIOS / device control` : body.mode === "curve" ? `Airglow curve saved for ${c?.name || "that fan"}` : `Steady ${body.duty}% saved for ${c?.name || "that fan"}`);
   } catch (err) { fail(err); }
+  finally { renderPorts(); }
 }
 
 export async function copyChannelSettings(targets, patch) {
@@ -402,6 +400,7 @@ function copyChannelSheet(source, patch) {
     const selected = new Set(fields.filter((c) => c.checked && !c.disabled).map((c) => c.value));
     fields.forEach((c) => { c.disabled = true; }); button.disabled = true;
     const { applied, failed } = await copyChannelSettings(targets.filter((c) => selected.has(c.id)), patch);
+    renderPorts();
     const result = form.querySelector("#copy-results");
     result.hidden = false;
     result.className = failed.length ? "err" : "hint";
