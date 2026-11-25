@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.21.2
+
+A tidier Overview in a half-width window, and a few small touches across Lighting, Fans and Devices.
+
+### Overview
+
+- In a narrow window, such as one snapped to half the screen, a reading's line of light starts where its number,
+  unit and trend arrow end, and a gauge shrinks beside its number instead of covering it. When a tile has no room
+  left for the line, it shows the number and trend arrow alone.
+- A one-row Profiles tile keeps every profile in reach: the cards run in a single row that scrolls sideways with the
+  mouse wheel or a swipe, and the row fades at the edge where more profiles are waiting.
+- A new Overview, or **Reset to default**, fills its last two rows evenly. Case fans, Download and Cost per hour are
+  wider, so no tile is left on a row of its own. Your current layout is not changed.
+
+### Elsewhere
+
+- **Devices** shows each channel's LED strip in its live colours with a still effect such as Solid. The strips
+  stayed dark until the effect changed.
+- **Fans**: point at the fan curve to read the speed it requests at that temperature. The value appears in the
+  legend under the chart, next to the live request.
+- Colour settings show the colour's code, such as `#FFB21A`. Click it to copy the code for another app that drives
+  your lights. The one-click colours have names, so a tooltip or screen reader says *Amber* instead of a code.
+- **Control center** shows each status as a coloured badge, so a row that needs attention stands out.
+
 ## 1.21.1
 
 Put a clock and your rig’s live readings on a second screen, then choose a lighting scene to match.
