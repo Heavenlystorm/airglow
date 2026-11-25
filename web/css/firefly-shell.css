@@ -83,6 +83,9 @@
   gap: 2px; padding: 4px; height: 18px; border-radius: 6px; background: #1e1925;
 }
 [data-design="firefly"] .zone-card .zstrip i { border-radius: 2px; }
+/* a lit LED casts a little of its own colour onto the strip; unlit ones have no --led, so no glow */
+[data-design="firefly"] .zone-card .zstrip i { box-shadow: 0 0 7px -1px var(--led), inset 0 1px 0 rgba(255, 255, 255, .18); }
+[data-design="firefly"] .zone-card.off .zstrip i { box-shadow: none; }
 
 /* The same 24-hour ruler is used for saved time rules and their editable preview. */
 .schedule-ribbon { max-width: 26rem; margin: 10px 0 4px; }

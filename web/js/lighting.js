@@ -21,6 +21,34 @@ let editingParams = 0;          // timestamp of the last local edit; pauses re-r
 // Shared with the Devices tab, which draws device plugin settings from the same schema, and with the Studio.
 // opts.reset adds a back-to-default button; Studio passes it, the other screens keep their compact look.
 const resetBtn = (spec) => `<button type="button" class="field-reset" data-reset title="Back to the default" aria-label="Reset ${esc(spec.label)}"><svg aria-hidden="true"><use href="#i-rotate"/></svg></button>`;
+// The one-click colours, by name: a tooltip and a screen reader say "Amber", not "#ffb21a".
+const QUICK_NAMES = { "#ffffff": "White", "#ff1040": "Red", "#ff5a1f": "Orange", "#ffb21a": "Amber", "#c8ff2a": "Lime",
+  "#22e06b": "Green", "#00e0c8": "Teal", "#00b4ff": "Sky blue", "#2f5bff": "Blue", "#8a3dff": "Violet", "#ff2fb4": "Pink" };
+// The colour's code beside its name, to copy into another app that drives the same lights (a keyboard, a mouse).
+const hexChip = (v) => `<button type="button" class="hex-chip" data-copy-hex title="Copy colour code" aria-label="Copy colour code ${esc(v.toUpperCase())}">${esc(v.toUpperCase())}</button>`;
+function showHex(chip, v) {
+  if (!chip) return;
+  chip.textContent = v.toUpperCase();
+  chip.setAttribute("aria-label", `Copy colour code ${v.toUpperCase()}`);
+}
+async function copyHex(v, chip) {
+  const code = v.toUpperCase();
+  try { await navigator.clipboard.writeText(code); }
+  catch {
+    // The async clipboard can be refused (the window lost focus, a policy). Copying a selection still works from
+    // the click that got us here, so try that before giving up.
+    const area = Object.assign(document.createElement("textarea"), { value: code, readOnly: true });
+    area.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+    document.body.append(area);
+    area.select();
+    let copied = false;
+    try { copied = document.execCommand("copy"); } catch { copied = false; }
+    area.remove();
+    chip?.focus({ preventScroll: true });
+    if (!copied) { toast(`Couldn’t reach the clipboard. The colour code is ${code}.`, true); return; }
+  }
+  toast(`Copied ${code}`);
+}
 const stepNum = (v, spec) => {
   const step = +spec.step || 1;
   const lo = Number.isFinite(+spec.min) ? +spec.min : -Infinity;
@@ -34,9 +62,9 @@ export function fieldHTML(spec, value, prefix, opts = {}) {
   const colours = opts.colours ? `<button type="button" id="${id}-edit" data-edit-colour="${param}" class="text-link" aria-haspopup="dialog">${spec.type === "colors" ? "Edit palette" : "Edit colour"}</button>` : "";
   if (spec.type === "color") {
     value = /^#[0-9a-f]{6}$/i.test(value) ? value : "#ffffff";
-    return `<div class="field" data-param="${param}"><div class="lab"><span>${esc(spec.label)}</span>${opts.reset ? resetBtn(spec) : ""}${colours}</div>
+    return `<div class="field" data-param="${param}"><div class="lab"><span class="lab-name"><span>${esc(spec.label)}</span>${hexChip(value)}</span>${opts.reset ? resetBtn(spec) : ""}${colours}</div>
       <div class="color-row"><label class="swatch" style="background:${esc(value)}"><input type="color" id="${id}" value="${esc(value)}" aria-label="${esc(spec.label)}"></label>
-      <div class="quick">${QUICK.map((c) => `<button type="button" data-quick="${c}" style="background:${c}" aria-label="${c}" aria-pressed="${c === value}"></button>`).join("")}</div></div></div>`;
+      <div class="quick">${QUICK.map((c) => `<button type="button" data-quick="${c}" style="background:${c}" aria-label="${QUICK_NAMES[c] || c}" title="${QUICK_NAMES[c] || c}" aria-pressed="${c === value}"></button>`).join("")}</div></div></div>`;
   }
   if (spec.type === "colors") {
     value = (Array.isArray(value) ? value : []).map(c => /^#[0-9a-f]{6}$/i.test(c) ? c : "#ffffff");
@@ -71,8 +99,9 @@ export function wireFields(root, effect, params, onChange) {
     if (!box) continue;
     if (spec.type === "color") {
       const input = box.querySelector("input[type=color]");
-      const sync = (v) => { cur[spec.id] = v; input.value = v; input.parentElement.style.background = v;
+      const sync = (v) => { cur[spec.id] = v; input.value = v; input.parentElement.style.background = v; showHex(box.querySelector("[data-copy-hex]"), v);
         box.querySelectorAll("[data-quick]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.quick === v))); };
+      box.querySelector("[data-copy-hex]")?.addEventListener("click", (e) => copyHex(cur[spec.id] || input.value, e.currentTarget));
       input.addEventListener("input", () => { sync(input.value); send(); });
       box.querySelectorAll("[data-quick]").forEach((b) => b.addEventListener("click", () => { sync(b.dataset.quick); send(); }));
       box.querySelector("[data-reset]")?.addEventListener("click", () => { sync(spec.default); send(false); });

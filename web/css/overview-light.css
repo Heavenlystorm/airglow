@@ -47,13 +47,26 @@
 .tile.lit .gauge :is(.g-track, .g-fill) { transition: none; }
 
 /* Number: the figure and its caption keep the left of the tile, the line of light takes the right, from under
-   the title down to the edge. A tall tile has room to run the line across its whole width instead. */
+   the title down to the edge. When the figures need more than their share (a narrow tile, a wide unit like KiB/s)
+   the line starts where they end: --read-end, set by the page. It keeps at least 40px. A tall tile has room to run
+   the line across its whole width instead. */
+.tile-sensor:is(.s-spark, .s-ring) .readout { width: max-content; }   /* its own width, so --read-end is where the figures end */
+.tile-sensor:is(.s-spark, .s-ring) .readout .num { white-space: nowrap; }   /* rolling digits are separate boxes: never break between them */
 .light-spark { inset: clamp(32px, 23cqh, 58px) 0 0 auto; width: 58%; }
-@container (min-width: 420px) { .light-spark { width: 62%; } }
-.tile.lit.s-spark .minmax { max-width: 44%; white-space: normal; text-wrap: balance; line-height: 1.3; }
+.tile.lit.s-spark .light-spark { --spark-left: min(calc(100cqw - 40px), max(42cqw, calc(var(--read-end, 0px) + 12px))); left: var(--spark-left); width: auto; }
+.tile.lit.s-spark .minmax { max-width: calc(min(calc(100cqw - 40px), max(42cqw, calc(var(--read-end, 0px) + 12px))) - 26px); white-space: normal; text-wrap: balance; line-height: 1.3; }
+@container (min-width: 420px) {
+  .light-spark { width: 62%; }
+  .tile.lit.s-spark .light-spark { --spark-left: max(38cqw, calc(var(--read-end, 0px) + 12px)); }
+  .tile.lit.s-spark .minmax { max-width: calc(max(38cqw, calc(var(--read-end, 0px) + 12px)) - 26px); }
+}
+/* no room for a line beside the figures: the figures and the trend arrow say it alone (the detail view has the history) */
+.tile.lit.s-spark[data-cramped] .light-spark { visibility: hidden; }
+.tile.lit.s-spark[data-cramped] .minmax { max-width: none; }
 @container (min-height: 235px) {
-  .light-spark { inset: auto 0 0 0; width: auto; height: min(56%, calc(100cqh - 124px)); }
+  .light-spark, .tile.lit.s-spark .light-spark { inset: auto 0 0 0; width: auto; height: min(56%, calc(100cqh - 124px)); }
   .tile.lit.s-spark .minmax { max-width: none; }
+  .tile.lit.s-spark[data-cramped] .light-spark { visibility: visible; }
 }
 .tile.missing .light-host { opacity: .25; }
 

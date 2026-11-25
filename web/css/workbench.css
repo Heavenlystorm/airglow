@@ -10,11 +10,15 @@
 .workbench .wb-feedback { color: var(--ink-2); font-size: 13px; min-height: 20px; }
 .workbench .wb-error { color: var(--hot); overflow-wrap: anywhere; }
 .workbench .wb-status-list { list-style: none; padding: 0; margin: 0; }
-.workbench .wb-status-row { display: grid; grid-template-columns: minmax(150px, 1fr) 115px minmax(170px, 1fr); align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--line-soft); }
+.workbench .wb-status-row { display: grid; grid-template-columns: minmax(150px, 1fr) 132px minmax(170px, 1fr); align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--line-soft); }
 .workbench .wb-resource, .workbench .wb-completion { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .workbench .wb-resource span, .workbench .wb-completion small { color: var(--ink-2); font-size: 12px; }
 .workbench .wb-completion > span { font-variant-numeric: tabular-nums; font-size: 13px; }
-.workbench .wb-state { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+/* each state reads as a badge: a dot and a tint in the state's own colour, so a failed row stands out in a long list */
+.workbench .wb-state { justify-self: start; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 9px 3px 8px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: color-mix(in srgb, currentColor 11%, transparent);
+  font-size: 12px; font-weight: 600; line-height: 1.3; white-space: nowrap; color: var(--ink-2); }
+.workbench .wb-state::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .workbench .wb-state[data-state="healthy"] { color: var(--ok); }
 .workbench .wb-state[data-state="pending"], .workbench .wb-state[data-state="stale"] { color: var(--warm); }
 .workbench .wb-state[data-state="failed"], .workbench .wb-completion .wb-error { color: var(--hot); }
@@ -69,3 +73,5 @@
   .workbench .wb-section-head .btn-row { width: 100%; }
   .workbench .wb-section-head .btn-row .btn { flex: 1; justify-content: center; }
 }
+/* the square-cornered designs keep their status badges square too */
+:is([data-design="ascii"], [data-design="amber"], [data-design="midnight"], [data-design="rim"], [data-design="darkroom"]) .workbench .wb-state { border-radius: 0; }

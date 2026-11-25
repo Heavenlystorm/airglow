@@ -44,7 +44,19 @@
 .curve-legend i { width: 9px; height: 9px; display: inline-block; border-radius: 50%; }
 .curve-live-key { background: var(--ink); }
 .curve-point-key { border: 2px solid var(--brass); }
+.curve-legend .curve-probe-key { width: 2px; height: 12px; border-radius: 1px; background: var(--ink-2); }
+/* the reading has nothing to say on a touch screen, where there is no pointer to follow */
+@media (hover: none) { .curve-legend > .curve-probe-item { display: none; } }
 .curve-commit { margin-left: auto; }
+/* the curve under the pointer: a guide and a dot, drawn under the points so they keep taking the pointer */
+.editor .probe { pointer-events: none; }
+.editor .probe-line { stroke: var(--ink-2); stroke-opacity: .55; stroke-width: 1; }
+.editor .probe-dot { fill: var(--ink); stroke: var(--scope-bg); stroke-width: 2; }
+@media (forced-colors: active) {
+  .editor .probe-line { stroke: CanvasText; stroke-opacity: 1; }
+  .editor .probe-dot { fill: CanvasText; stroke: Canvas; }
+  .curve-legend .curve-probe-key { forced-color-adjust: none; background: CanvasText; }
+}
 .st-home #st-motion-note { color: var(--ink-2); margin: 0 0 14px; }
 @container (max-width: 520px) {
   .effect-scope .stage-hint { flex-basis: 100%; text-align: left; }

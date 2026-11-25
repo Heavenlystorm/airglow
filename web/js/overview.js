@@ -389,6 +389,38 @@ function sensorMarkup(t) {
     <div class="light-host light-spark"></div>`;
 }
 
+// Where a Number or Gauge tile's figures end (number, unit, trend arrow), as --read-end on the tile. The line of light
+// and the ring start after it, so a narrow tile (a window snapped to half the screen) never draws its picture over
+// the number. A Number tile too narrow for any line beside its figures is marked cramped and shows the figures
+// alone. The observer reports after layout, when the figures or the tile change size: nothing is measured on the
+// two-second updates.
+const SPARK_ROOM = 40;                 // the narrowest line of light worth drawing, in pixels
+const readouts = globalThis.ResizeObserver ? new ResizeObserver((entries) => {
+  for (const { target } of entries) {
+    const tile = target.isConnected && target.closest(".tile"), readout = tile?._readout;
+    if (!readout?.isConnected) continue;
+    const end = Math.ceil(readout.offsetLeft + readout.offsetWidth);
+    tile.style.setProperty("--read-end", `${end}px`);
+    tile.toggleAttribute("data-cramped", tile.classList.contains("s-spark") && tile.clientWidth - end - 12 < SPARK_ROOM);
+  }
+}) : null;
+function watchReadout(el, t) {
+  if (el._readout) { readouts?.unobserve(el._readout); readouts?.unobserve(el); }
+  el._readout = null;
+  el.style.removeProperty("--read-end");
+  el.removeAttribute("data-cramped");
+  if (t.type !== "sensor" || (t.style !== "spark" && t.style !== "ring")) return;
+  el._readout = el.querySelector(".readout");
+  if (el._readout) { readouts?.observe(el._readout); readouts?.observe(el); }
+}
+function releaseTile(el) {
+  el._rig?.dispose(); el._light?.dispose();
+  if (el._readout) { readouts?.unobserve(el._readout); readouts?.unobserve(el); }
+  const row = el.querySelector?.(".pcards");
+  if (row?._wired) profileRows?.unobserve(row);
+  el.remove();
+}
+
 // The canvas a sensor tile draws its light on. The SVG paths beside it stay as the forced-colours fallback.
 function mountLight(el, t) {
   const host = el.querySelector(".light-host");
@@ -425,7 +457,7 @@ function controlMarkup(t) {
 
 function mount(t) {
   let el = O.els.get(t.id);
-  if (el && el._type !== t.type) { el._rig?.dispose(); el._light?.dispose(); el.remove(); O.els.delete(t.id); el = null; }
+  if (el && el._type !== t.type) { releaseTile(el); O.els.delete(t.id); el = null; }
   const sig = t.type === "sensor" ? `${t.style}|${t.sensors.length}` : t.type;
   if (!el) { el = shell(t); el._type = t.type; O.els.set(t.id, el); }
   if (el._sig !== sig) {
@@ -435,6 +467,7 @@ function mount(t) {
     el.className = `tile tile-${t.type}${t.type === "sensor" ? ` s-${t.style}` : ""}`;
     el.querySelector(".tile-inner").innerHTML = t.type === "sensor" ? sensorMarkup(t) : controlMarkup(t);
     el._paths = null;
+    watchReadout(el, t);
     if (t.type === "sensor") { el._light = mountLight(el, t); el.classList.toggle("lit", !!el._light); }
     if (t.type === "lighting") {
       wireLighting(el);
@@ -741,12 +774,41 @@ function wireLighting(el) {
   });
 }
 
+// A one-row Profiles tile runs its cards in a single row that scrolls sideways (overview-canvas.css), so a narrow
+// window or a long list never hides a profile out of reach. The row fades at each edge with more cards past it, and
+// the wheel scrolls it: a mouse has no other easy way sideways. At either end the wheel scrolls the page as usual.
+const profileRows = globalThis.ResizeObserver ? new ResizeObserver((entries) => { for (const { target } of entries) markProfileRow(target); }) : null;
+function markProfileRow(row) {
+  if (!row.isConnected) return;
+  const sideways = row.closest(".tile")?.dataset.h === "1" && row.scrollWidth > row.clientWidth + 1;
+  const start = sideways && row.scrollLeft > 1, end = sideways && row.scrollLeft + row.clientWidth < row.scrollWidth - 1;
+  const more = start && end ? "both" : start ? "start" : end ? "end" : "";
+  if ((row.dataset.more || "") === more) return;
+  if (more) row.dataset.more = more; else delete row.dataset.more;
+}
+function wireProfileRow(row) {
+  if (row._wired || !row.addEventListener) return;
+  row._wired = true;
+  row.addEventListener("scroll", () => markProfileRow(row), { passive: true });
+  row.addEventListener("wheel", (e) => {
+    if (O.editing || !row.dataset.more || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * row.clientWidth : e.deltaY;
+    const room = dy > 0 ? row.scrollWidth - row.clientWidth - row.scrollLeft : row.scrollLeft;
+    if (room < 1) return;
+    e.preventDefault();
+    row.scrollLeft += dy;
+  }, { passive: false });
+  profileRows?.observe(row);
+}
+
 function updatePresets(el) {
-  const active = S.state.active_preset;
-  setHTML(el.querySelector(".chips"), S.presets.length
+  const active = S.state.active_preset, row = el.querySelector(".chips"), before = row?._html;
+  if (row) wireProfileRow(row);
+  setHTML(row, S.presets.length
     ? S.presets.map((p) => `<button class="pcard" data-preset="${esc(p.id)}" aria-pressed="${p.id === active}" style="--pc:${sceneColor(p)};--ps:${sceneSwatch(p)}">
         <span class="pswatch">${profileArtwork(p)}</span><span class="pname">${esc(p.name)}</span><span class="pmeta">${esc(effectName(p.effect))}${p.id === active ? (R.stale ? " · Last selected" : " · Selected") : ""}</span></button>`).join("")
     : `<div class="profile-empty"><span>No saved profiles</span><button class="text-link" data-save-profile>Save current settings</button></div>`);
+  if (row && row._html !== before) markProfileRow(row);    // measured only when the cards changed
 }
 
 function fanSummary(fans) {
@@ -810,7 +872,7 @@ export function renderOverview() {
   $("#ov-empty").hidden = O.editing || O.layout.tiles.length > 0;
   const wanted = O.layout.tiles.map((t) => mount(t));
   // drop removed tiles, keep the order of the layout
-  for (const [id, el] of O.els) if (!tileById(id)) { el._rig?.dispose(); el._light?.dispose(); el.remove(); O.els.delete(id); }
+  for (const [id, el] of O.els) if (!tileById(id)) { releaseTile(el); O.els.delete(id); }
   if (!O.drag) wanted.forEach((el, i) => { if (g.children[i] !== el) g.insertBefore(el, g.children[i] || null); });
   let add = $("#ov-add");
   if (O.editing && !add) {

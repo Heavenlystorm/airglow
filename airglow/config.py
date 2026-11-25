@@ -89,11 +89,12 @@ DEFAULT_OVERVIEW = {
         {"id": "presets", "type": "presets", "w": 2, "h": 1},
         {"id": "power", "type": "sensor", "sensors": ["auto/cpu_power", "auto/gpu_power"], "style": "graph", "w": 2, "h": 1,
          "label": "CPU + GPU power"},
-        {"id": "fans", "type": "fans", "w": 1, "h": 1},
+        # the last two rows close evenly on the four-column grid, instead of leaving one tile on a row of its own
+        {"id": "fans", "type": "fans", "w": 2, "h": 1},
         {"id": "ram", "type": "sensor", "sensors": ["auto/ram_load"], "style": "bar", "w": 1, "h": 1},
         {"id": "ssd-temp", "type": "sensor", "sensors": ["auto/ssd_temp"], "style": "spark", "w": 1, "h": 1},
-        {"id": "net-down", "type": "sensor", "sensors": ["auto/net_down"], "style": "spark", "w": 1, "h": 1},
-        {"id": "cost", "type": "sensor", "sensors": ["app/energy_cost"], "style": "spark", "w": 1, "h": 1},
+        {"id": "net-down", "type": "sensor", "sensors": ["auto/net_down"], "style": "spark", "w": 2, "h": 1},
+        {"id": "cost", "type": "sensor", "sensors": ["app/energy_cost"], "style": "spark", "w": 2, "h": 1},
     ],
     "pins": ["auto/cpu_temp", "auto/gpu_temp"],
 }

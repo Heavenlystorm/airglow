@@ -46,7 +46,7 @@ function renderReadouts() {
 const ED = { W: 900, H: 400, L: 52, R: 884, T: 16, B: 362, tMin: 20, tMax: 100 };
 const ex = (t) => ED.L + ((t - ED.tMin) / (ED.tMax - ED.tMin)) * (ED.R - ED.L);
 const ey = (d) => ED.B - (d / 100) * (ED.B - ED.T);
-const E = { curve: null, draft: null, sel: null, drag: null, drawn: "", reviewing: false, expected: null };
+const E = { curve: null, draft: null, sel: null, drag: null, drawn: "", reviewing: false, expected: null, probe: null };
 const curveSaves = new Map();
 const saved = () => S.curves.curves[E.curve];
 const dirty = () => E.draft && JSON.stringify(E.draft) !== JSON.stringify(saved());
@@ -62,6 +62,44 @@ function showPoint() {
   const point = E.draft?.[E.sel];
   $("#curve-point-label").textContent = point ? `Point ${E.sel + 1}` : "Curve point";
   $("#curve-point").textContent = point ? `${fmtTemp(point[0])} · ${point[1]}%` : "Select a point";
+}
+
+// Reading the curve under the pointer: a guide at that temperature and a dot where the (draft) curve crosses it.
+// The exact numbers go in the fixed legend, like the live request and the selected point, never in the chart.
+// It lives outside the redrawn markup: each redraw puts it back and reads the (possibly edited) curve again.
+let probeEl = null;
+function showProbe() {
+  const out = $("#curve-probe"), t = E.probe;
+  if (t == null || E.drag || !E.draft) {
+    probeEl?.remove();
+    probeEl = null;
+    if (out) out.textContent = "Point at the chart";
+    return;
+  }
+  const svg = $("#editor"), d = Math.round(interpolateCurve(E.draft, t));
+  if (!probeEl) {
+    probeEl = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    probeEl.setAttribute("class", "probe");
+    probeEl.setAttribute("aria-hidden", "true");
+    probeEl.innerHTML = `<line class="probe-line"/><circle class="probe-dot" r="5"/>`;
+  }
+  // under the points, so a point being hovered or dragged stays on top and keeps taking the pointer; a redraw of the
+  // chart detaches the group, and this puts it back
+  const g = probeEl, first = svg.querySelector(".pt");
+  if (g.parentNode !== svg || g.nextSibling !== first) svg.insertBefore(g, first);
+  const x = ex(t).toFixed(1), y = ey(d).toFixed(1), line = g.firstChild;
+  line.setAttribute("x1", x); line.setAttribute("x2", x); line.setAttribute("y1", ED.T); line.setAttribute("y2", ED.B);
+  g.lastChild.setAttribute("cx", x); g.lastChild.setAttribute("cy", y);
+  if (out) out.textContent = `${fmtTemp(t)} · ${d}%`;
+}
+
+function probeAt(e) {
+  const [x, y] = svgPoint(e);
+  const inside = x >= ED.L && x <= ED.R && y >= ED.T && y <= ED.B && !e.target.closest?.(".pt");
+  const t = inside ? Math.round(ED.tMin + ((x - ED.L) / (ED.R - ED.L)) * (ED.tMax - ED.tMin)) : null;
+  if (t === E.probe) return;
+  E.probe = t;
+  showProbe();
 }
 
 function renderEditor() {
@@ -115,6 +153,7 @@ function renderEditor() {
     g += `<circle class="pt${E.sel === i ? " sel" : ""}" data-i="${i}" cx="${ex(t)}" cy="${ey(d)}" r="8" tabindex="0" role="slider" aria-label="Point ${i + 1}" aria-valuenow="${d}" aria-valuetext="${fmtTemp(t)}, ${d} percent" aria-valuemin="${minDuty}" aria-valuemax="100"/>`;
   });
   setHTML($("#editor"), g);
+  showProbe();
   if (focusPt != null && E.sel === focusPt) $(`#editor .pt[data-i="${focusPt}"]`)?.focus({ preventScroll: true });
   $("#curve-save").disabled = !dirty();
   $("#curve-discard").disabled = !dirty();
@@ -165,7 +204,11 @@ function wireEditor() {
     E.drag = { i: +c.dataset.i }; E.sel = E.drag.i;
     svg.setPointerCapture(e.pointerId); renderEditor();
   });
-  svg.addEventListener("pointermove", (e) => { if (E.drag) { movePoint(E.drag.i, ...fromSvg(svgPoint(e))); renderEditor(); } });
+  svg.addEventListener("pointermove", (e) => {
+    if (E.drag) { movePoint(E.drag.i, ...fromSvg(svgPoint(e))); renderEditor(); }
+    else if (e.pointerType !== "touch") probeAt(e);       // a finger has no hover: touching the chart selects instead
+  });
+  svg.addEventListener("pointerleave", () => { if (E.probe != null) { E.probe = null; showProbe(); } });
   const end = () => { if (E.drag) { E.drag = null; renderEditor(); $(`#editor .pt[data-i="${E.sel}"]`)?.focus(); } };
   svg.addEventListener("pointerup", end);
   svg.addEventListener("pointercancel", end);

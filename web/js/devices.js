@@ -1,6 +1,6 @@
 // Devices screen: every device and its zones (LED counts, shape, colour order, identify), and OpenRGB setup.
 
-import { $, $$, S, emit, esc, fail, on, post, refreshZones, setHTML, toast } from "./core.js";
+import { $, $$, S, emit, esc, fail, get, on, post, refreshZones, setHTML, toast } from "./core.js";
 import { fieldHTML, wireFields } from "./lighting.js";
 
 let current = null;              // selected device id, or "openrgb"
@@ -200,16 +200,20 @@ function paintStrips() {
     const count = Math.floor((hex?.length || 0) / 6);
     for (let i = 0; i < cells.length; i++) {
       const sample = count > cells.length ? Math.round(i * (count - 1) / Math.max(1, cells.length - 1)) : i;
-      cells[i].style.background = sample < count ? `#${hex.slice(sample * 6, sample * 6 + 6)}` : "";
+      const colour = sample < count ? `#${hex.slice(sample * 6, sample * 6 + 6)}` : "";
+      // --led drives the cell and its glow; an unlit LED (black, or nothing sent) stays the dark socket colour
+      if (colour && colour !== "#000000") cells[i].style.setProperty("--led", colour);
+      else cells[i].style.removeProperty("--led");
     }
   }
 }
 
-// LED frames arrive on the live stream (live.js) while this view is showing.
+// LED frames arrive on the live stream (live.js) while this view is showing. Keep every frame, even one that lands
+// before the view is shown: the stream only sends a frame when the colours change, so a still effect (Solid, Off)
+// sends a single frame right as the stream opens. Dropping it left every strip dark until the effect changed.
 function onLiveFrames(f) {
-  if ($('[data-view="devices"]').hidden) return;
-  frames = f.zones;
-  paintStrips();
+  frames = f.zones || {};
+  if (!$('[data-view="devices"]').hidden) paintStrips();
 }
 
 export function renderDevices() {
@@ -272,4 +276,9 @@ export function initDevices() {
   on("state", () => { if (!$('[data-view="devices"]').hidden) renderList(); });
   on("zones", () => { if (!$('[data-view="devices"]').hidden) renderDevices(); });
   on("frames:live", onLiveFrames);
+  // This screen loads on first visit, often long after the stream sent the one frame a still effect produces (the
+  // Overview's lighting tile keeps the stream open with frames). Ask once for the current frame so the strips are
+  // lit straight away; a live frame that wins the race is newer, so the answer is then ignored.
+  const seeded = frames;
+  get("/api/frames").then((f) => { if (frames === seeded) onLiveFrames(f); }).catch(() => {});
 }
