@@ -3398,7 +3398,14 @@ fn view_settings_appearance<'a>(
                         appr.overview_stage_animated,
                         Message::ToggleOverviewStageAnimation
                     ),
-                    text("Animate Overview canvas").size(12).font(font),
+                    column![
+                        text("Lighting canvas animation").size(12).font(font),
+                        text("Toggles only the Overview lighting canvas without affecting other tiles")
+                            .size(10.5)
+                            .font(font)
+                            .color(theme::rgb(p.ink_3)),
+                    ]
+                    .spacing(1),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),

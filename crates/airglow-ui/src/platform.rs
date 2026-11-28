@@ -27,6 +27,8 @@ mod imp {
 
     const ERROR_ALREADY_EXISTS: u32 = 183;
     const WAIT_OBJECT_0: u32 = 0;
+    const ASFW_ANY: u32 = 0xFFFF_FFFF;
+    const UOI_NAME: i32 = 2;
 
     const MOD_ALT: u32 = 0x0001;
     const MOD_CONTROL: u32 = 0x0002;
@@ -130,6 +132,15 @@ mod imp {
             w_param: usize,
             l_param: isize,
         ) -> i32;
+        fn AllowSetForegroundWindow(dw_process_id: u32) -> i32;
+        fn GetThreadDesktop(dw_thread_id: u32) -> Handle;
+        fn GetUserObjectInformationW(
+            h_obj: Handle,
+            n_index: i32,
+            pv_info: *mut core::ffi::c_void,
+            n_length: u32,
+            lpn_length_needed: *mut u32,
+        ) -> i32;
     }
 
     #[link(name = "comdlg32")]
@@ -149,6 +160,65 @@ mod imp {
         Some(String::from_utf16_lossy(&buf[..len]))
     }
 
+    pub(super) fn single_instance_object_names(desktop_name: Option<&str>) -> (String, String) {
+        let trimmed = desktop_name.map(str::trim).unwrap_or("");
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+            return (
+                "Local\\AirglowSingleInstanceMutex".to_string(),
+                "Local\\AirglowShowWindowEvent".to_string(),
+            );
+        }
+        let sanitized: String = trimmed
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .take(48)
+            .collect();
+        if sanitized.is_empty() {
+            return (
+                "Local\\AirglowSingleInstanceMutex".to_string(),
+                "Local\\AirglowShowWindowEvent".to_string(),
+            );
+        }
+        (
+            format!("Local\\AirglowSingleInstanceMutex_{sanitized}"),
+            format!("Local\\AirglowShowWindowEvent_{sanitized}"),
+        )
+    }
+
+    fn current_desktop_name() -> Option<String> {
+        let desktop = unsafe { GetThreadDesktop(GetCurrentThreadId()) };
+        if desktop == 0 {
+            return None;
+        }
+        let mut needed: u32 = 0;
+        let _ = unsafe {
+            GetUserObjectInformationW(desktop, UOI_NAME, std::ptr::null_mut(), 0, &mut needed)
+        };
+        if needed < 2 {
+            return None;
+        }
+        let mut buf = vec![0u16; (needed as usize).div_ceil(2)];
+        let ok = unsafe {
+            GetUserObjectInformationW(
+                desktop,
+                UOI_NAME,
+                buf.as_mut_ptr().cast(),
+                (buf.len() * 2) as u32,
+                &mut needed,
+            )
+        };
+        if ok == 0 {
+            return None;
+        }
+        decode_wide_null(&buf)
+    }
+
     pub struct SingleInstanceGuard {
         mutex: Handle,
         show_event: Handle,
@@ -158,8 +228,10 @@ mod imp {
 
     impl SingleInstanceGuard {
         pub fn acquire(signal_existing_to_show: bool) -> SingleInstanceResult {
-            let mutex_name = to_wide_null("Local\\AirglowSingleInstanceMutex");
-            let event_name = to_wide_null("Local\\AirglowShowWindowEvent");
+            let (mutex_str, event_str) =
+                single_instance_object_names(current_desktop_name().as_deref());
+            let mutex_name = to_wide_null(&mutex_str);
+            let event_name = to_wide_null(&event_str);
 
             let mutex = unsafe { CreateMutexW(std::ptr::null_mut(), 0, mutex_name.as_ptr()) };
             if mutex == 0 {
@@ -176,6 +248,7 @@ mod imp {
             if already_exists {
                 if signal_existing_to_show && show_event != 0 {
                     unsafe {
+                        let _ = AllowSetForegroundWindow(ASFW_ANY);
                         SetEvent(show_event);
                     }
                 }
@@ -419,5 +492,20 @@ mod tests {
             Some(r"C:\Users\demo\backup.json")
         );
         assert_eq!(super::imp::decode_wide_null(&[0u16; 8]), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn single_instance_names_scope_non_default_desktops() {
+        for name in [None, Some(""), Some("Default"), Some("default")] {
+            let (m, e) = super::imp::single_instance_object_names(name);
+            assert_eq!(m, "Local\\AirglowSingleInstanceMutex");
+            assert_eq!(e, "Local\\AirglowShowWindowEvent");
+        }
+        let (m, e) = super::imp::single_instance_object_names(Some("exebox-ABC/123"));
+        assert_eq!(m, "Local\\AirglowSingleInstanceMutex_exebox-ABC_123");
+        assert_eq!(e, "Local\\AirglowShowWindowEvent_exebox-ABC_123");
+        assert!(!m.strip_prefix("Local\\").unwrap().contains('\\'));
+        assert!(!e.strip_prefix("Local\\").unwrap().contains('\\'));
     }
 }

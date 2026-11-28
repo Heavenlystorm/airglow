@@ -233,9 +233,9 @@ pub enum Message {
     Noop,
     Tick,
     WindowOpened(window::Id),
+    WindowClosed(window::Id),
     WindowResized(window::Id, Size),
     WindowMoved(Point),
-    WindowFocusChanged(bool),
     CloseRequested(window::Id),
     SelectTab(Tab),
     SetPulseSpan(PulseSpan),
@@ -456,7 +456,6 @@ pub struct AirglowApp {
     window_pos: Option<Point>,
     saved_window_size_phys: Option<(f32, f32)>,
     window_state_dirty_at: Option<Instant>,
-    window_focused: bool,
     pub approx_physical_width: f32,
     pub auto_scale: f32,
     pub applied_scale: f32,
@@ -724,7 +723,6 @@ impl AirglowApp {
             window_pos,
             saved_window_size_phys,
             window_state_dirty_at: None,
-            window_focused: true,
             approx_physical_width,
             auto_scale,
             applied_scale,
@@ -834,14 +832,8 @@ impl AirglowApp {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let overview_static = self.tab == Tab::Overview
-            && !self.theater_rig
-            && !self.compact_window
-            && !self.snapshot.config.appearance.overview_stage_animated;
         let tick_ms = if self.main_window.is_none() {
             300
-        } else if !self.window_focused || overview_static {
-            250
         } else if !self.theater_rig
             && !self.compact_window
             && (matches!(self.tab, Tab::Automations | Tab::Devices)
@@ -859,10 +851,9 @@ impl AirglowApp {
         Subscription::batch([
             time::every(Duration::from_millis(tick_ms)).map(|_| Message::Tick),
             window::close_requests().map(Message::CloseRequested),
+            window::close_events().map(Message::WindowClosed),
             window::resize_events().map(|(id, size)| Message::WindowResized(id, size)),
             iced::event::listen_with(|ev, status, _win| match ev {
-                Event::Window(window::Event::Focused) => Some(Message::WindowFocusChanged(true)),
-                Event::Window(window::Event::Unfocused) => Some(Message::WindowFocusChanged(false)),
                 Event::Window(window::Event::Moved(pos)) => Some(Message::WindowMoved(pos)),
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     match key {
@@ -1340,11 +1331,23 @@ impl AirglowApp {
                 if self.start_fullscreen && !self.compact_window {
                     self.start_fullscreen = false;
                     self.is_fullscreen = true;
-                    return window::set_mode(id, window::Mode::Fullscreen);
+                    return Task::batch([
+                        window::set_mode(id, window::Mode::Fullscreen),
+                        window::gain_focus(id),
+                    ]);
                 }
                 if self.start_maximized && !self.compact_window {
                     self.start_maximized = false;
-                    return window::maximize(id, true);
+                    return Task::batch([
+                        window::maximize(id, true),
+                        window::gain_focus(id),
+                    ]);
+                }
+                window::gain_focus(id)
+            }
+            Message::WindowClosed(id) => {
+                if self.main_window == Some(id) {
+                    self.main_window = None;
                 }
                 Task::none()
             }
@@ -1383,10 +1386,6 @@ impl AirglowApp {
                     self.window_pos = Some(pos);
                     self.window_state_dirty_at = Some(Instant::now());
                 }
-                Task::none()
-            }
-            Message::WindowFocusChanged(focused) => {
-                self.window_focused = focused;
                 Task::none()
             }
             Message::CloseRequested(id) => {
@@ -2037,9 +2036,9 @@ impl AirglowApp {
                 self.send_appearance(appr);
                 self.show_toast(
                     if on {
-                        "Overview lighting canvas: Live"
+                        "Lighting canvas animation: On"
                     } else {
-                        "Overview lighting canvas: Static (low GPU)"
+                        "Lighting canvas animation: Off"
                     },
                     self.current_accent_hex(),
                 );

@@ -1,5 +1,5 @@
 //! Native Windows system tray integration powered by Tauri's `tray-icon` + `muda`.
-//! Exposes Open, Compact Mini-Mode, Lights On, Overview Static Canvas toggle, Brightness presets,
+//! Exposes Open, Compact Mini-Mode, Lights On, Lighting Canvas Animation toggle, Brightness presets,
 //! Profiles/Effects/Fan Curves submenus with active checkmarks, Quit, live-tinted icon, and °C/°F tooltip.
 
 use airglow_core::effects::EffectId;
@@ -59,8 +59,8 @@ struct MenuBindings {
     compact_id: MenuId,
     lights_id: MenuId,
     lights_item: CheckMenuItem,
-    overview_static_id: MenuId,
-    overview_static_item: CheckMenuItem,
+    overview_anim_id: MenuId,
+    overview_anim_item: CheckMenuItem,
     quit_id: MenuId,
     brightness_items: Vec<(MenuId, u8, CheckMenuItem)>,
     preset_items: Vec<(MenuId, String, CheckMenuItem)>,
@@ -75,7 +75,7 @@ pub struct TrayController {
     last_tint_key: (u8, u8, u8),
     last_tooltip: String,
     last_lights_on: bool,
-    last_overview_static: bool,
+    last_overview_anim: bool,
     last_brightness_preset: u8,
     last_preset: Option<String>,
     last_effect: EffectId,
@@ -87,21 +87,21 @@ fn build_menu(presets: &[(String, String)], state: &TrayMenuState<'_>) -> (Menu,
     let open_item = MenuItem::new("Open Airglow", true, None);
     let compact_item = MenuItem::new("Compact Mini-Mode", true, None);
     let lights_item = CheckMenuItem::new("Lights On", true, state.lights_on, None);
-    let overview_static = !state.overview_stage_animated;
-    let overview_static_item =
-        CheckMenuItem::new("Overview Static Canvas (Low GPU)", true, overview_static, None);
+    let overview_anim = state.overview_stage_animated;
+    let overview_anim_item =
+        CheckMenuItem::new("Lighting Canvas Animation", true, overview_anim, None);
     let quit_item = MenuItem::new("Quit Airglow", true, None);
 
     let open_id = open_item.id().clone();
     let compact_id = compact_item.id().clone();
     let lights_id = lights_item.id().clone();
-    let overview_static_id = overview_static_item.id().clone();
+    let overview_anim_id = overview_anim_item.id().clone();
     let quit_id = quit_item.id().clone();
 
     let _ = menu.append(&open_item);
     let _ = menu.append(&compact_item);
     let _ = menu.append(&lights_item);
-    let _ = menu.append(&overview_static_item);
+    let _ = menu.append(&overview_anim_item);
     let _ = menu.append(&PredefinedMenuItem::separator());
 
     // Brightness submenu
@@ -160,8 +160,8 @@ fn build_menu(presets: &[(String, String)], state: &TrayMenuState<'_>) -> (Menu,
             compact_id,
             lights_id,
             lights_item,
-            overview_static_id,
-            overview_static_item,
+            overview_anim_id,
+            overview_anim_item,
             quit_id,
             brightness_items,
             preset_items,
@@ -190,7 +190,7 @@ impl TrayController {
             last_tint_key: (0, 0, 0),
             last_tooltip: "Airglow".to_string(),
             last_lights_on: state.lights_on,
-            last_overview_static: !state.overview_stage_animated,
+            last_overview_anim: state.overview_stage_animated,
             last_brightness_preset: nearest_brightness_preset(state.brightness),
             last_preset: state.active_preset.map(str::to_string),
             last_effect: state.active_effect,
@@ -199,7 +199,7 @@ impl TrayController {
     }
 
     pub fn sync_state(&mut self, presets: &[(String, String)], state: &TrayMenuState<'_>) {
-        let next_overview_static = !state.overview_stage_animated;
+        let next_overview_anim = state.overview_stage_animated;
         let next_bright = nearest_brightness_preset(state.brightness);
 
         if self.presets_snapshot != presets {
@@ -208,7 +208,7 @@ impl TrayController {
             self.bindings = bindings;
             self.tray.set_menu(Some(Box::new(menu)));
             self.last_lights_on = state.lights_on;
-            self.last_overview_static = next_overview_static;
+            self.last_overview_anim = next_overview_anim;
             self.last_brightness_preset = next_bright;
             self.last_preset = state.active_preset.map(str::to_string);
             self.last_effect = state.active_effect;
@@ -220,11 +220,11 @@ impl TrayController {
             self.last_lights_on = state.lights_on;
             self.bindings.lights_item.set_checked(state.lights_on);
         }
-        if self.last_overview_static != next_overview_static {
-            self.last_overview_static = next_overview_static;
+        if self.last_overview_anim != next_overview_anim {
+            self.last_overview_anim = next_overview_anim;
             self.bindings
-                .overview_static_item
-                .set_checked(next_overview_static);
+                .overview_anim_item
+                .set_checked(next_overview_anim);
         }
         if self.last_brightness_preset != next_bright {
             self.last_brightness_preset = next_bright;
@@ -273,7 +273,7 @@ impl TrayController {
                 actions.push(TrayAction::ToggleCompactMode);
             } else if ev.id == self.bindings.lights_id {
                 actions.push(TrayAction::ToggleLights);
-            } else if ev.id == self.bindings.overview_static_id {
+            } else if ev.id == self.bindings.overview_anim_id {
                 actions.push(TrayAction::ToggleOverviewStageAnimation);
             } else if ev.id == self.bindings.quit_id {
                 actions.push(TrayAction::Quit);

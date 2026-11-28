@@ -160,11 +160,11 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
 
     all.push(PaletteItem {
         title: if app.snapshot.config.appearance.overview_stage_animated {
-            "Pause Overview Lighting Canvas Animation".to_string()
+            "Lighting Canvas Animation: Turn Off".to_string()
         } else {
-            "Resume Overview Lighting Canvas Animation".to_string()
+            "Lighting Canvas Animation: Turn On".to_string()
         },
-        subtitle: "Switch Overview rig preview between Live animation and low-GPU Static mode"
+        subtitle: "Toggles only the Overview lighting canvas animation without affecting other tiles"
             .to_string(),
         category: "Performance",
         icon: UiIcon::Sparkle,
@@ -940,7 +940,7 @@ pub fn view_customize_drawer<'a>(
                 appr.overview_stage_animated,
                 Message::ToggleOverviewStageAnimation
             ),
-            text("Overview canvas").size(11.5).font(font),
+            text("Lighting canvas animation").size(11.5).font(font),
         ]
         .spacing(6)
         .align_y(Alignment::Center),

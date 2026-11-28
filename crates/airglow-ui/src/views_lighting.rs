@@ -217,7 +217,6 @@ pub fn view_lighting<'a>(
         gpu_temp: app.snapshot.sensors.gpu_temp,
         ambient_rgb: app.snapshot.average_rgb,
         eyebrow: None,
-        animated: true,
     })
     .width(Length::Fill)
     .height(Length::Fixed(stage_h));
@@ -1702,7 +1701,6 @@ pub fn view_studio<'a>(
         gpu_temp: app.snapshot.sensors.gpu_temp,
         ambient_rgb: app.snapshot.average_rgb,
         eyebrow: None,
-        animated: true,
     })
     .width(Length::Fill)
     .height(Length::Fill);

@@ -3,7 +3,7 @@
 //! Compact Mini-Mode, and Fans view.
 
 use airglow_core::config::{
-    OverviewTile, OverviewTileKind, OverviewWorkspace, TempUnit, TileStyle,
+    DesignId, OverviewTile, OverviewTileKind, OverviewWorkspace, TempUnit, TileStyle,
 };
 use airglow_core::effects::{BlendMode, EffectId, HARMONIES, LayerKind};
 use airglow_core::sensors;
@@ -978,25 +978,29 @@ fn render_lighting_tile<'a>(
                         icon_canvas(
                             UiIcon::Sparkle,
                             theme::rgb(if appr.overview_stage_animated {
-                                p.brass_hi
+                                if p.is_light { p.brass } else { p.brass_hi }
                             } else {
                                 p.ink_3
                             }),
                             12.0,
                         ),
                         text(if appr.overview_stage_animated {
-                            "Live"
+                            "On"
                         } else {
-                            "Static"
+                            "Off"
                         })
                         .size(11.5)
-                        .font(font),
+                        .font(if appr.overview_stage_animated {
+                            theme::ui_semibold(t.design)
+                        } else {
+                            font
+                        }),
                     ]
                     .spacing(5)
                     .align_y(Alignment::Center),
                 )
                 .padding([4, 10])
-                .style(theme::masthead_pill_btn(t, !appr.overview_stage_animated))
+                .style(theme::masthead_pill_btn(t, appr.overview_stage_animated))
                 .on_press(Message::ToggleOverviewStageAnimation),
             )
             .push(
@@ -1029,36 +1033,153 @@ fn render_lighting_tile<'a>(
             );
     }
 
-    let stage = iced::widget::canvas(CaseStageCanvas {
-        frames: &app.snapshot.frames,
-        zone_overrides: &eff.zone_overrides,
-        palette: p,
-        accent_override: t.accent_override,
-        rig_style: appr.rig_style,
-        airflow_lines: appr.airflow_lines,
-        spinning_fans: appr.spinning_fans,
-        ambient_bloom: appr.ambient_bloom,
-        lights_on: eff.on,
-        show_labels: false,
-        arrange_mode: false,
-        selected_zone: None,
-        active_effect: eff.effect,
-        temp_unit: unit,
-        anim_t: if appr.overview_stage_animated {
-            app.anim_t
+    let active_effect_title = if eff.effect == EffectId::Studio {
+        eff.studio_stack.name.clone()
+    } else {
+        eff.effect.label().to_string()
+    };
+
+    let stage_el: Element<'a, Message> = if appr.overview_stage_animated {
+        let stage = iced::widget::canvas(CaseStageCanvas {
+            frames: &app.snapshot.frames,
+            zone_overrides: &eff.zone_overrides,
+            palette: p,
+            accent_override: t.accent_override,
+            rig_style: appr.rig_style,
+            airflow_lines: appr.airflow_lines,
+            spinning_fans: appr.spinning_fans,
+            ambient_bloom: appr.ambient_bloom,
+            lights_on: eff.on,
+            show_labels: false,
+            arrange_mode: false,
+            selected_zone: None,
+            active_effect: eff.effect,
+            temp_unit: unit,
+            anim_t: app.anim_t,
+            fan_duty: app.snapshot.fan_duty,
+            cpu_temp: s.cpu_temp,
+            gpu_temp: s.gpu_temp,
+            ambient_rgb: app.snapshot.average_rgb,
+            eyebrow: None,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
+        Element::from(stage).map(Message::Stage)
+    } else {
+        let swatches: Vec<[u8; 3]> = if eff.on {
+            let mut list = Vec::new();
+            let mut push_distinct = |c: [u8; 3]| {
+                if !list.contains(&c) {
+                    list.push(c);
+                }
+            };
+            push_distinct(eff.params.color);
+            push_distinct(eff.params.secondary);
+            let mut extra = 0usize;
+            for &c in &eff.params.colors {
+                if !list.contains(&c) {
+                    list.push(c);
+                    extra += 1;
+                    if extra >= 4 {
+                        break;
+                    }
+                }
+            }
+            list
         } else {
-            0.0
-        },
-        fan_duty: app.snapshot.fan_duty,
-        cpu_temp: s.cpu_temp,
-        gpu_temp: s.gpu_temp,
-        ambient_rgb: app.snapshot.average_rgb,
-        eyebrow: None,
-        animated: appr.overview_stage_animated,
-    })
-    .width(Length::Fill)
-    .height(Length::Fill);
-    let stage_el = Element::from(stage).map(Message::Stage);
+            let dormant = theme::hex_to_rgb_arr(theme::mix_hex(p.panel, p.ink_3, 0.25));
+            vec![dormant; 3]
+        };
+
+        let swatch_radius = if p.square_corners { 0.0 } else { 999.0 };
+        let swatch_border = if t.design == DesignId::Contrast {
+            theme::rgb(p.line)
+        } else if p.is_light {
+            iced::Color::from_rgba(0.11, 0.11, 0.09, 0.18)
+        } else {
+            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.16)
+        };
+        let mut swatch_row = row![].spacing(6).align_y(Alignment::Center);
+        for c in swatches {
+            let bg = iced::Color::from_rgb8(c[0], c[1], c[2]);
+            swatch_row = swatch_row.push(
+                container(Space::new().width(24).height(8)).style(move |_| {
+                    iced::widget::container::Style {
+                        background: Some(iced::Background::Color(bg)),
+                        border: iced::Border {
+                            color: swatch_border,
+                            width: 1.0,
+                            radius: iced::border::Radius::from(swatch_radius),
+                        },
+                        ..Default::default()
+                    }
+                }),
+            );
+        }
+
+        let active_zones = app
+            .snapshot
+            .config
+            .zones
+            .iter()
+            .filter(|z| z.enabled)
+            .count();
+        let total_leds: usize = app
+            .snapshot
+            .config
+            .zones
+            .iter()
+            .filter(|z| z.enabled)
+            .map(|z| z.layout.total_leds())
+            .sum();
+        let state_title = if eff.on {
+            active_effect_title.clone()
+        } else {
+            format!("{active_effect_title} · Off")
+        };
+
+        container(
+            column![
+                swatch_row,
+                text(truncate_str(&state_title, 28))
+                    .size(15)
+                    .font(theme::ui_semibold(t.design))
+                    .color(theme::rgb(if eff.on { p.ink } else { p.ink_2 })),
+                text(format!("{active_zones} zones · {total_leds} LEDs"))
+                    .size(12)
+                    .font(theme::mono_font())
+                    .color(theme::rgb(p.ink_2)),
+                text("Canvas animation off · hardware lighting stays live")
+                    .size(11.5)
+                    .font(font)
+                    .color(theme::rgb(p.ink_3)),
+                Space::new().height(2),
+                button(
+                    row![
+                        icon_canvas(
+                            UiIcon::Sparkle,
+                            theme::rgb(if p.is_light { p.brass } else { p.brass_hi }),
+                            12.0,
+                        ),
+                        text("Turn On")
+                            .size(11.5)
+                            .font(theme::ui_semibold(t.design)),
+                    ]
+                    .spacing(5)
+                    .align_y(Alignment::Center),
+                )
+                .padding([5, 13])
+                .style(theme::masthead_pill_btn(t, false))
+                .on_press(Message::ToggleOverviewStageAnimation),
+            ]
+            .spacing(6)
+            .align_x(Alignment::Center),
+        )
+        .padding([12, 16])
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into()
+    };
 
     let stage_well = container(stage_el)
         .width(Length::Fill)
@@ -1066,27 +1187,14 @@ fn render_lighting_tile<'a>(
         .clip(true)
         .style(theme::bento_stage_well_style(t));
 
-    let active_effect_title = if eff.effect == EffectId::Studio {
-        eff.studio_stack.name.clone()
+    let profile_subtitle = if let Some(rule_id) = &app.snapshot.automation_status.light_winner {
+        format!("Automation · {rule_id}")
+    } else if let Some(pid) = &app.snapshot.config.active_preset
+        && let Some(pr) = app.snapshot.config.presets.iter().find(|pr| &pr.id == pid)
+    {
+        format!("{} profile", pr.name)
     } else {
-        eff.effect.label().to_string()
-    };
-
-    let profile_subtitle = {
-        let base = if let Some(rule_id) = &app.snapshot.automation_status.light_winner {
-            format!("Automation · {rule_id}")
-        } else if let Some(pid) = &app.snapshot.config.active_preset
-            && let Some(pr) = app.snapshot.config.presets.iter().find(|pr| &pr.id == pid)
-        {
-            format!("{} profile", pr.name)
-        } else {
-            "Custom lighting".to_string()
-        };
-        if appr.overview_stage_animated {
-            base
-        } else {
-            format!("{base} · Static")
-        }
+        "Custom lighting".to_string()
     };
 
     let slider_w = if span >= 3 {
@@ -1523,8 +1631,7 @@ fn render_fans_tile<'a>(
         current_temp: app.snapshot.fan_temp,
         current_duty: app.snapshot.fan_duty as f32,
         phase: app.anim_t,
-        spinning: app.snapshot.config.appearance.spinning_fans
-            && app.snapshot.config.appearance.overview_stage_animated,
+        spinning: app.snapshot.config.appearance.spinning_fans,
         palette: p,
         accent_override: t.accent_override,
         show_halo: false,
@@ -2790,7 +2897,6 @@ pub fn view_theater_rig<'a>(
         gpu_temp: s.gpu_temp,
         ambient_rgb: app.snapshot.average_rgb,
         eyebrow: Some("AIRGLOW THEATER"),
-        animated: true,
     })
     .width(Length::Fill)
     .height(Length::Fill);
@@ -3029,7 +3135,6 @@ pub fn view_compact_companion<'a>(
         gpu_temp: s.gpu_temp,
         ambient_rgb: app.snapshot.average_rgb,
         eyebrow: Some("LIVING RIG"),
-        animated: true,
     })
     .width(Length::Fill)
     .height(Length::Fixed(148.0));
@@ -3633,7 +3738,6 @@ pub fn view_studio<'a>(
         gpu_temp: app.snapshot.sensors.gpu_temp,
         ambient_rgb: app.snapshot.average_rgb,
         eyebrow: Some("STUDIO LIVE RIG"),
-        animated: true,
     })
     .width(Length::Fill)
     .height(Length::Fill);
