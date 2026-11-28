@@ -1,0 +1,13 @@
+[package]
+name = "airglow-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+airglow-core = { path = "../airglow-core" }
+anyhow.workspace = true
+iced.workspace = true
+muda.workspace = true
+tokio.workspace = true
+tray-icon.workspace = true

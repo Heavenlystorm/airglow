@@ -1,5 +1,0 @@
-.audition-canvas { display: block; width: 100%; height: clamp(180px, 36vh, 340px); background: var(--void); border: 1px solid var(--edge-panel); border-radius: var(--r-panel); }
-.audition-inputs { color: var(--ink-3); font-size: 12px; }
-.audition-status { min-height: 1.5em; }
-.scene-audition .sheet-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-.scene-audition .btn-row { flex-wrap: wrap; }

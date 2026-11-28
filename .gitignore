@@ -1,14 +1,7 @@
-# build output
-dist/
-build/
-output/
-__pycache__/
-*.pyc
+/target
+**/*.rs.bk
+*.pdb
+*.exe
 *.log
-*.tmp
-
-# personal, never publish
-backup/
-legacy-v1/
-.claude/
-.superpowers/
+.DS_Store
+Thumbs.db
