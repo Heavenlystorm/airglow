@@ -164,7 +164,7 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
         } else {
             "Lighting Canvas Animation: Turn On".to_string()
         },
-        subtitle: "Toggles only the Overview lighting canvas animation without affecting other tiles"
+        subtitle: "Pause Overview lighting canvas animation while keeping the rig board & temps visible"
             .to_string(),
         category: "Performance",
         icon: UiIcon::Sparkle,

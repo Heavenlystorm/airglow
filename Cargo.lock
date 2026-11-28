@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "airglow-core"
-version = "2.2.2"
+version = "2.2.3"
 dependencies = [
  "anyhow",
  "hidapi",
@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "airglow-ui"
-version = "2.2.2"
+version = "2.2.3"
 dependencies = [
  "airglow-core",
  "anyhow",

@@ -3400,7 +3400,7 @@ fn view_settings_appearance<'a>(
                     ),
                     column![
                         text("Lighting canvas animation").size(12).font(font),
-                        text("Toggles only the Overview lighting canvas without affecting other tiles")
+                        text("Pauses Overview lighting animation while keeping the rig board & temps visible")
                             .size(10.5)
                             .font(font)
                             .color(theme::rgb(p.ink_3)),

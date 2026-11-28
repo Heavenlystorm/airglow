@@ -49,6 +49,7 @@ pub struct CaseStageCanvas<'a> {
     pub gpu_temp: Option<f32>,
     pub ambient_rgb: [u8; 3],
     pub eyebrow: Option<&'a str>,
+    pub animate_lighting: bool,
 }
 
 #[derive(Default)]
@@ -56,6 +57,8 @@ pub struct StageDragState {
     dragging: Option<(String, [f32; 2])>,
     static_cache: canvas::Cache,
     static_key: Cell<u64>,
+    board_overlay_cache: canvas::Cache,
+    board_overlay_key: Cell<u64>,
 }
 
 fn is_firefly_palette(p: DesignPalette) -> bool {
@@ -992,7 +995,7 @@ fn stage_static_hash(stage: &CaseStageCanvas<'_>, bounds: Rectangle) -> u64 {
     rig_style_id(stage.rig_style).hash(&mut h);
     stage.arrange_mode.hash(&mut h);
     stage.show_labels.hash(&mut h);
-    stage.spinning_fans.hash(&mut h);
+    (stage.spinning_fans && stage.animate_lighting).hash(&mut h);
     stage.eyebrow.is_some().hash(&mut h);
     stage.frames.len().hash(&mut h);
     for z in stage.frames {
@@ -1018,6 +1021,321 @@ fn stage_static_hash(stage: &CaseStageCanvas<'_>, bounds: Rectangle) -> u64 {
         ((ly * 1000.0).round() as i32).hash(&mut h);
     }
     h.finish()
+}
+
+fn stage_board_overlay_hash(
+    stage: &CaseStageCanvas<'_>,
+    bounds: Rectangle,
+    hovered_zone_id: Option<&str>,
+    hovered_pos: Option<Point>,
+) -> u64 {
+    let mut h = DefaultHasher::new();
+    ((bounds.width * 2.0).round() as i32).hash(&mut h);
+    ((bounds.height * 2.0).round() as i32).hash(&mut h);
+    stage.palette.ground.hash(&mut h);
+    stage.palette.panel.hash(&mut h);
+    stage.palette.raised.hash(&mut h);
+    stage.palette.well.hash(&mut h);
+    stage.palette.brass.hash(&mut h);
+    stage.palette.brass_hi.hash(&mut h);
+    stage.palette.ink.hash(&mut h);
+    stage.palette.ink_3.hash(&mut h);
+    stage.palette.square_corners.hash(&mut h);
+    stage.palette.radius_panel.to_bits().hash(&mut h);
+    stage.accent_override.hash(&mut h);
+    rig_style_id(stage.rig_style).hash(&mut h);
+    stage.ambient_bloom.hash(&mut h);
+    stage.show_labels.hash(&mut h);
+    matches!(stage.temp_unit, TempUnit::F).hash(&mut h);
+    stage.cpu_temp.map(|t| t.round() as i32).hash(&mut h);
+    stage.gpu_temp.map(|t| t.round() as i32).hash(&mut h);
+    hovered_zone_id.hash(&mut h);
+    if hovered_zone_id.is_some()
+        && let Some(hp) = hovered_pos
+    {
+        ((hp.x / 8.0).round() as i32).hash(&mut h);
+        ((hp.y / 8.0).round() as i32).hash(&mut h);
+    }
+    h.finish()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_board_temp_displays(
+    frame: &mut Frame,
+    p: DesignPalette,
+    firefly: bool,
+    accent: Color,
+    aio_c: Point,
+    aio_r: f32,
+    gpu_tl: Point,
+    gpu_w: f32,
+    gpu_h: f32,
+    s_fac: f32,
+    temp_unit: TempUnit,
+    cpu_temp: Option<f32>,
+    gpu_temp: Option<f32>,
+    ambient_bloom: bool,
+) {
+    let cpu_c = cpu_temp.unwrap_or(46.0);
+    let cpu_col = thermal_color_for_temp(cpu_c, firefly);
+    let lcd_r = (aio_r * 0.86).clamp(11.0, 48.0);
+    let bezel_w = (1.15 * s_fac.sqrt()).clamp(0.95, 2.2);
+
+    // Soft drop shadow + metallic outer bezel
+    frame.fill(
+        &Path::circle(Point::new(aio_c.x, aio_c.y + 1.5 * s_fac.sqrt()), aio_r + 1.0),
+        Color::from_rgba(0.02, 0.01, 0.05, 0.65),
+    );
+    frame.fill(&Path::circle(aio_c, aio_r), Color::from_rgb8(26, 22, 38));
+    frame.stroke(
+        &Path::circle(aio_c, aio_r),
+        Stroke::default()
+            .with_color(Color { a: 0.48, ..accent })
+            .with_width(bezel_w),
+    );
+    // Deep obsidian OLED display face + subtle symmetric inner rim
+    frame.fill(&Path::circle(aio_c, lcd_r), Color::from_rgb8(11, 9, 20));
+    frame.stroke(
+        &Path::circle(aio_c, lcd_r),
+        Stroke::default()
+            .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.12))
+            .with_width((0.8 * s_fac.sqrt()).clamp(0.7, 1.4)),
+    );
+    if ambient_bloom {
+        fill_radial_bloom(frame, aio_c, lcd_r * 1.18, cpu_col, 0.22, 3);
+    }
+    // Subtle top-left glass specular crescent
+    let glass_arc = Path::new(|b| {
+        b.arc(Arc {
+            center: aio_c,
+            radius: lcd_r * 0.72,
+            start_angle: iced::Radians(205.0_f32.to_radians()),
+            end_angle: iced::Radians(295.0_f32.to_radians()),
+        });
+    });
+    frame.stroke(
+        &glass_arc,
+        Stroke::default()
+            .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.15))
+            .with_width((1.2 * s_fac.sqrt()).clamp(0.9, 2.2))
+            .with_line_cap(LineCap::Round),
+    );
+    // 270° thermal progress ring around the OLED bezel
+    let temp_frac = ((cpu_c - 28.0) / 67.0).clamp(0.10, 1.0);
+    let arc_start = 135.0_f32.to_radians();
+    let arc_sweep = 270.0_f32.to_radians();
+    let ring_w = (2.0 * s_fac.sqrt()).clamp(1.3, 3.8);
+    let ring_r = (lcd_r - ring_w * 0.95).max(5.0);
+    let track_arc = Path::new(|b| {
+        b.arc(Arc {
+            center: aio_c,
+            radius: ring_r,
+            start_angle: iced::Radians(arc_start),
+            end_angle: iced::Radians(arc_start + arc_sweep),
+        });
+    });
+    frame.stroke(
+        &track_arc,
+        Stroke::default()
+            .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.20))
+            .with_width(ring_w * 0.90)
+            .with_line_cap(LineCap::Round),
+    );
+    let val_arc = Path::new(|b| {
+        b.arc(Arc {
+            center: aio_c,
+            radius: ring_r,
+            start_angle: iced::Radians(arc_start),
+            end_angle: iced::Radians(arc_start + arc_sweep * temp_frac),
+        });
+    });
+    frame.stroke(
+        &val_arc,
+        Stroke::default()
+            .with_color(cpu_col)
+            .with_width(ring_w)
+            .with_line_cap(LineCap::Round),
+    );
+    // Dead-centered glowing tabular CPU temperature digits scaled smoothly with OLED radius
+    let cpu_disp = format!("{:.0}°", temp_unit.convert(cpu_c));
+    let show_sub = lcd_r >= 19.0;
+    let font_sz = (lcd_r * if show_sub { 0.54 } else { 0.64 }).clamp(8.5, 25.0);
+    frame.fill_text(canvas::Text {
+        content: cpu_disp,
+        position: Point::new(aio_c.x, aio_c.y - if show_sub { lcd_r * 0.13 } else { 0.0 }),
+        color: mix_color(cpu_col, Color::WHITE, 0.62),
+        size: iced::Pixels(font_sz),
+        font: crate::theme::mono_font(),
+        align_x: iced::alignment::Horizontal::Center.into(),
+        align_y: iced::alignment::Vertical::Center,
+        ..canvas::Text::default()
+    });
+    if show_sub {
+        frame.fill_text(canvas::Text {
+            content: "CPU".to_string(),
+            position: Point::new(aio_c.x, aio_c.y + lcd_r * 0.42),
+            color: rgba(p.ink_3, 0.84),
+            size: iced::Pixels((lcd_r * 0.27).clamp(6.8, 12.0)),
+            font: crate::theme::mono_font(),
+            align_x: iced::alignment::Horizontal::Center.into(),
+            align_y: iced::alignment::Vertical::Center,
+            ..canvas::Text::default()
+        });
+    }
+
+    // GPU shroud live GPU temp micro-badge (scales smoothly from Mini-Mode to Fullscreen!)
+    if let Some(gpu_c) = gpu_temp
+        && gpu_w > 54.0
+        && gpu_h > 12.0
+    {
+        let gpu_col = thermal_color_for_temp(gpu_c, firefly);
+        let g_txt = if gpu_w > 106.0 {
+            format!("GPU {:.0}°", temp_unit.convert(gpu_c))
+        } else {
+            format!("{:.0}°", temp_unit.convert(gpu_c))
+        };
+        let bh = (gpu_h * 0.72).clamp(13.0, 30.0);
+        let font_sz = (bh * 0.54).clamp(8.2, 15.0);
+        let dot_r = (bh * 0.13).clamp(1.8, 3.6);
+        let pad_l = (bh * 0.36).clamp(5.0, 11.0);
+        let bw = (g_txt.len() as f32 * font_sz * 0.62 + pad_l + dot_r * 2.8 + 8.0)
+            .min(gpu_w * 0.58);
+        let bx = gpu_tl.x + gpu_w - bw - (6.0 * s_fac.sqrt()).clamp(4.0, 12.0);
+        let by = gpu_tl.y + (gpu_h - bh) * 0.5;
+        let b_rad = (bh * 0.28).clamp(3.5, 8.0);
+        let badge = Path::rounded_rectangle(
+            Point::new(bx, by),
+            Size::new(bw, bh),
+            iced::border::Radius::from(b_rad),
+        );
+        frame.fill(
+            &Path::rounded_rectangle(
+                Point::new(bx, by + 1.5),
+                Size::new(bw, bh),
+                iced::border::Radius::from(b_rad),
+            ),
+            Color::from_rgba(0.02, 0.01, 0.05, 0.55),
+        );
+        frame.fill(&badge, Color::from_rgba8(14, 11, 24, 0.95));
+        frame.stroke(
+            &badge,
+            Stroke::default()
+                .with_color(Color { a: 0.65, ..gpu_col })
+                .with_width((0.95 * s_fac.sqrt()).clamp(0.85, 1.8)),
+        );
+        frame.fill(
+            &Path::circle(Point::new(bx + pad_l, by + bh * 0.5), dot_r),
+            gpu_col,
+        );
+        frame.fill_text(canvas::Text {
+            content: g_txt,
+            position: Point::new(bx + pad_l + dot_r * 2.2, by + bh * 0.5),
+            color: mix_color(gpu_col, Color::WHITE, 0.62),
+            size: iced::Pixels(font_sz),
+            font: crate::theme::mono_font(),
+            align_y: iced::alignment::Vertical::Center,
+            ..canvas::Text::default()
+        });
+    }
+}
+
+fn draw_hover_zone_outline(
+    frame: &mut Frame,
+    zone: &ZoneFrame,
+    ox: f32,
+    oy: f32,
+    scale: f32,
+    accent: Color,
+) {
+    if let Some((bx0, by0, bx1, by1)) = zone_bounds(zone) {
+        let pad = 8.0;
+        let rx = ox + bx0 * scale - pad;
+        let ry = oy + by0 * scale - pad;
+        let rw = (bx1 - bx0) * scale + pad * 2.0;
+        let rh = (by1 - by0) * scale + pad * 2.0;
+        let sel_rect = Path::rounded_rectangle(
+            Point::new(rx, ry),
+            Size::new(rw.max(16.0), rh.max(16.0)),
+            iced::border::Radius::from(6.0),
+        );
+        frame.stroke(
+            &sel_rect,
+            Stroke::default()
+                .with_color(Color { a: 0.78, ..accent })
+                .with_width(1.3),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_hover_zone_tooltip(
+    frame: &mut Frame,
+    bounds: Rectangle,
+    hz: &ZoneFrame,
+    hpos: Point,
+    eff_label: Option<&str>,
+    swatch_col: Color,
+    p: DesignPalette,
+    firefly: bool,
+    accent: Color,
+) {
+    let tip = if let Some(eff) = eff_label {
+        format!("{} · {} LEDs · {}", hz.zone_name, hz.colors.len(), eff)
+    } else {
+        format!("{} · {} LEDs", hz.zone_name, hz.colors.len())
+    };
+    let pill_h = 22.0;
+    let pill_w = (tip.len() as f32 * 5.9 + 26.0).clamp(110.0, bounds.width - 16.0);
+    let tx = if hpos.x + 14.0 + pill_w > bounds.width - 8.0 {
+        (hpos.x - pill_w - 12.0).max(8.0)
+    } else {
+        hpos.x + 14.0
+    };
+    let ty = if hpos.y - pill_h - 10.0 < 8.0 {
+        (hpos.y + 14.0).min(bounds.height - pill_h - 8.0)
+    } else {
+        hpos.y - pill_h - 10.0
+    };
+    let pill_rect = Path::rounded_rectangle(
+        Point::new(tx, ty),
+        Size::new(pill_w, pill_h),
+        iced::border::Radius::from(7.0),
+    );
+    frame.fill(
+        &Path::rounded_rectangle(
+            Point::new(tx, ty + 2.0),
+            Size::new(pill_w, pill_h),
+            iced::border::Radius::from(7.0),
+        ),
+        Color::from_rgba(0.02, 0.01, 0.05, 0.45),
+    );
+    let pill_bg = if firefly {
+        Color::from_rgba8(44, 34, 58, 0.93)
+    } else {
+        rgba(p.raised, 0.94)
+    };
+    frame.fill(&pill_rect, pill_bg);
+    frame.stroke(
+        &pill_rect,
+        Stroke::default()
+            .with_color(Color { a: 0.72, ..accent })
+            .with_width(1.1),
+    );
+    frame.fill(
+        &Path::circle(Point::new(tx + 10.0, ty + pill_h * 0.5), 3.6),
+        swatch_col,
+    );
+    frame.fill_text(canvas::Text {
+        content: tip,
+        position: Point::new(tx + 18.0, ty + 4.5),
+        color: if firefly {
+            Color::from_rgb8(255, 244, 228)
+        } else {
+            rgb(p.ink)
+        },
+        size: iced::Pixels(10.5),
+        ..canvas::Text::default()
+    });
 }
 
 impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
@@ -1170,6 +1488,8 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
             state.static_cache.clear();
             state.static_key.set(key);
         }
+
+        let eff_spinning_fans = self.spinning_fans && self.animate_lighting;
 
         let static_geom = state.static_cache.draw(renderer, bounds.size(), |frame| {
             let architectural = self.rig_style == RigStyle::Architectural;
@@ -1821,7 +2141,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                             Color::from_rgba(1.0, 0.97, 1.0, 0.03),
                         );
                     }
-                    if !self.spinning_fans && !minimal {
+                    if !eff_spinning_fans && !minimal {
                         draw_fan_blades(frame, center, r, 0.35, firefly, architectural, s_fac);
                     }
                     frame.stroke(
@@ -1841,7 +2161,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                                 .with_width((0.8 * s_fac.sqrt()).clamp(0.7, 1.4)),
                         );
                     }
-                    if !self.spinning_fans {
+                    if !eff_spinning_fans {
                         frame.fill(
                             &Path::circle(center, hub_r),
                             if firefly {
@@ -1981,6 +2301,52 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
             }
         });
 
+        let dynamic_geom = if !self.animate_lighting {
+            let overlay_key = stage_board_overlay_hash(
+                self,
+                bounds,
+                hovered_zone.map(|hz| hz.zone_id.as_str()),
+                hovered_pos,
+            );
+            if state.board_overlay_key.get() != overlay_key {
+                state.board_overlay_cache.clear();
+                state.board_overlay_key.set(overlay_key);
+            }
+            state.board_overlay_cache.draw(renderer, bounds.size(), |frame| {
+                if !self.show_labels {
+                    draw_board_temp_displays(
+                        frame,
+                        p,
+                        firefly,
+                        accent,
+                        aio_c,
+                        aio_r,
+                        gpu_tl,
+                        gpu_w,
+                        gpu_h,
+                        s_fac,
+                        self.temp_unit,
+                        self.cpu_temp,
+                        self.gpu_temp,
+                        self.ambient_bloom,
+                    );
+                }
+                if let (Some(hz), Some(hpos)) = (hovered_zone, hovered_pos) {
+                    draw_hover_zone_outline(frame, hz, ox, oy, scale, accent);
+                    draw_hover_zone_tooltip(
+                        frame,
+                        bounds,
+                        hz,
+                        hpos,
+                        None,
+                        accent,
+                        p,
+                        firefly,
+                        accent,
+                    );
+                }
+            })
+        } else {
         let mut dynamic_frame = Frame::new(renderer, bounds.size());
         let frame = &mut dynamic_frame;
         let architectural = self.rig_style == RigStyle::Architectural;
@@ -2439,7 +2805,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
             }
 
             // Selected or Hovered zone outline
-            if (is_selected || is_hovered)
+            if is_selected
                 && let Some((bx0, by0, bx1, by1)) = zone_bounds(zone)
             {
                 let pad = 8.0;
@@ -2452,33 +2818,26 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                     Size::new(rw.max(16.0), rh.max(16.0)),
                     iced::border::Radius::from(6.0),
                 );
-                if is_selected {
-                    let pulse = 0.65 + 0.30 * (self.anim_t * 3.2).sin();
-                    frame.stroke(
-                        &sel_rect,
-                        Stroke {
-                            style: canvas::Style::Solid(Color {
-                                a: pulse,
-                                ..accent_hi
-                            }),
-                            width: 1.5,
-                            line_cap: LineCap::Round,
-                            line_join: LineJoin::Round,
-                            line_dash: LineDash {
-                                segments: &[5.0, 4.0],
-                                offset: 0,
-                            },
+                let pulse = 0.65 + 0.30 * (self.anim_t * 3.2).sin();
+                frame.stroke(
+                    &sel_rect,
+                    Stroke {
+                        style: canvas::Style::Solid(Color {
+                            a: pulse,
+                            ..accent_hi
+                        }),
+                        width: 1.5,
+                        line_cap: LineCap::Round,
+                        line_join: LineJoin::Round,
+                        line_dash: LineDash {
+                            segments: &[5.0, 4.0],
+                            offset: 0,
                         },
-                    );
-                } else {
-                    // Hover Zone X-Ray crisp accent highlight outline
-                    frame.stroke(
-                        &sel_rect,
-                        Stroke::default()
-                            .with_color(Color { a: 0.78, ..accent })
-                            .with_width(1.3),
-                    );
-                }
+                    },
+                );
+            } else if is_hovered {
+                // Hover Zone X-Ray crisp accent highlight outline
+                draw_hover_zone_outline(frame, zone, ox, oy, scale, accent);
             }
 
             if self.arrange_mode
@@ -2630,167 +2989,22 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
         // 5b. Living Mode AIO LCD Pump Screen & GPU Temp Micro-Badge (drawn ABOVE ribbons & hoses;
         // suppressed when `show_labels == true` on Lighting tab so zone labels stay 100% uncluttered!)
         if self.rig_style == RigStyle::Living && !self.show_labels {
-            let cpu_c = self.cpu_temp.unwrap_or(46.0);
-            let cpu_col = thermal_color_for_temp(cpu_c, firefly);
-            let lcd_r = (aio_r * 0.86).clamp(11.0, 48.0);
-            let bezel_w = (1.15 * s_fac.sqrt()).clamp(0.95, 2.2);
-
-            // Soft drop shadow + metallic outer bezel
-            frame.fill(
-                &Path::circle(Point::new(aio_c.x, aio_c.y + 1.5 * s_fac.sqrt()), aio_r + 1.0),
-                Color::from_rgba(0.02, 0.01, 0.05, 0.65),
+            draw_board_temp_displays(
+                frame,
+                p,
+                firefly,
+                accent,
+                aio_c,
+                aio_r,
+                gpu_tl,
+                gpu_w,
+                gpu_h,
+                s_fac,
+                self.temp_unit,
+                self.cpu_temp,
+                self.gpu_temp,
+                self.ambient_bloom,
             );
-            frame.fill(&Path::circle(aio_c, aio_r), Color::from_rgb8(26, 22, 38));
-            frame.stroke(
-                &Path::circle(aio_c, aio_r),
-                Stroke::default()
-                    .with_color(Color { a: 0.48, ..accent })
-                    .with_width(bezel_w),
-            );
-            // Deep obsidian OLED display face + subtle symmetric inner rim
-            frame.fill(&Path::circle(aio_c, lcd_r), Color::from_rgb8(11, 9, 20));
-            frame.stroke(
-                &Path::circle(aio_c, lcd_r),
-                Stroke::default()
-                    .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.12))
-                    .with_width((0.8 * s_fac.sqrt()).clamp(0.7, 1.4)),
-            );
-            if self.ambient_bloom {
-                fill_radial_bloom(frame, aio_c, lcd_r * 1.18, cpu_col, 0.22, 3);
-            }
-            // Subtle top-left glass specular crescent
-            let glass_arc = Path::new(|b| {
-                b.arc(Arc {
-                    center: aio_c,
-                    radius: lcd_r * 0.72,
-                    start_angle: iced::Radians(205.0_f32.to_radians()),
-                    end_angle: iced::Radians(295.0_f32.to_radians()),
-                });
-            });
-            frame.stroke(
-                &glass_arc,
-                Stroke::default()
-                    .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.15))
-                    .with_width((1.2 * s_fac.sqrt()).clamp(0.9, 2.2))
-                    .with_line_cap(LineCap::Round),
-            );
-            // 270° thermal progress ring around the OLED bezel
-            let temp_frac = ((cpu_c - 28.0) / 67.0).clamp(0.10, 1.0);
-            let arc_start = 135.0_f32.to_radians();
-            let arc_sweep = 270.0_f32.to_radians();
-            let ring_w = (2.0 * s_fac.sqrt()).clamp(1.3, 3.8);
-            let ring_r = (lcd_r - ring_w * 0.95).max(5.0);
-            let track_arc = Path::new(|b| {
-                b.arc(Arc {
-                    center: aio_c,
-                    radius: ring_r,
-                    start_angle: iced::Radians(arc_start),
-                    end_angle: iced::Radians(arc_start + arc_sweep),
-                });
-            });
-            frame.stroke(
-                &track_arc,
-                Stroke::default()
-                    .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.20))
-                    .with_width(ring_w * 0.90)
-                    .with_line_cap(LineCap::Round),
-            );
-            let val_arc = Path::new(|b| {
-                b.arc(Arc {
-                    center: aio_c,
-                    radius: ring_r,
-                    start_angle: iced::Radians(arc_start),
-                    end_angle: iced::Radians(arc_start + arc_sweep * temp_frac),
-                });
-            });
-            frame.stroke(
-                &val_arc,
-                Stroke::default()
-                    .with_color(cpu_col)
-                    .with_width(ring_w)
-                    .with_line_cap(LineCap::Round),
-            );
-            // Dead-centered glowing tabular CPU temperature digits scaled smoothly with OLED radius
-            let cpu_disp = format!("{:.0}°", self.temp_unit.convert(cpu_c));
-            let show_sub = lcd_r >= 19.0;
-            let font_sz = (lcd_r * if show_sub { 0.54 } else { 0.64 }).clamp(8.5, 25.0);
-            frame.fill_text(canvas::Text {
-                content: cpu_disp,
-                position: Point::new(aio_c.x, aio_c.y - if show_sub { lcd_r * 0.13 } else { 0.0 }),
-                color: mix_color(cpu_col, Color::WHITE, 0.62),
-                size: iced::Pixels(font_sz),
-                font: crate::theme::mono_font(),
-                align_x: iced::alignment::Horizontal::Center.into(),
-                align_y: iced::alignment::Vertical::Center,
-                ..canvas::Text::default()
-            });
-            if show_sub {
-                frame.fill_text(canvas::Text {
-                    content: "CPU".to_string(),
-                    position: Point::new(aio_c.x, aio_c.y + lcd_r * 0.42),
-                    color: rgba(p.ink_3, 0.84),
-                    size: iced::Pixels((lcd_r * 0.27).clamp(6.8, 12.0)),
-                    font: crate::theme::mono_font(),
-                    align_x: iced::alignment::Horizontal::Center.into(),
-                    align_y: iced::alignment::Vertical::Center,
-                    ..canvas::Text::default()
-                });
-            }
-
-            // GPU shroud live GPU temp micro-badge (scales smoothly from Mini-Mode to Fullscreen!)
-            if let Some(gpu_c) = self.gpu_temp
-                && gpu_w > 54.0
-                && gpu_h > 12.0
-            {
-                let gpu_col = thermal_color_for_temp(gpu_c, firefly);
-                let g_txt = if gpu_w > 106.0 {
-                    format!("GPU {:.0}°", self.temp_unit.convert(gpu_c))
-                } else {
-                    format!("{:.0}°", self.temp_unit.convert(gpu_c))
-                };
-                let bh = (gpu_h * 0.72).clamp(13.0, 30.0);
-                let font_sz = (bh * 0.54).clamp(8.2, 15.0);
-                let dot_r = (bh * 0.13).clamp(1.8, 3.6);
-                let pad_l = (bh * 0.36).clamp(5.0, 11.0);
-                let bw = (g_txt.len() as f32 * font_sz * 0.62 + pad_l + dot_r * 2.8 + 8.0)
-                    .min(gpu_w * 0.58);
-                let bx = gpu_tl.x + gpu_w - bw - (6.0 * s_fac.sqrt()).clamp(4.0, 12.0);
-                let by = gpu_tl.y + (gpu_h - bh) * 0.5;
-                let b_rad = (bh * 0.28).clamp(3.5, 8.0);
-                let badge = Path::rounded_rectangle(
-                    Point::new(bx, by),
-                    Size::new(bw, bh),
-                    iced::border::Radius::from(b_rad),
-                );
-                frame.fill(
-                    &Path::rounded_rectangle(
-                        Point::new(bx, by + 1.5),
-                        Size::new(bw, bh),
-                        iced::border::Radius::from(b_rad),
-                    ),
-                    Color::from_rgba(0.02, 0.01, 0.05, 0.55),
-                );
-                frame.fill(&badge, Color::from_rgba8(14, 11, 24, 0.95));
-                frame.stroke(
-                    &badge,
-                    Stroke::default()
-                        .with_color(Color { a: 0.65, ..gpu_col })
-                        .with_width((0.95 * s_fac.sqrt()).clamp(0.85, 1.8)),
-                );
-                frame.fill(
-                    &Path::circle(Point::new(bx + pad_l, by + bh * 0.5), dot_r),
-                    gpu_col,
-                );
-                frame.fill_text(canvas::Text {
-                    content: g_txt,
-                    position: Point::new(bx + pad_l + dot_r * 2.2, by + bh * 0.5),
-                    color: mix_color(gpu_col, Color::WHITE, 0.62),
-                    size: iced::Pixels(font_sz),
-                    font: crate::theme::mono_font(),
-                    align_y: iced::alignment::Vertical::Center,
-                    ..canvas::Text::default()
-                });
-            }
         }
 
         // 6. Arrange Mode Snap Crosshairs (within 0.03 canvas units of another zone's X or Y center)
@@ -2857,72 +3071,22 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                 .get(&hz.zone_id)
                 .map(|ov| ov.effect.label())
                 .unwrap_or_else(|| self.active_effect.label());
-            let tip = format!(
-                "{} · {} LEDs · {}",
-                hz.zone_name,
-                hz.colors.len(),
-                eff_label
-            );
-            let pill_h = 22.0;
-            let pill_w = (tip.len() as f32 * 5.9 + 26.0).clamp(110.0, bounds.width - 16.0);
-            let tx = if hpos.x + 14.0 + pill_w > bounds.width - 8.0 {
-                (hpos.x - pill_w - 12.0).max(8.0)
-            } else {
-                hpos.x + 14.0
-            };
-            let ty = if hpos.y - pill_h - 10.0 < 8.0 {
-                (hpos.y + 14.0).min(bounds.height - pill_h - 8.0)
-            } else {
-                hpos.y - pill_h - 10.0
-            };
-            let pill_rect = Path::rounded_rectangle(
-                Point::new(tx, ty),
-                Size::new(pill_w, pill_h),
-                iced::border::Radius::from(7.0),
-            );
-            // Soft drop shadow
-            frame.fill(
-                &Path::rounded_rectangle(
-                    Point::new(tx, ty + 2.0),
-                    Size::new(pill_w, pill_h),
-                    iced::border::Radius::from(7.0),
-                ),
-                Color::from_rgba(0.02, 0.01, 0.05, 0.45),
-            );
-            // Frosted-plum glass fill
-            let pill_bg = if firefly {
-                Color::from_rgba8(44, 34, 58, 0.93)
-            } else {
-                rgba(p.raised, 0.94)
-            };
-            frame.fill(&pill_rect, pill_bg);
-            frame.stroke(
-                &pill_rect,
-                Stroke::default()
-                    .with_color(Color { a: 0.72, ..accent })
-                    .with_width(1.1),
-            );
-            // Live average zone color dot
             let swatch_col = if self.lights_on && hz.enabled {
                 zone_average_color(hz)
             } else {
                 rgb(p.ink_3)
             };
-            frame.fill(
-                &Path::circle(Point::new(tx + 10.0, ty + pill_h * 0.5), 3.6),
+            draw_hover_zone_tooltip(
+                frame,
+                bounds,
+                hz,
+                hpos,
+                Some(eff_label),
                 swatch_col,
+                p,
+                firefly,
+                accent,
             );
-            frame.fill_text(canvas::Text {
-                content: tip,
-                position: Point::new(tx + 18.0, ty + 4.5),
-                color: if firefly {
-                    Color::from_rgb8(255, 244, 228)
-                } else {
-                    rgb(p.ink)
-                },
-                size: iced::Pixels(10.5),
-                ..canvas::Text::default()
-            });
         }
 
         // 8. Optional Overview "LIVING RIG" top glass eyebrow caption
@@ -2970,7 +3134,8 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                 ..canvas::Text::default()
             });
         }
-        let dynamic_geom = dynamic_frame.into_geometry();
+        dynamic_frame.into_geometry()
+        };
 
         vec![static_geom, dynamic_geom]
     }
