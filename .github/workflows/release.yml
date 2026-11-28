@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v2.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Windows x64 Release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run workspace tests
+        run: cargo test --locked --workspace
+
+      - name: Build release binary
+        run: cargo build --locked --release -p airglow-ui
+
+      - name: Package release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "${{ inputs.tag }}"
+          } else {
+            "${{ github.ref_name }}"
+          }
+          $ver = $tag.TrimStart("v")
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "RELEASE_VER=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          $dist = "dist"
+          $portable = Join-Path $dist "portable"
+          New-Item -ItemType Directory -Force -Path $portable | Out-Null
+
+          Copy-Item "target\release\airglow-ui.exe" (Join-Path $dist "Airglow.exe") -Force
+          Copy-Item "target\release\airglow-ui.exe" (Join-Path $portable "Airglow.exe") -Force
+          Copy-Item "airglow.ico" (Join-Path $portable "airglow.ico") -Force
+          Copy-Item "README.md" (Join-Path $portable "README.md") -Force
+          Copy-Item "LICENSE" (Join-Path $portable "LICENSE") -Force
+
+          $zipName = "Airglow-$ver-windows-x64-portable.zip"
+          $zipPath = Join-Path $dist $zipName
+          Compress-Archive -Path "$portable\*" -DestinationPath $zipPath -Force
+
+          $hashes = @(
+            "$((Get-FileHash (Join-Path $dist 'Airglow.exe') -Algorithm SHA256).Hash.ToLower())  Airglow.exe",
+            "$((Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower())  $zipName"
+          )
+          $hashes | Set-Content -Path (Join-Path $dist "SHA256SUMS.txt") -Encoding ascii
+          "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          Get-ChildItem $dist -File | Format-Table Name, Length -AutoSize
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = $env:RELEASE_TAG
+          $ver = $env:RELEASE_VER
+          $zip = "dist\$($env:ZIP_NAME)"
+          $notesFile = "docs\RELEASE_NOTES_$tag.md"
+          $isPrerelease = $tag -match "-(alpha|beta|rc)"
+
+          $args = @(
+            "release", "create", $tag,
+            "dist\Airglow.exe",
+            $zip,
+            "dist\SHA256SUMS.txt",
+            "--title", "Airglow $ver",
+            "--latest"
+          )
+          if ($isPrerelease) {
+            $args += "--prerelease"
+          }
+          if (Test-Path $notesFile) {
+            $args += @("--notes-file", $notesFile)
+          } else {
+            $args += "--generate-notes"
+          }
+
+          gh @args
