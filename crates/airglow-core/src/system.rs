@@ -2,6 +2,7 @@
 //! idle time & workstation lock detection (`system.py`), Start-with-Windows autostart toggle
 //! (`autostart.py`), and privacy-scrubbed diagnostics report export (`diagnostics.py`).
 
+use crate::config::{AppConfig, default_data_dir};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -989,6 +990,123 @@ pub fn apply_window_titlebar_theme(
     false
 }
 
+// ------------------------------------------------------------------ Rig Config Backup & Shell Open
+
+fn preferred_backup_dir() -> PathBuf {
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        let desktop = PathBuf::from(profile).join("Desktop");
+        if desktop.is_dir() {
+            return desktop;
+        }
+    }
+    default_data_dir()
+}
+
+/// Exports the full `AppConfig` as a timestamped `airglow-rig-backup-*.json` bundle to the
+/// user's Desktop (falling back to Airglow's config folder) and returns the saved file path.
+pub fn export_rig_bundle(cfg: &AppConfig) -> Result<PathBuf> {
+    let dir = preferred_backup_dir();
+    export_rig_bundle_to_dir(cfg, &dir)
+}
+
+/// Exports the full `AppConfig` as a timestamped `airglow-rig-backup-*.json` bundle into `dir`.
+pub fn export_rig_bundle_to_dir(cfg: &AppConfig, dir: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(dir).context("create rig backup directory")?;
+    let (stamp, created_iso) = local_timestamp_compact();
+    let bundle = json!({
+        "format": "airglow-rig-bundle",
+        "version": 1,
+        "app_version": env!("CARGO_PKG_VERSION"),
+        "created": created_iso,
+        "config": cfg,
+    });
+    let pretty = serde_json::to_string_pretty(&bundle).context("serialize rig backup")?;
+    let path = dir.join(format!("airglow-rig-backup-{stamp}.json"));
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, pretty).context("write temp rig backup")?;
+    fs::rename(&tmp, &path).context("save rig backup")?;
+    Ok(path)
+}
+
+/// Imports an `AppConfig` from either an `airglow-rig-bundle` backup JSON or a raw `config.json`,
+/// normalizing all fields before returning.
+pub fn import_rig_bundle(path: &Path) -> Result<AppConfig> {
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("read rig backup {}", path.display()))?;
+    let val: Value = serde_json::from_str(&raw).context("parse rig backup JSON")?;
+    let mut cfg: AppConfig = if let Some(inner) = val.get("config") {
+        serde_json::from_value(inner.clone()).context("decode rig backup config payload")?
+    } else {
+        serde_json::from_value(val).context("decode raw Airglow config JSON")?
+    };
+    cfg.normalize();
+    Ok(cfg)
+}
+
+#[cfg(windows)]
+fn shell_open_path_or_url(target: &str) -> Result<()> {
+    const SW_SHOWNORMAL: i32 = 1;
+    #[link(name = "shell32")]
+    unsafe extern "system" {
+        fn ShellExecuteW(
+            hwnd: *mut core::ffi::c_void,
+            lp_operation: *const u16,
+            lp_file: *const u16,
+            lp_parameters: *const u16,
+            lp_directory: *const u16,
+            n_show_cmd: i32,
+        ) -> isize;
+    }
+    let op = to_wide_null("open");
+    let file = to_wide_null(target);
+    let rc = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            op.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if rc <= 32 {
+        bail!("ShellExecuteW failed with code {rc}");
+    }
+    Ok(())
+}
+
+/// Opens an `http://` or `https://` URL in the user's default web browser.
+pub fn open_url(url: &str) -> Result<()> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        bail!("Only http:// and https:// URLs can be opened");
+    }
+    #[cfg(windows)]
+    {
+        shell_open_path_or_url(trimmed)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = trimmed;
+        bail!("open_url is only supported on Windows")
+    }
+}
+
+/// Opens Airglow's `%APPDATA%\Airglow-rs` config folder in Windows Explorer.
+pub fn open_config_folder() -> Result<()> {
+    let dir = default_data_dir();
+    fs::create_dir_all(&dir).context("ensure config folder exists")?;
+    #[cfg(windows)]
+    {
+        shell_open_path_or_url(&dir.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+        bail!("open_config_folder is only supported on Windows")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1090,5 +1208,50 @@ mod tests {
         assert_eq!(rgb_to_colorref([0x00, 0xff, 0x00]), 0x0000_ff00);
         assert_eq!(rgb_to_colorref([0x00, 0x00, 0xff]), 0x00ff_0000);
         assert_eq!(rgb_to_colorref([0xf4, 0x8f, 0xb1]), 0x00b1_8ff4);
+    }
+
+    #[test]
+    fn rig_bundle_export_and_import_roundtrip_and_raw_fallback() {
+        let dir = std::env::temp_dir().join(format!(
+            "airglow_bundle_test_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+
+        let mut cfg = AppConfig::default();
+        cfg.fullscreen_fill_width = true;
+        cfg.update_channel = crate::config::UpdateChannel::Beta;
+        let ws_id = cfg.create_workspace("Studio Backup", Some("quiet-studio"));
+        cfg.add_overview_tile(crate::config::OverviewTileKind::NetUp);
+
+        let exported = export_rig_bundle_to_dir(&cfg, &dir).expect("export rig bundle");
+        assert!(exported.is_file());
+        assert!(
+            exported
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("airglow-rig-backup-")
+        );
+
+        let imported = import_rig_bundle(&exported).expect("import rig bundle");
+        assert_eq!(imported, cfg);
+        assert_eq!(imported.active_workspace_id, ws_id);
+
+        // Also supports raw AppConfig JSON and normalizes empty workspaces
+        let mut raw_cfg = AppConfig::default();
+        raw_cfg.overview_workspaces.clear();
+        raw_cfg.active_workspace_id = "missing".to_string();
+        let raw_path = dir.join("raw-config.json");
+        fs::write(&raw_path, serde_json::to_string_pretty(&raw_cfg).unwrap()).unwrap();
+        let restored = import_rig_bundle(&raw_path).expect("import raw config");
+        assert_eq!(restored.overview_workspaces.len(), 1);
+        assert_eq!(restored.active_workspace_id, "default");
+
+        // Reject unsafe URL schemes
+        assert!(open_url("file:///C:/Windows/System32/cmd.exe").is_err());
+        assert!(open_url("javascript:alert(1)").is_err());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

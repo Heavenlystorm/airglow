@@ -173,8 +173,25 @@ fn sample_point_at_frac(pts: &[Point], frac: f32) -> Option<Point> {
     ))
 }
 
-/// Renders Airglow's signature Living-Light curve (smooth monotonic cubic Bezier, vertical wash,
-/// 3-pass neon tube bloom, pale white inner core, traveling shimmer glint, glowing live head + ripple).
+#[allow(dead_code)]
+fn draw_dotted_guide(frame: &mut Frame, x0: f32, x1: f32, y: f32, color: Color) {
+    frame.stroke(
+        &Path::line(Point::new(x0, y), Point::new(x1, y)),
+        Stroke {
+            style: canvas::Style::Solid(color),
+            width: 1.0,
+            line_dash: LineDash {
+                segments: &[2.5, 4.5],
+                offset: 0,
+            },
+            ..Stroke::default()
+        },
+    );
+}
+
+/// Renders Airglow's signature Living-Light curve (smooth monotonic cubic Bezier, rich 3-stop
+/// vertical wash, 3-pass neon tube bloom, pale white inner core, traveling shimmer glint,
+/// optional responsive peak pip, and glowing live head + ripple).
 #[allow(clippy::too_many_arguments)]
 fn draw_living_light_series(
     frame: &mut Frame,
@@ -195,20 +212,29 @@ fn draw_living_light_series(
         return;
     }
 
-    // 1. Vertical gradient area wash under curve
+    let plot_h = (plot_bottom - plot_top).max(12.0);
+    let orb_scale = ((plot_h / 54.0).sqrt() * (plot_w / 180.0).clamp(0.75, 1.35).sqrt())
+        .clamp(0.82, 1.75);
+
+    // 1. Rich 3-stop vertical gradient area wash under curve
     if fill_alpha > 0.005 {
         let area = build_smooth_curve_path(pts, Some(plot_bottom));
         let wash = gradient::Linear::new(Point::new(0.0, plot_top), Point::new(0.0, plot_bottom))
             .add_stop(0.0, Color { a: fill_alpha, ..col })
+            .add_stop(0.58, Color { a: fill_alpha * 0.36, ..col })
             .add_stop(1.0, Color { a: 0.0, ..col });
         frame.fill(&area, Fill::from(Gradient::Linear(wash)));
     }
 
     let curve = build_smooth_curve_path(pts, None);
 
-    // 2. 3-pass soft neon bloom
+    // 2. 3-pass soft neon bloom (responsive to container size)
     if glow_strength > 0.05 {
-        for &(w, a) in &[(11.0_f32, 0.05_f32), (6.5, 0.10), (3.6, 0.20)] {
+        for &(w, a) in &[
+            (11.0_f32 * orb_scale, 0.052_f32),
+            (6.4 * orb_scale, 0.105),
+            (3.5 * orb_scale, 0.21),
+        ] {
             frame.stroke(
                 &curve,
                 Stroke {
@@ -247,7 +273,7 @@ fn draw_living_light_series(
             &curve,
             Stroke {
                 style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.34 * glow_strength)),
-                width: 0.85,
+                width: (0.85 * orb_scale.sqrt()).clamp(0.75, 1.35),
                 line_cap: LineCap::Round,
                 line_join: LineJoin::Round,
                 ..Stroke::default()
@@ -282,32 +308,69 @@ fn draw_living_light_series(
         }
     }
 
-    // 6. Glowing live head + expanding ripple ring
+    // 5b. Subtle peak marker orb on wide / tall graphs (when peak isn't the live head)
+    if show_ripple && pts.len() >= 6 && plot_w >= 165.0 && plot_h >= 40.0 {
+        let mut peak_idx = 0usize;
+        let mut peak_y = f32::INFINITY;
+        for (i, pt) in pts.iter().enumerate() {
+            if pt.y < peak_y {
+                peak_y = pt.y;
+                peak_idx = i;
+            }
+        }
+        if peak_idx > 0 && peak_idx + 1 < pts.len() {
+            let peak_pt = pts[peak_idx];
+            let peak_r = (2.2 * orb_scale).clamp(1.8, 3.6);
+            if glow_strength > 0.05 {
+                fill_radial_glow(frame, peak_pt, peak_r * 3.0, col, 0.30 * glow_strength, 3);
+            }
+            frame.stroke(
+                &Path::circle(peak_pt, peak_r + 1.2),
+                Stroke::default()
+                    .with_color(Color { a: 0.45, ..col })
+                    .with_width(0.9),
+            );
+            frame.fill(
+                &Path::circle(peak_pt, peak_r * 0.78),
+                mix_color(col, Color::WHITE, 0.55),
+            );
+        }
+    }
+
+    // 6. Glowing live head + expanding ripple ring (scaled smoothly with tile size)
     let head = pts[pts.len() - 1];
+    let head_r = (2.6 * orb_scale).clamp(2.2, 4.4);
     if glow_strength > 0.05 {
-        fill_radial_glow(frame, head, 11.5, col, 0.55 * glow_strength, 5);
+        fill_radial_glow(
+            frame,
+            head,
+            (11.5 * orb_scale).clamp(9.0, 20.0),
+            col,
+            0.55 * glow_strength,
+            5,
+        );
         if show_ripple {
             let rip = (anim_t * 0.52).fract();
             if rip < 0.55 {
                 let k = rip / 0.55;
                 let ease = 1.0 - (1.0 - k).powi(3);
-                let rr = 3.0 + 10.5 * ease;
+                let rr = head_r + (10.5 * orb_scale) * ease;
                 let ra = (1.0 - k).powi(2) * 0.44 * glow_strength;
                 frame.stroke(
                     &Path::circle(head, rr),
                     Stroke::default()
                         .with_color(Color { a: ra, ..col })
-                        .with_width(1.0),
+                        .with_width((1.0 * orb_scale.sqrt()).clamp(0.9, 1.6)),
                 );
             }
         }
     }
     let core_col = if glow_strength > 0.05 {
-        mix_color(col, Color::WHITE, 0.70)
+        mix_color(col, Color::WHITE, 0.72)
     } else {
         col
     };
-    frame.fill(&Path::circle(head, 2.6), core_col);
+    frame.fill(&Path::circle(head, head_r), core_col);
 }
 
 /// Crisp horizon, planet limb, and layered luminous 557.7 nm airglow arc.
@@ -514,6 +577,7 @@ impl<Message> canvas::Program<Message> for HeaderGlowCanvas {
 
 /// Overview Masthead Living-Light Pulse Strip with cached horizon guide & interactive cursor
 /// hover probe (`"CPU 48°C · GPU 38°C"`).
+#[allow(dead_code)]
 pub struct PulseGraphCanvas<'a> {
     pub series_a: &'a [f32],
     pub series_b: &'a [f32],
@@ -556,19 +620,17 @@ impl<'a, Message> canvas::Program<Message> for PulseGraphCanvas<'a> {
             state.key.set(key);
         }
         let static_geom = state.cache.draw(renderer, bounds.size(), |frame| {
-            let mid_y = pad_y + plot_h * 0.52;
-            frame.stroke(
-                &Path::line(Point::new(pad_x, mid_y), Point::new(pad_x + plot_w, mid_y)),
-                Stroke {
-                    style: canvas::Style::Solid(rgba(p.ink_3, 0.14)),
-                    width: 1.0,
-                    line_dash: LineDash {
-                        segments: &[3.0, 5.0],
-                        offset: 0,
-                    },
-                    ..Stroke::default()
-                },
-            );
+            // Subtle dotted baseline + midpoint reference guides (plus quartile guides when tall)
+            let base_y = h - 1.5;
+            draw_dotted_guide(frame, pad_x, pad_x + plot_w, base_y, rgba(p.line, 0.28));
+            let mid_y = pad_y + plot_h * 0.50;
+            draw_dotted_guide(frame, pad_x, pad_x + plot_w, mid_y, rgba(p.ink_3, 0.16));
+            if h >= 64.0 {
+                let hi_y = pad_y + plot_h * 0.22;
+                let lo_y = pad_y + plot_h * 0.78;
+                draw_dotted_guide(frame, pad_x, pad_x + plot_w, hi_y, rgba(p.ink_3, 0.10));
+                draw_dotted_guide(frame, pad_x, pad_x + plot_w, lo_y, rgba(p.ink_3, 0.10));
+            }
         });
 
         let mut frame = Frame::new(renderer, bounds.size());
@@ -612,17 +674,18 @@ impl<'a, Message> canvas::Program<Message> for PulseGraphCanvas<'a> {
             }
         };
 
+        let scale_h = (h / 44.0).clamp(0.85, 1.85);
         let pts_b = to_pts(self.series_b, 1.4);
         draw_living_light_series(
             &mut frame,
             &pts_b,
             pad_y,
-            h - 1.0,
+            h - 1.5,
             pad_x,
             plot_w,
             col_b,
-            0.11,
-            1.6,
+            0.14,
+            (1.6 * scale_h.sqrt()).clamp(1.4, 2.4),
             false,
             false,
             self.anim_t + 1.8,
@@ -634,12 +697,12 @@ impl<'a, Message> canvas::Program<Message> for PulseGraphCanvas<'a> {
             &mut frame,
             &pts_a,
             pad_y,
-            h - 1.0,
+            h - 1.5,
             pad_x,
             plot_w,
             col_a,
-            0.22,
-            2.0,
+            0.26,
+            (2.0 * scale_h.sqrt()).clamp(1.8, 3.0),
             false,
             true,
             self.anim_t,
@@ -742,7 +805,7 @@ impl<'a, Message> canvas::Program<Message> for PulseGraphCanvas<'a> {
     }
 }
 
-/// Living-Light monotonic cubic sparkline used in Overview & Fans metric cards.
+/// Lush full-bleed Living-Light instrument area chart used in Overview & Fans cards.
 pub struct SparklineCanvas<'a> {
     pub samples: &'a [f32],
     pub min_val: f32,
@@ -767,77 +830,300 @@ impl<'a, Message> canvas::Program<Message> for SparklineCanvas<'a> {
         let mut frame = Frame::new(renderer, bounds.size());
         let w = bounds.width.max(8.0);
         let h = bounds.height.max(8.0);
-        let pad_r = 8.0;
-        let pad_y = 5.0;
-        let plot_w = (w - pad_r).max(6.0);
-        let plot_h = (h - pad_y * 2.0).max(4.0);
+        let pad_l = if w >= 260.0 { 3.0 } else { 1.5 };
+        let pad_r = (w * 0.030).clamp(7.0, 13.0);
+        let pad_top = (h * 0.10).clamp(4.0, 10.0);
+        let plot_bottom = (h - 1.5).max(pad_top + 4.0);
+        let plot_w = (w - pad_l - pad_r).max(6.0);
+        let plot_h = (plot_bottom - pad_top).max(4.0);
         let stroke_col = resolve_semantic_or_accent(self.color, self.palette, self.accent_override);
+        let glow = if self.palette.square_corners { 0.25 } else { 0.88 };
 
+        // 1. Soft ambient radial wash in the bottom-right corner so cards feel lamp-lit
+        if !self.palette.square_corners && w >= 48.0 && h >= 22.0 {
+            fill_radial_glow(
+                &mut frame,
+                Point::new(w * 0.83, h * 0.86),
+                w.min(h * 2.4) * 0.64,
+                stroke_col,
+                if self.palette.is_light { 0.065 } else { 0.13 },
+                5,
+            );
+        }
+
+        // 2. Two subtle horizontal dotted reference gridlines (25% and 75% height) + quiet baseline
+        let dotted_col = if self.palette.is_light {
+            Color::from_rgba(0.12, 0.12, 0.10, 0.11)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.075)
+        };
+        let base_col = if self.palette.is_light {
+            Color::from_rgba(0.12, 0.12, 0.10, 0.10)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.06)
+        };
+        if plot_h >= 18.0 {
+            draw_dotted_guide(
+                &mut frame,
+                pad_l,
+                pad_l + plot_w,
+                pad_top + plot_h * 0.25,
+                dotted_col,
+            );
+            draw_dotted_guide(
+                &mut frame,
+                pad_l,
+                pad_l + plot_w,
+                pad_top + plot_h * 0.75,
+                dotted_col,
+            );
+        }
         frame.stroke(
-            &Path::line(Point::new(0.0, h - 1.0), Point::new(plot_w, h - 1.0)),
-            Stroke::default()
-                .with_color(rgba(self.palette.line, 0.30))
-                .with_width(1.0),
+            &Path::line(
+                Point::new(pad_l, plot_bottom),
+                Point::new(pad_l + plot_w, plot_bottom),
+            ),
+            Stroke::default().with_color(base_col).with_width(1.0),
         );
 
         if self.samples.len() >= 2 {
-            let auto_max = self
-                .samples
-                .iter()
-                .copied()
-                .fold(self.max_val, f32::max);
-            let span = (auto_max - self.min_val).max(1.0);
+            let mut s_min = f32::INFINITY;
+            let mut s_max = f32::NEG_INFINITY;
+            for &v in self.samples {
+                s_min = s_min.min(v);
+                s_max = s_max.max(v);
+            }
+            let raw_range = (s_max - s_min).max(0.0);
+            let eff_min = self.min_val.min(s_min);
+            let eff_max = self.max_val.max(s_max);
+            let global_span = (eff_max - eff_min).max(1.0);
             let max_i = (self.samples.len() - 1) as f32;
+
+            // Frame steady readings gracefully in the mid-band while letting wide excursions span full height
+            let wide_excursion = raw_range / global_span >= 0.22;
+            let global_mid_norm = (((s_min + s_max) * 0.5 - eff_min) / global_span).clamp(0.0, 1.0);
+            let visual_center = 0.40 + global_mid_norm * 0.34;
+            let local_span = raw_range.max(global_span * 0.12).max(2.5);
+            let local_mid = (s_min + s_max) * 0.5;
+
+            let mut curve_top_y = plot_bottom;
+            let mut peak_idx = 0usize;
+            let mut peak_val = f32::NEG_INFINITY;
+
             let pts: Vec<Point> = self
                 .samples
                 .iter()
                 .enumerate()
                 .map(|(i, &v)| {
-                    let x = (i as f32 / max_i) * plot_w;
-                    let norm = ((v - self.min_val) / span).clamp(0.06, 0.94);
-                    let y = pad_y + (1.0 - norm) * plot_h;
+                    if v > peak_val {
+                        peak_val = v;
+                        peak_idx = i;
+                    }
+                    let x = pad_l + (i as f32 / max_i) * plot_w;
+                    let norm = if wide_excursion {
+                        0.08 + ((v - s_min) / raw_range.max(1.0)).clamp(0.0, 1.0) * 0.82
+                    } else {
+                        (visual_center + ((v - local_mid) / local_span) * 0.56).clamp(0.14, 0.88)
+                    };
+                    let y = pad_top + (1.0 - norm) * plot_h;
+                    curve_top_y = curve_top_y.min(y);
                     Point::new(x, y)
                 })
                 .collect();
 
-            let glow = if self.palette.square_corners { 0.35 } else { 1.0 };
-            draw_living_light_series(
-                &mut frame,
-                &pts,
-                pad_y,
-                h - 1.0,
-                0.0,
-                plot_w,
-                stroke_col,
-                0.24,
-                1.9,
-                false,
-                true,
-                self.anim_t,
-                glow,
+            // 3. Rich multi-band vertical gradient area fill (26% alpha at curve fading to 0% at bottom)
+            let area = build_smooth_curve_path(&pts, Some(plot_bottom));
+            let grad_top = curve_top_y.min(plot_bottom - 4.0);
+            let wash = gradient::Linear::new(
+                Point::new(0.0, grad_top),
+                Point::new(0.0, plot_bottom),
+            )
+            .add_stop(0.0, Color { a: 0.26, ..stroke_col })
+            .add_stop(0.38, Color { a: 0.15, ..stroke_col })
+            .add_stop(0.74, Color { a: 0.055, ..stroke_col })
+            .add_stop(1.0, Color { a: 0.0, ..stroke_col });
+            frame.fill(&area, Fill::from(Gradient::Linear(wash)));
+
+            // 4. Smooth monotonic cubic curve with soft multi-pass neon bloom + crisp inner filament
+            let curve = build_smooth_curve_path(&pts, None);
+            let scale_h = (h / 48.0).clamp(0.82, 1.65);
+            let stroke_w = (1.85 * scale_h.sqrt()).clamp(1.6, 2.6);
+
+            if glow > 0.05 {
+                for &(bw, ba) in &[
+                    (9.5 * scale_h.sqrt(), 0.055_f32),
+                    (5.2 * scale_h.sqrt(), 0.12),
+                    (3.0 * scale_h.sqrt(), 0.22),
+                ] {
+                    frame.stroke(
+                        &curve,
+                        Stroke {
+                            style: canvas::Style::Solid(Color {
+                                a: (ba * glow).clamp(0.0, 0.42),
+                                ..stroke_col
+                            }),
+                            width: bw,
+                            line_cap: LineCap::Round,
+                            line_join: LineJoin::Round,
+                            ..Stroke::default()
+                        },
+                    );
+                }
+            }
+
+            frame.stroke(
+                &curve,
+                Stroke {
+                    style: canvas::Style::Solid(stroke_col),
+                    width: stroke_w,
+                    line_cap: LineCap::Round,
+                    line_join: LineJoin::Round,
+                    ..Stroke::default()
+                },
+            );
+
+            if glow > 0.05 && !self.palette.is_light {
+                frame.stroke(
+                    &curve,
+                    Stroke {
+                        style: canvas::Style::Solid(Color::from_rgba(1.0, 1.0, 1.0, 0.34 * glow)),
+                        width: (0.85 * scale_h.sqrt()).clamp(0.75, 1.25),
+                        line_cap: LineCap::Round,
+                        line_join: LineJoin::Round,
+                        ..Stroke::default()
+                    },
+                );
+            }
+
+            // Periodic traveling shimmer glint along the curve
+            if glow > 0.05 && plot_w > 32.0 {
+                let cycle = (self.anim_t * 0.16).fract();
+                if cycle < 0.30 {
+                    let sh = cycle / 0.30;
+                    let centre = pad_l + plot_w * (-0.08 + 1.16 * sh);
+                    let band = (plot_w * 0.18).max(34.0);
+                    let sweep = gradient::Linear::new(
+                        Point::new(centre - band, 0.0),
+                        Point::new(centre + band, 0.0),
+                    )
+                    .add_stop(0.0, Color::from_rgba(1.0, 1.0, 1.0, 0.0))
+                    .add_stop(0.5, Color::from_rgba(1.0, 1.0, 1.0, 0.48 * glow))
+                    .add_stop(1.0, Color::from_rgba(1.0, 1.0, 1.0, 0.0));
+                    frame.stroke(
+                        &curve,
+                        Stroke {
+                            style: canvas::Style::Gradient(Gradient::Linear(sweep)),
+                            width: stroke_w + 0.8,
+                            line_cap: LineCap::Round,
+                            line_join: LineJoin::Round,
+                            ..Stroke::default()
+                        },
+                    );
+                }
+            }
+
+            let head = pts[pts.len() - 1];
+
+            // 5. Subtle peak marker dot on the highest point when range > 1.5
+            if raw_range > 1.5 && peak_idx + 1 < pts.len() {
+                let peak_pt = pts[peak_idx];
+                if (head.x - peak_pt.x).abs() > 9.0 {
+                    let peak_r = (2.1 * scale_h.sqrt()).clamp(1.8, 3.2);
+                    if glow > 0.05 {
+                        fill_radial_glow(
+                            &mut frame,
+                            peak_pt,
+                            peak_r * 3.4,
+                            stroke_col,
+                            0.32 * glow,
+                            4,
+                        );
+                    }
+                    frame.stroke(
+                        &Path::circle(peak_pt, peak_r + 1.3),
+                        Stroke::default()
+                            .with_color(Color { a: 0.52, ..stroke_col })
+                            .with_width(0.95),
+                    );
+                    frame.fill(
+                        &Path::circle(peak_pt, peak_r * 0.82),
+                        mix_color(stroke_col, Color::WHITE, 0.62),
+                    );
+                }
+            }
+
+            // 6. Luminous multi-ring live head orb on the right
+            let head_r = (2.6 * scale_h.sqrt()).clamp(2.2, 3.8);
+            if glow > 0.05 {
+                let pulse = 0.5 + 0.5 * (self.anim_t * 2.6).sin();
+                fill_radial_glow(
+                    &mut frame,
+                    head,
+                    (11.5 * scale_h.sqrt()).clamp(9.0, 18.0),
+                    stroke_col,
+                    0.56 * glow,
+                    5,
+                );
+                // Outer breathing halo ring
+                frame.stroke(
+                    &Path::circle(head, head_r * (2.25 + 0.42 * pulse)),
+                    Stroke::default()
+                        .with_color(Color {
+                            a: (0.34 - 0.14 * pulse) * glow,
+                            ..stroke_col
+                        })
+                        .with_width(0.95),
+                );
+                // Mid crisp concentric ring
+                frame.stroke(
+                    &Path::circle(head, head_r * 1.52),
+                    Stroke::default()
+                        .with_color(Color {
+                            a: 0.65 * glow,
+                            ..mix_color(stroke_col, Color::WHITE, 0.35)
+                        })
+                        .with_width(1.05),
+                );
+            }
+            frame.fill(
+                &Path::circle(head, head_r),
+                if glow > 0.05 && !self.palette.is_light {
+                    mix_color(stroke_col, Color::WHITE, 0.78)
+                } else {
+                    stroke_col
+                },
             );
         } else {
-            let flat_y = h * 0.65;
+            let flat_y = pad_top + plot_h * 0.54;
             frame.stroke(
-                &Path::line(Point::new(0.0, flat_y), Point::new(plot_w, flat_y)),
+                &Path::line(Point::new(pad_l, flat_y), Point::new(pad_l + plot_w, flat_y)),
                 Stroke::default()
                     .with_color(rgba(self.palette.line, 0.5))
                     .with_width(1.2),
             );
-            frame.fill(&Path::circle(Point::new(plot_w, flat_y), 2.2), stroke_col);
+            frame.fill(
+                &Path::circle(Point::new(pad_l + plot_w, flat_y), 2.5),
+                stroke_col,
+            );
         }
 
         vec![frame.into_geometry()]
     }
 }
 
-/// 270-degree luminous circular load gauge honoring `accent_override`.
+/// Precision multi-ring 270° tachometer dial scaling dynamically to 92% of bounds with
+/// 28 radial precision ticks, glowing primary C-arc, tip jewel, concentric inner hairline,
+/// soft 8% radial core glow, and live readout on medium/large dials.
 pub struct RingGaugeCanvas {
     pub percent: f32,
     pub accent: u32,
     pub palette: DesignPalette,
     pub accent_override: Option<[u8; 3]>,
 }
+
+/// Alias for `RingGaugeCanvas` used by responsive Overview `Gauge` tiles.
+#[allow(dead_code)]
+pub type RadialGaugeCanvas = RingGaugeCanvas;
 
 impl<Message> canvas::Program<Message> for RingGaugeCanvas {
     type State = ();
@@ -852,22 +1138,159 @@ impl<Message> canvas::Program<Message> for RingGaugeCanvas {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let center = Point::new(bounds.width * 0.5, bounds.height * 0.5);
-        let size = bounds.width.min(bounds.height);
-        let stroke_w = (size * 0.095).clamp(4.5, 7.2);
-        let radius = (size * 0.5 - stroke_w - 4.0).max(8.0);
+        let size = bounds.width.min(bounds.height).max(28.0);
+        // Scale dynamically up to 92% of min(width, height) (outer_r = 46% of size)
+        let outer_r = size * 0.46;
         let start = 135.0_f32.to_radians();
         let sweep = 270.0_f32.to_radians();
         let firefly = is_firefly_palette(self.palette);
+        let col = resolve_semantic_or_accent(self.accent, self.palette, self.accent_override);
+        let col_hi = mix_color(col, Color::WHITE, if self.palette.is_light { 0.08 } else { 0.34 });
+        let glow = if self.palette.square_corners { 0.18 } else { 0.90 };
         let cap = if self.palette.square_corners {
             LineCap::Butt
         } else {
             LineCap::Round
         };
 
-        let track_col = if firefly {
-            Color::from_rgba8(73, 62, 85, 0.85)
+        let val_pct = self.percent.clamp(0.0, 100.0);
+        let val_frac = (val_pct / 100.0).clamp(0.0, 1.0);
+
+        // 1. Outer arc of 28 crisp radial precision ticks
+        const TICKS: usize = 28;
+        let show_ticks = size >= 44.0;
+        let tick_major_len = if show_ticks {
+            (size * 0.052).clamp(2.6, 7.6)
         } else {
-            rgba(self.palette.line, 0.65)
+            0.0
+        };
+        let tick_minor_len = (size * 0.034).clamp(1.8, 5.0);
+        let unlit_tick_col = if firefly {
+            Color::from_rgba8(138, 122, 162, 0.28)
+        } else if self.palette.is_light {
+            Color::from_rgba(0.12, 0.12, 0.10, 0.16)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.14)
+        };
+
+        if show_ticks {
+            for i in 0..TICKS {
+                let tf = i as f32 / (TICKS - 1) as f32;
+                let ang = start + sweep * tf;
+                let (ca, sa) = (ang.cos(), ang.sin());
+                let is_major = i % 9 == 0;
+                let t_len = if is_major {
+                    tick_major_len
+                } else if i % 3 == 0 {
+                    (tick_minor_len + tick_major_len) * 0.5
+                } else {
+                    tick_minor_len
+                };
+                let p_out = Point::new(center.x + ca * outer_r, center.y + sa * outer_r);
+                let p_in = Point::new(
+                    center.x + ca * (outer_r - t_len),
+                    center.y + sa * (outer_r - t_len),
+                );
+                let is_lit = val_pct > 0.35 && tf <= val_frac + 0.008;
+                let tick_w = if is_major {
+                    (size * 0.0135).clamp(1.15, 2.2)
+                } else {
+                    (size * 0.0095).clamp(0.85, 1.55)
+                };
+
+                if is_lit {
+                    if glow > 0.2 && size >= 84.0 && (is_major || i % 3 == 0) {
+                        frame.stroke(
+                            &Path::line(p_in, p_out),
+                            Stroke::default()
+                                .with_color(Color {
+                                    a: 0.22 * glow,
+                                    ..col
+                                })
+                                .with_width(tick_w * 2.4)
+                                .with_line_cap(LineCap::Round),
+                        );
+                    }
+                    let lit_col = if is_major {
+                        col_hi
+                    } else {
+                        mix_color(col, col_hi, tf * 0.7)
+                    };
+                    frame.stroke(
+                        &Path::line(p_in, p_out),
+                        Stroke::default()
+                            .with_color(lit_col)
+                            .with_width(tick_w)
+                            .with_line_cap(LineCap::Round),
+                    );
+                } else {
+                    frame.stroke(
+                        &Path::line(p_in, p_out),
+                        Stroke::default()
+                            .with_color(if is_major {
+                                Color {
+                                    a: (unlit_tick_col.a * 1.45).min(0.48),
+                                    ..unlit_tick_col
+                                }
+                            } else {
+                                unlit_tick_col
+                            })
+                            .with_width(tick_w)
+                            .with_line_cap(LineCap::Round),
+                    );
+                }
+            }
+        }
+
+        // 2. Primary C-arc geometry (7–9px scaled with radius on 120–170px dials)
+        let ring_gap = if show_ticks {
+            (size * 0.030).clamp(2.0, 4.6)
+        } else {
+            1.5
+        };
+        let stroke_w = (size * 0.058).clamp(4.4, 9.0);
+        let radius = (outer_r - tick_major_len - ring_gap - stroke_w * 0.5).max(8.0);
+
+        // Soft 8% radial core glow + subtle inner concentric hairline ring
+        let inner_gap = (size * 0.044).clamp(2.6, 6.4);
+        let inner_r = (radius - stroke_w * 0.5 - inner_gap).max(4.0);
+        if !self.palette.square_corners && inner_r >= 10.0 {
+            fill_radial_glow(&mut frame, center, inner_r * 1.04, col, 0.085, 5);
+        }
+
+        if inner_r >= 14.0 {
+            let inner_arc = Path::new(|b| {
+                b.arc(Arc {
+                    center,
+                    radius: inner_r,
+                    start_angle: iced::Radians(start),
+                    end_angle: iced::Radians(start + sweep),
+                });
+            });
+            let hair_col = if self.palette.is_light {
+                Color::from_rgba(0.12, 0.12, 0.10, 0.14)
+            } else {
+                Color {
+                    a: 0.18,
+                    ..mix_color(rgb(self.palette.ink_3), col, 0.35)
+                }
+            };
+            frame.stroke(
+                &inner_arc,
+                Stroke::default()
+                    .with_color(hair_col)
+                    .with_width(1.0)
+                    .with_line_cap(LineCap::Round),
+            );
+        }
+
+        // Muted recessed primary C-arc track
+        let track_col = if firefly {
+            Color::from_rgba8(64, 54, 86, 0.78)
+        } else if self.palette.is_light {
+            Color::from_rgba(0.12, 0.12, 0.10, 0.12)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.10)
         };
         let track = Path::new(|b| {
             b.arc(Arc {
@@ -885,82 +1308,118 @@ impl<Message> canvas::Program<Message> for RingGaugeCanvas {
                 .with_line_cap(cap),
         );
 
-        let dot_r = (radius - stroke_w * 0.5 - 4.8).max(3.0);
-        let dot_col = rgba(self.palette.ink_3, 0.45);
-        for i in 0..=4 {
-            let a = start + sweep * (i as f32 / 4.0);
-            let pt = Point::new(center.x + a.cos() * dot_r, center.y + a.sin() * dot_r);
-            frame.fill(&Path::circle(pt, 1.15), dot_col);
-        }
-
-        let frac = (self.percent / 100.0).clamp(0.02, 1.0);
-        let end = start + sweep * frac;
-        let col = resolve_semantic_or_accent(self.accent, self.palette, self.accent_override);
-        let glow = if self.palette.square_corners { 0.25 } else { 1.0 };
+        // Active glowing primary C-arc + concentric bloom halo + bright glowing tip cap
+        let arc_frac = val_frac.clamp(0.018, 1.0);
+        let end = start + sweep * arc_frac;
+        let active_arc = Path::new(|b| {
+            b.arc(Arc {
+                center,
+                radius,
+                start_angle: iced::Radians(start),
+                end_angle: iced::Radians(end),
+            });
+        });
 
         if glow > 0.05 {
-            let glow_start = (end - 1.1).max(start);
-            let lead_arc = Path::new(|b| {
-                b.arc(Arc {
-                    center,
-                    radius,
-                    start_angle: iced::Radians(glow_start),
-                    end_angle: iced::Radians(end),
-                });
-            });
-            for &(extra, a) in &[(10.0_f32, 0.065_f32), (5.0, 0.13)] {
-                frame.stroke(
-                    &lead_arc,
-                    Stroke::default()
-                        .with_color(Color { a: a * glow, ..col })
-                        .with_width(stroke_w + extra)
-                        .with_line_cap(cap),
-                );
-            }
-        }
-
-        let segs = 12;
-        for i in 0..segs {
-            let f0 = i as f32 / segs as f32;
-            let f1 = (i + 1) as f32 / segs as f32;
-            let a0 = start + (end - start) * f0;
-            let a1 = start + (end - start) * f1;
-            let alpha = 0.42 + 0.58 * f1;
-            let seg_path = Path::new(|b| {
-                b.arc(Arc {
-                    center,
-                    radius,
-                    start_angle: iced::Radians(a0),
-                    end_angle: iced::Radians(a1),
-                });
-            });
             frame.stroke(
-                &seg_path,
+                &active_arc,
                 Stroke::default()
-                    .with_color(Color { a: alpha, ..col })
-                    .with_width(stroke_w)
-                    .with_line_cap(if i == 0 || i + 1 == segs {
-                        cap
-                    } else {
-                        LineCap::Butt
-                    }),
+                    .with_color(Color {
+                        a: 0.10 * glow,
+                        ..col
+                    })
+                    .with_width(stroke_w * 2.55)
+                    .with_line_cap(cap),
+            );
+            frame.stroke(
+                &active_arc,
+                Stroke::default()
+                    .with_color(Color {
+                        a: 0.22 * glow,
+                        ..col
+                    })
+                    .with_width(stroke_w * 1.62)
+                    .with_line_cap(cap),
             );
         }
 
-        if glow > 0.05 {
-            let tip = Point::new(center.x + end.cos() * radius, center.y + end.sin() * radius);
+        let start_pt = Point::new(center.x + start.cos() * radius, center.y + start.sin() * radius);
+        let tip_pt = Point::new(center.x + end.cos() * radius, center.y + end.sin() * radius);
+        let arc_grad = gradient::Linear::new(
+            start_pt,
+            if (tip_pt.x - start_pt.x).hypot(tip_pt.y - start_pt.y) > 4.0 {
+                tip_pt
+            } else {
+                Point::new(center.x + radius, center.y - radius)
+            },
+        )
+        .add_stop(0.0, mix_color(col, rgb(self.palette.ground), 0.10))
+        .add_stop(0.55, col)
+        .add_stop(1.0, col_hi);
+
+        frame.stroke(
+            &active_arc,
+            Stroke {
+                style: canvas::Style::Gradient(Gradient::Linear(arc_grad)),
+                width: stroke_w,
+                line_cap: cap,
+                ..Stroke::default()
+            },
+        );
+
+        if glow > 0.05 && !self.palette.is_light && arc_frac > 0.05 {
+            frame.stroke(
+                &active_arc,
+                Stroke::default()
+                    .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.28 * glow))
+                    .with_width((stroke_w * 0.20).clamp(0.9, 1.8))
+                    .with_line_cap(cap),
+            );
+        }
+
+        // Bright glowing tip cap jewel
+        if !self.palette.square_corners {
             fill_radial_glow(
                 &mut frame,
-                tip,
-                stroke_w * 1.9,
-                mix_color(col, Color::WHITE, 0.45),
-                0.65 * glow,
-                5,
+                tip_pt,
+                stroke_w * 1.75,
+                col_hi,
+                0.48 * glow,
+                4,
             );
             frame.fill(
-                &Path::circle(tip, stroke_w * 0.30),
-                mix_color(col, Color::WHITE, 0.78),
+                &Path::circle(tip_pt, (stroke_w * 0.36).clamp(1.8, 3.6)),
+                mix_color(col_hi, Color::WHITE, 0.72),
             );
+        }
+
+        // 3. Centered live % readout + subtle bottom dial watermark on medium/large dials
+        // (triggers when outer_r >= 50px, covering all 110–170px+ dials and radius >= 54px!)
+        if outer_r >= 50.0 || radius >= 54.0 {
+            let pct_font_sz = (inner_r * 0.50).clamp(13.5, 24.0);
+            frame.fill_text(canvas::Text {
+                content: format!("{val_pct:.0}%"),
+                position: Point::new(center.x, center.y - inner_r * 0.05),
+                color: mix_color(rgb(self.palette.ink), col_hi, 0.18),
+                size: iced::Pixels(pct_font_sz),
+                font: crate::theme::mono_font(),
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Center,
+                ..canvas::Text::default()
+            });
+
+            if inner_r >= 26.0 {
+                frame.fill_text(canvas::Text {
+                    content: "ACTIVE".to_string(),
+                    position: Point::new(center.x, center.y + inner_r * 0.54),
+                    color: rgba(self.palette.ink_3, 0.68),
+                    size: iced::Pixels((inner_r * 0.22).clamp(8.0, 10.5)),
+                    font: crate::theme::mono_font(),
+                    align_x: iced::alignment::Horizontal::Center.into(),
+                    align_y: iced::alignment::Vertical::Center,
+                    ..canvas::Text::default()
+                });
+            }
         }
 
         vec![frame.into_geometry()]
@@ -1001,14 +1460,15 @@ impl<'a, Message> canvas::Program<Message> for PowerGraphCanvas<'a> {
             .fold(250.0_f32, f32::max);
         let max_w: f32 = if peak > 250.0 { 420.0 } else { 250.0 };
 
-        let plot_left = 6.0;
-        let plot_top = 8.0;
-        let plot_bottom = (h - 16.0).max(plot_top + 10.0);
+        let gutter_r = if w < 210.0 { 44.0 } else { 58.0 };
+        let plot_left = 8.0;
+        let plot_top = 10.0;
+        let plot_bottom = (h - 17.0).max(plot_top + 10.0);
         let plot_h = plot_bottom - plot_top;
-        let plot_right = (w - 58.0).max(plot_left + 16.0);
-        let span_w = (plot_right - plot_left - 12.0).max(8.0);
+        let plot_right = (w - gutter_r).max(plot_left + 16.0);
+        let span_w = (plot_right - plot_left - 10.0).max(8.0);
 
-        // Layer 1 (CACHED): Well backdrop, reference lines & wattage labels
+        // Layer 1 (CACHED): Well backdrop, dotted reference lines & wattage labels
         let mut hasher = DefaultHasher::new();
         ((w * 2.0).round() as i32).hash(&mut hasher);
         ((h * 2.0).round() as i32).hash(&mut hasher);
@@ -1024,36 +1484,45 @@ impl<'a, Message> canvas::Program<Message> for PowerGraphCanvas<'a> {
         }
 
         let static_geom = state.cache.draw(renderer, bounds.size(), |frame| {
-            let bg = Path::rounded_rectangle(
-                Point::ORIGIN,
-                bounds.size(),
-                iced::border::Radius::from(if p.square_corners { 0.0 } else { 8.0 }),
+            let guide_col = if p.is_light {
+                Color::from_rgba(0.12, 0.12, 0.10, 0.10)
+            } else {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.065)
+            };
+
+            // Whisper-quiet solid hairlines matching ref-overview.png (no nested card border!)
+            frame.stroke(
+                &Path::line(
+                    Point::new(plot_left, plot_bottom),
+                    Point::new(plot_right, plot_bottom),
+                ),
+                Stroke::default().with_color(guide_col).with_width(1.0),
             );
-            frame.fill(&bg, rgb(p.well));
 
             let mid = (max_w * 0.5).round();
             for watts in [mid, max_w.round()] {
                 let y = plot_top + (1.0 - watts / max_w) * plot_h;
                 frame.stroke(
                     &Path::line(Point::new(plot_left, y), Point::new(plot_right, y)),
-                    Stroke::default()
-                        .with_color(rgba(p.line, 0.35))
-                        .with_width(1.0),
+                    Stroke::default().with_color(guide_col).with_width(1.0),
                 );
                 frame.fill_text(canvas::Text {
                     content: format!("{watts:.0} W"),
-                    position: Point::new((plot_right + 8.0).min(w - 46.0), (y - 6.0).max(2.0)),
+                    position: Point::new(
+                        (plot_right + 8.0).min(w - (gutter_r - 6.0)),
+                        (y - 6.5).max(1.0),
+                    ),
                     color: rgb(p.ink_3),
-                    size: iced::Pixels(10.0),
+                    size: iced::Pixels(if w < 210.0 { 9.5 } else { 11.0 }),
                     ..canvas::Text::default()
                 });
             }
 
             frame.fill_text(canvas::Text {
                 content: "10 min".to_string(),
-                position: Point::new(plot_left, (h - 13.0).max(2.0)),
-                color: rgba(p.ink_3, 0.8),
-                size: iced::Pixels(9.5),
+                position: Point::new(plot_left, (h - 14.0).max(2.0)),
+                color: rgba(p.ink_3, 0.85),
+                size: iced::Pixels(10.5),
                 ..canvas::Text::default()
             });
         });
@@ -1090,6 +1559,7 @@ impl<'a, Message> canvas::Program<Message> for PowerGraphCanvas<'a> {
             rgb(p.ink_2)
         };
         let glow = if p.square_corners { 0.35 } else { 1.0 };
+        let scale_h = (plot_h / 72.0).clamp(0.85, 1.75);
 
         let gpu_pts = if self.gpu_w.len() >= 2 {
             let pts = to_pts(self.gpu_w);
@@ -1101,12 +1571,12 @@ impl<'a, Message> canvas::Program<Message> for PowerGraphCanvas<'a> {
                 plot_left,
                 span_w,
                 gpu_col,
-                0.12,
-                1.7,
+                0.15,
+                (1.75 * scale_h.sqrt()).clamp(1.5, 2.5),
                 true,
                 false,
                 self.anim_t + 2.1,
-                glow * 0.8,
+                glow * 0.82,
             );
             Some(pts)
         } else {
@@ -1123,8 +1593,8 @@ impl<'a, Message> canvas::Program<Message> for PowerGraphCanvas<'a> {
                 plot_left,
                 span_w,
                 cpu_col,
-                0.24,
-                2.0,
+                0.28,
+                (2.05 * scale_h.sqrt()).clamp(1.8, 3.0),
                 false,
                 true,
                 self.anim_t,
@@ -1336,6 +1806,662 @@ impl<Message> canvas::Program<Message> for SegmentedBarCanvas {
                     c,
                 );
             }
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
+
+/// Illuminated 24-segment vertical hardware capacity matrix (DIMM / telemetry capacity bank)
+/// spanning full width & 65% of bounds height with recessed dark unlit slots and smooth baseline glow.
+#[allow(dead_code)]
+pub struct BarMeterCanvas {
+    pub fraction: f32,
+    pub accent: u32,
+    pub palette: DesignPalette,
+    pub accent_override: Option<[u8; 3]>,
+    pub anim_t: f32,
+}
+
+impl<Message> canvas::Program<Message> for BarMeterCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let p = self.palette;
+        let frac = self.fraction.clamp(0.0, 1.0);
+        let col = resolve_semantic_or_accent(self.accent, p, self.accent_override);
+        let col_hi = mix_color(col, Color::WHITE, if p.is_light { 0.08 } else { 0.34 });
+        let w = bounds.width.max(24.0);
+        let full_h = bounds.height.max(10.0);
+
+        const SEGMENTS: usize = 24;
+        let (block_h, block_y, base_y) = if full_h >= 22.0 {
+            let bh = (full_h * 0.65).max(12.0);
+            let gap_b = (full_h * 0.10).clamp(3.0, 6.5);
+            let stack_h = bh + gap_b + 2.0;
+            let by = ((full_h - stack_h) * 0.5).max(1.5);
+            (bh, by, (by + bh + gap_b).min(full_h - 1.5))
+        } else {
+            let bh = (full_h * 0.72).max(5.5);
+            let by = ((full_h - bh - 2.0) * 0.5).max(0.5);
+            (bh, by, (full_h - 1.0).max(by + bh + 0.5))
+        };
+
+        let pad_x = 1.5_f32;
+        let avail_w = (w - pad_x * 2.0).max(24.0);
+        let gap = (avail_w * 0.0135).clamp(1.8, 4.8);
+        let bar_w = ((avail_w - gap * (SEGMENTS as f32 - 1.0)) / SEGMENTS as f32).max(1.4);
+        let used_w = bar_w * SEGMENTS as f32 + gap * (SEGMENTS as f32 - 1.0);
+        let x0 = (w - used_w) * 0.5;
+        let corner_r = if p.square_corners {
+            0.0
+        } else {
+            (bar_w * 0.36).clamp(1.4, 4.4)
+        };
+
+        // Soft ambient glow behind the lit bank & active frontier
+        if !p.square_corners && frac > 0.015 {
+            let lit_w = (used_w * frac).clamp(bar_w, used_w);
+            fill_radial_glow(
+                &mut frame,
+                Point::new(x0 + lit_w * 0.62, block_y + block_h * 0.55),
+                lit_w.min(block_h * 2.6) * 0.65,
+                col,
+                if p.is_light { 0.08 } else { 0.16 },
+                4,
+            );
+            fill_radial_glow(
+                &mut frame,
+                Point::new((x0 + lit_w).min(x0 + used_w), block_y + block_h * 0.5),
+                (block_h * 0.85).max(10.0),
+                col_hi,
+                if p.is_light { 0.14 } else { 0.28 },
+                4,
+            );
+        }
+
+        // 24 vertical capacity blocks (lit luminous modules vs recessed dark hardware slots)
+        let exact_lit = frac * SEGMENTS as f32;
+        for i in 0..SEGMENTS {
+            let bx = x0 + i as f32 * (bar_w + gap);
+            let seg_rect = Path::rounded_rectangle(
+                Point::new(bx, block_y),
+                Size::new(bar_w, block_h),
+                iced::border::Radius::from(corner_r),
+            );
+            let seg_fill = (exact_lit - i as f32).clamp(0.0, 1.0);
+
+            if seg_fill > 0.12 {
+                let prog = i as f32 / (SEGMENTS - 1) as f32;
+                let shimmer = if p.square_corners {
+                    0.0
+                } else {
+                    0.09 * (0.5 + 0.5 * (self.anim_t * 2.2 - i as f32 * 0.26).sin())
+                };
+                let top_c = mix_color(
+                    col,
+                    Color::WHITE,
+                    (0.28 + 0.14 * prog + shimmer).clamp(0.0, 0.52),
+                );
+                let mid_c = mix_color(col, col_hi, 0.25 * prog);
+                let bot_c = mix_color(col, rgb(p.ground), if p.is_light { 0.10 } else { 0.28 });
+
+                let grad = gradient::Linear::new(
+                    Point::new(bx, block_y),
+                    Point::new(bx, block_y + block_h),
+                )
+                .add_stop(
+                    0.0,
+                    Color {
+                        a: (0.80 + 0.20 * seg_fill).clamp(0.0, 1.0),
+                        ..top_c
+                    },
+                )
+                .add_stop(
+                    0.55,
+                    Color {
+                        a: (0.76 + 0.24 * seg_fill).clamp(0.0, 1.0),
+                        ..mid_c
+                    },
+                )
+                .add_stop(
+                    1.0,
+                    Color {
+                        a: (0.58 + 0.28 * seg_fill).clamp(0.0, 0.92),
+                        ..bot_c
+                    },
+                );
+                frame.fill(&seg_rect, Fill::from(Gradient::Linear(grad)));
+
+                // Soft top specular highlight cap
+                if !p.square_corners && bar_w >= 3.0 && block_h >= 9.0 {
+                    let cap_h = (block_h * 0.22).clamp(1.6, 5.0);
+                    let cap_rect = Path::rounded_rectangle(
+                        Point::new(bx + 0.7, block_y + 0.8),
+                        Size::new((bar_w - 1.4).max(1.0), cap_h),
+                        iced::border::Radius::from((corner_r * 0.75).max(1.0)),
+                    );
+                    frame.fill(
+                        &cap_rect,
+                        Color::from_rgba(1.0, 1.0, 1.0, (0.30 + shimmer) * seg_fill),
+                    );
+                }
+
+                frame.stroke(
+                    &seg_rect,
+                    Stroke::default()
+                        .with_color(Color {
+                            a: 0.52 * seg_fill,
+                            ..col_hi
+                        })
+                        .with_width(0.85),
+                );
+            } else {
+                // Unlit recessed dark hardware slot
+                let slot_top = mix_color(
+                    rgb(p.well),
+                    Color::BLACK,
+                    if p.is_light { 0.05 } else { 0.30 },
+                );
+                let slot_bot = rgba(p.well, 0.86);
+                let slot_g = gradient::Linear::new(
+                    Point::new(bx, block_y),
+                    Point::new(bx, block_y + block_h),
+                )
+                .add_stop(0.0, slot_top)
+                .add_stop(1.0, slot_bot);
+                frame.fill(&seg_rect, Fill::from(Gradient::Linear(slot_g)));
+
+                let slot_rim = if p.is_light {
+                    rgba(p.line, 0.48)
+                } else {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.068)
+                };
+                frame.stroke(
+                    &seg_rect,
+                    Stroke::default().with_color(slot_rim).with_width(0.85),
+                );
+
+                // Subtle milled center slot groove on spacious cards
+                if bar_w >= 5.5 && block_h >= 16.0 {
+                    let gx = bx + bar_w * 0.5;
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(gx, block_y + 3.0),
+                            Point::new(gx, block_y + block_h - 3.0),
+                        ),
+                        Stroke::default()
+                            .with_color(if p.is_light {
+                                Color::from_rgba(0.0, 0.0, 0.0, 0.05)
+                            } else {
+                                Color::from_rgba(0.0, 0.0, 0.0, 0.24)
+                            })
+                            .with_width(0.9),
+                    );
+                }
+            }
+        }
+
+        // Subtle smooth baseline rail + glowing active baseline underneath
+        let track_base_col = if p.is_light {
+            rgba(p.line, 0.38)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+        };
+        frame.stroke(
+            &Path::line(Point::new(x0, base_y), Point::new(x0 + used_w, base_y)),
+            Stroke::default()
+                .with_color(track_base_col)
+                .with_width(1.1)
+                .with_line_cap(LineCap::Round),
+        );
+
+        if frac > 0.008 {
+            let active_end_x = (x0 + used_w * frac).clamp(x0 + 2.0, x0 + used_w);
+            let base_line = Path::line(Point::new(x0, base_y), Point::new(active_end_x, base_y));
+            if !p.square_corners {
+                frame.stroke(
+                    &base_line,
+                    Stroke::default()
+                        .with_color(Color { a: 0.24, ..col })
+                        .with_width(4.8)
+                        .with_line_cap(LineCap::Round),
+                );
+            }
+            let base_grad = gradient::Linear::new(
+                Point::new(x0, base_y),
+                Point::new(active_end_x, base_y),
+            )
+            .add_stop(0.0, Color { a: 0.55, ..col })
+            .add_stop(0.75, col)
+            .add_stop(1.0, col_hi);
+            frame.stroke(
+                &base_line,
+                Stroke {
+                    style: canvas::Style::Gradient(Gradient::Linear(base_grad)),
+                    width: 1.6,
+                    line_cap: LineCap::Round,
+                    ..Stroke::default()
+                },
+            );
+            if !p.square_corners {
+                fill_radial_glow(
+                    &mut frame,
+                    Point::new(active_end_x, base_y),
+                    7.5,
+                    col_hi,
+                    0.42,
+                    3,
+                );
+            }
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
+
+/// Sleek mini fan curve instrument (`25..95°C` × `0..100%`) for Overview's `Case fans` tile:
+/// subtle grid, shaded curve fill, glowing curve stroke, dotted live `(temp, duty)` crosshair
+/// with pulsing operating-point orb, and crisp animated 7-blade mini-fan emblem in top-left.
+#[allow(dead_code)]
+pub struct MiniFanCurveCanvas {
+    pub points: Vec<(f32, f32)>, // (temp_c, duty_pct)
+    pub current_temp: Option<f32>,
+    pub current_duty: f32,
+    pub phase: f32,
+    pub spinning: bool,
+    pub palette: DesignPalette,
+    pub accent_override: Option<[u8; 3]>,
+}
+
+impl<Message> canvas::Program<Message> for MiniFanCurveCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let p = self.palette;
+        let firefly = is_firefly_palette(p);
+        let (accent, accent_hi) = resolve_accent(p, self.accent_override);
+        let curve_col = if firefly && self.accent_override.is_none() {
+            rgb(p.ok)
+        } else {
+            accent
+        };
+        let curve_hi = mix_color(curve_col, Color::WHITE, if p.is_light { 0.08 } else { 0.34 });
+        let glow = if p.square_corners { 0.25 } else { 0.90 };
+
+        const T_MIN: f32 = 25.0;
+        const T_MAX: f32 = 95.0;
+        let w = bounds.width.max(32.0);
+        let h = bounds.height.max(24.0);
+        let show_axis_labels = h >= 54.0 && w >= 120.0;
+        let pad_l = 4.0_f32;
+        let pad_r = 6.0_f32;
+        let pad_t = 5.0_f32;
+        let pad_b = if show_axis_labels { 13.0 } else { 4.0 };
+        let plot_w = (w - pad_l - pad_r).max(16.0);
+        let plot_h = (h - pad_t - pad_b).max(12.0);
+        let plot_bottom = pad_t + plot_h;
+
+        let to_pt = |temp_c: f32, duty_pct: f32| -> Point {
+            let nx = ((temp_c - T_MIN) / (T_MAX - T_MIN)).clamp(0.0, 1.0);
+            let ny = (duty_pct / 100.0).clamp(0.0, 1.0);
+            Point::new(pad_l + nx * plot_w, pad_t + (1.0 - ny) * plot_h)
+        };
+
+        // 1. Soft bottom-right ambient wash + subtle gridlines
+        if !p.square_corners {
+            fill_radial_glow(
+                &mut frame,
+                Point::new(pad_l + plot_w * 0.82, pad_t + plot_h * 0.82),
+                plot_w.min(plot_h * 2.2) * 0.62,
+                curve_col,
+                if p.is_light { 0.06 } else { 0.13 },
+                4,
+            );
+        }
+
+        let grid_col = if p.is_light {
+            Color::from_rgba(0.12, 0.12, 0.10, 0.10)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.068)
+        };
+        for &duty_ref in &[35.0_f32, 70.0] {
+            let gy = to_pt(T_MIN, duty_ref).y;
+            draw_dotted_guide(&mut frame, pad_l, pad_l + plot_w, gy, grid_col);
+        }
+        for &temp_ref in &[45.0_f32, 65.0, 85.0] {
+            let gx = to_pt(temp_ref, 0.0).x;
+            frame.stroke(
+                &Path::line(Point::new(gx, pad_t), Point::new(gx, plot_bottom)),
+                Stroke {
+                    style: canvas::Style::Solid(grid_col),
+                    width: 0.9,
+                    line_dash: LineDash {
+                        segments: &[2.0, 4.5],
+                        offset: 0,
+                    },
+                    ..Stroke::default()
+                },
+            );
+        }
+        frame.stroke(
+            &Path::line(
+                Point::new(pad_l, plot_bottom),
+                Point::new(pad_l + plot_w, plot_bottom),
+            ),
+            Stroke::default().with_color(grid_col).with_width(1.0),
+        );
+
+        if show_axis_labels {
+            for &(tc, lbl, ax) in &[
+                (25.0_f32, "25°", iced::alignment::Horizontal::Left),
+                (60.0, "60°", iced::alignment::Horizontal::Center),
+                (95.0, "95°", iced::alignment::Horizontal::Right),
+            ] {
+                frame.fill_text(canvas::Text {
+                    content: lbl.to_string(),
+                    position: Point::new(to_pt(tc, 0.0).x, plot_bottom + 2.0),
+                    color: rgba(p.ink_3, 0.68),
+                    size: iced::Pixels(9.2),
+                    font: crate::theme::mono_font(),
+                    align_x: ax.into(),
+                    ..canvas::Text::default()
+                });
+            }
+        }
+
+        // 2. Sanitize / sort control points & build smooth curve across 25..95°C
+        let mut sorted: Vec<(f32, f32)> = if self.points.is_empty() {
+            vec![(38.0, 30.0), (55.0, 42.0), (70.0, 64.0), (85.0, 96.0)]
+        } else {
+            self.points
+                .iter()
+                .map(|&(t, d)| (t.clamp(T_MIN, T_MAX), d.clamp(0.0, 100.0)))
+                .collect()
+        };
+        sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.dedup_by(|a, b| (a.0 - b.0).abs() < 0.8);
+
+        let mut screen_pts: Vec<Point> = Vec::with_capacity(sorted.len() + 3);
+        let first_d = sorted[0].1;
+        if sorted[0].0 > T_MIN + 0.8 {
+            screen_pts.push(to_pt(T_MIN, first_d));
+        }
+        for &(t_c, d_p) in &sorted {
+            screen_pts.push(to_pt(t_c, d_p));
+        }
+        let &(last_t, last_d) = sorted.last().unwrap_or(&(85.0, 95.0));
+        if last_t < 90.0 {
+            screen_pts.push(to_pt(90.0, last_d.max(96.0)));
+        }
+        if screen_pts.last().is_none_or(|pt| pt.x < pad_l + plot_w - 0.5) {
+            screen_pts.push(to_pt(T_MAX, last_d.max(100.0)));
+        }
+
+        if screen_pts.len() >= 2 {
+            let mut min_y = plot_bottom;
+            for pt in &screen_pts {
+                min_y = min_y.min(pt.y);
+            }
+
+            // Shaded curve fill
+            let area = build_smooth_curve_path(&screen_pts, Some(plot_bottom));
+            let area_grad = gradient::Linear::new(
+                Point::new(0.0, min_y.min(plot_bottom - 4.0)),
+                Point::new(0.0, plot_bottom),
+            )
+            .add_stop(0.0, Color { a: 0.28, ..curve_col })
+            .add_stop(0.45, Color { a: 0.13, ..curve_col })
+            .add_stop(1.0, Color { a: 0.0, ..curve_col });
+            frame.fill(&area, Fill::from(Gradient::Linear(area_grad)));
+
+            // Glowing curve stroke
+            let curve = build_smooth_curve_path(&screen_pts, None);
+            if glow > 0.05 {
+                frame.stroke(
+                    &curve,
+                    Stroke {
+                        style: canvas::Style::Solid(Color {
+                            a: 0.11 * glow,
+                            ..curve_col
+                        }),
+                        width: 7.5,
+                        line_cap: LineCap::Round,
+                        line_join: LineJoin::Round,
+                        ..Stroke::default()
+                    },
+                );
+                frame.stroke(
+                    &curve,
+                    Stroke {
+                        style: canvas::Style::Solid(Color {
+                            a: 0.24 * glow,
+                            ..curve_col
+                        }),
+                        width: 3.8,
+                        line_cap: LineCap::Round,
+                        line_join: LineJoin::Round,
+                        ..Stroke::default()
+                    },
+                );
+            }
+
+            let stroke_g = gradient::Linear::new(
+                Point::new(pad_l, 0.0),
+                Point::new(pad_l + plot_w, 0.0),
+            )
+            .add_stop(0.0, curve_col)
+            .add_stop(0.68, curve_hi)
+            .add_stop(1.0, mix_color(accent_hi, rgb(p.warm), 0.55));
+            frame.stroke(
+                &curve,
+                Stroke {
+                    style: canvas::Style::Gradient(Gradient::Linear(stroke_g)),
+                    width: 2.1,
+                    line_cap: LineCap::Round,
+                    line_join: LineJoin::Round,
+                    ..Stroke::default()
+                },
+            );
+
+            // Crisp micro-nodes at user curve points
+            if plot_w >= 110.0 {
+                for &(t_c, d_p) in &sorted {
+                    let cp = to_pt(t_c, d_p);
+                    frame.fill(&Path::circle(cp, 2.5), rgb(p.well));
+                    frame.stroke(
+                        &Path::circle(cp, 2.3),
+                        Stroke::default()
+                            .with_color(Color { a: 0.72, ..curve_hi })
+                            .with_width(1.1),
+                    );
+                }
+            }
+        }
+
+        // 3. Dotted live (temp, duty) crosshair + pulsing operating-point orb
+        let live_temp = self.current_temp.unwrap_or(42.0).clamp(T_MIN, T_MAX);
+        let live_duty = self.current_duty.clamp(0.0, 100.0);
+        let op_pt = to_pt(live_temp, live_duty);
+        let op_col = if firefly && self.accent_override.is_none() {
+            accent_hi
+        } else {
+            curve_hi
+        };
+
+        let cross_dash = LineDash {
+            segments: &[2.5, 3.5],
+            offset: 0,
+        };
+        frame.stroke(
+            &Path::line(Point::new(op_pt.x, pad_t), Point::new(op_pt.x, plot_bottom)),
+            Stroke {
+                style: canvas::Style::Solid(Color { a: 0.48, ..op_col }),
+                width: 1.0,
+                line_dash: cross_dash,
+                ..Stroke::default()
+            },
+        );
+        frame.stroke(
+            &Path::line(
+                Point::new(pad_l, op_pt.y),
+                Point::new(pad_l + plot_w, op_pt.y),
+            ),
+            Stroke {
+                style: canvas::Style::Solid(Color { a: 0.36, ..op_col }),
+                width: 1.0,
+                line_dash: cross_dash,
+                ..Stroke::default()
+            },
+        );
+
+        let pulse = 0.5 + 0.5 * (self.phase * 2.8).sin();
+        if glow > 0.05 {
+            fill_radial_glow(&mut frame, op_pt, 11.0, op_col, 0.50 * glow, 4);
+            frame.stroke(
+                &Path::circle(op_pt, 5.2 + 3.2 * pulse),
+                Stroke::default()
+                    .with_color(Color {
+                        a: (0.52 - 0.28 * pulse) * glow,
+                        ..op_col
+                    })
+                    .with_width(1.1),
+            );
+        }
+        frame.fill(&Path::circle(op_pt, 3.6), op_col);
+        frame.fill(&Path::circle(op_pt, 1.7), Color::WHITE);
+
+        // 4. Crisp animated 7-blade mini-fan emblem in the top-left corner
+        let fan_r = (h * 0.175).clamp(7.5, 12.5);
+        let fan_c = Point::new(pad_l + fan_r + 3.5, pad_t + fan_r + 2.5);
+        if glow > 0.05 && self.spinning {
+            fill_radial_glow(&mut frame, fan_c, fan_r * 1.45, curve_col, 0.24 * glow, 3);
+        }
+        frame.fill(&Path::circle(fan_c, fan_r), rgba(p.ground, 0.90));
+        frame.stroke(
+            &Path::circle(fan_c, fan_r),
+            Stroke::default()
+                .with_color(Color {
+                    a: 0.55,
+                    ..curve_col
+                })
+                .with_width(1.05),
+        );
+
+        let theta = if self.spinning {
+            self.phase * (1.8 + (live_duty / 100.0) * 6.4)
+        } else {
+            0.35
+        };
+        let hub_r = fan_r * 0.28;
+        let tip_r = fan_r * 0.84;
+        let blade_fill = Color {
+            a: if p.is_light { 0.32 } else { 0.36 },
+            ..curve_col
+        };
+        let blade_edge = Color {
+            a: 0.72,
+            ..curve_hi
+        };
+        for b_idx in 0..7 {
+            let a0 = theta + (b_idx as f32) * (2.0 * PI / 7.0);
+            let a_tip = a0 + 0.44;
+            let a_back = a0 + 0.14;
+            let root0 = Point::new(fan_c.x + a0.cos() * hub_r, fan_c.y + a0.sin() * hub_r);
+            let tip = Point::new(fan_c.x + a_tip.cos() * tip_r, fan_c.y + a_tip.sin() * tip_r);
+            let ctrl_lead = Point::new(
+                fan_c.x + (a0 + 0.12).cos() * (fan_r * 0.62),
+                fan_c.y + (a0 + 0.12).sin() * (fan_r * 0.62),
+            );
+            let ctrl_trail = Point::new(
+                fan_c.x + (a_tip + 0.16).cos() * (fan_r * 0.54),
+                fan_c.y + (a_tip + 0.16).sin() * (fan_r * 0.54),
+            );
+            let root1 = Point::new(
+                fan_c.x + a_back.cos() * hub_r,
+                fan_c.y + a_back.sin() * hub_r,
+            );
+            let blade = Path::new(|pb| {
+                pb.move_to(root0);
+                pb.quadratic_curve_to(ctrl_lead, tip);
+                pb.quadratic_curve_to(ctrl_trail, root1);
+                pb.close();
+            });
+            frame.fill(&blade, blade_fill);
+            let lead = Path::new(|pb| {
+                pb.move_to(root0);
+                pb.quadratic_curve_to(ctrl_lead, tip);
+            });
+            frame.stroke(
+                &lead,
+                Stroke::default().with_color(blade_edge).with_width(0.8),
+            );
+        }
+        frame.fill(&Path::circle(fan_c, hub_r), rgb(p.well));
+        frame.stroke(
+            &Path::circle(fan_c, hub_r),
+            Stroke::default().with_color(curve_hi).with_width(0.9),
+        );
+
+        // Compact live operating pill badge when room permits (avoids top-left fan emblem)
+        if w >= 148.0 && h >= 48.0 {
+            let lbl = if self.current_temp.is_some() {
+                format!("{live_temp:.0}°C → {live_duty:.0}%")
+            } else {
+                format!("{live_duty:.0}% duty")
+            };
+            let pw = (lbl.chars().count() as f32 * 5.4 + 12.0).min(w * 0.56);
+            let ph = 16.5_f32;
+            let min_safe_x = fan_c.x + fan_r + 6.0;
+            let px = if op_pt.x + 8.0 + pw <= pad_l + plot_w {
+                (op_pt.x + 8.0).max(min_safe_x)
+            } else {
+                (op_pt.x - pw - 8.0).max(min_safe_x)
+            }
+            .min((w - pw - 4.0).max(min_safe_x));
+            let py = if op_pt.y > pad_t + plot_h * 0.52 {
+                (op_pt.y - ph - 6.0).max(pad_t + 2.0)
+            } else {
+                (op_pt.y + 7.0).min(plot_bottom - ph - 2.0)
+            };
+            let pill = Path::rounded_rectangle(
+                Point::new(px, py),
+                Size::new(pw, ph),
+                iced::border::Radius::from(if p.square_corners { 0.0 } else { 4.5 }),
+            );
+            frame.fill(&pill, rgba(p.ground, 0.90));
+            frame.stroke(
+                &pill,
+                Stroke::default()
+                    .with_color(Color { a: 0.55, ..op_col })
+                    .with_width(0.9),
+            );
+            frame.fill_text(canvas::Text {
+                content: lbl,
+                position: Point::new(px + pw * 0.5, py + ph * 0.5),
+                color: rgb(p.ink),
+                size: iced::Pixels(9.5),
+                font: crate::theme::mono_font(),
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Center,
+                ..canvas::Text::default()
+            });
         }
 
         vec![frame.into_geometry()]

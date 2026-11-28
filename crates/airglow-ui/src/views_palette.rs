@@ -1,12 +1,15 @@
-//! Instant Command Palette (`Ctrl+K`), Overview Customize Drawer, and Floating Toast Overlay.
+//! Instant Command Palette (`Ctrl+K`), Frosted Keyboard Shortcuts Sheet (`?` / `Ctrl+/`),
+//! Overview Customize Drawer, and Floating Toast Overlay — upgraded with crisp `UiIcon`
+//! vectors, tactile milled pills, and `Ctrl + / Ctrl - / Ctrl 0` UI Zoom controls.
 
-use airglow_core::config::{ACCENT_SWATCHES, DesignId, RigStyle};
+use airglow_core::config::{ACCENT_SWATCHES, DesignId, RigStyle, UI_SCALE_PRESETS};
 use airglow_core::effects::{EffectId, HARMONIES};
 use iced::widget::{
     Space, button, column, container, mouse_area, row, scrollable, text, text_input,
 };
 use iced::{Alignment, Element, Length};
 
+use crate::canvas_ambient::{UiIcon, icon_canvas};
 use crate::theme::{self, DesignTokens};
 use crate::views::{color_dot, pill_toggle, preset_dot_color, status_dot};
 use crate::{AirglowApp, Message, Tab};
@@ -18,8 +21,21 @@ pub struct PaletteItem {
     pub title: String,
     pub subtitle: String,
     pub category: &'static str,
+    pub icon: UiIcon,
     pub swatch: Option<[u8; 3]>,
     pub message: Message,
+}
+
+fn tab_ui_icon(tab: Tab) -> UiIcon {
+    match tab {
+        Tab::Overview => UiIcon::Overview,
+        Tab::Lighting => UiIcon::Lighting,
+        Tab::Studio => UiIcon::Studio,
+        Tab::Fans => UiIcon::Fans,
+        Tab::Automations => UiIcon::Automations,
+        Tab::Devices => UiIcon::Devices,
+        Tab::Settings => UiIcon::Settings,
+    }
 }
 
 fn token_score(token: &str, title: &str, category: &str, subtitle: &str) -> Option<i32> {
@@ -62,7 +78,6 @@ fn palette_match_score(query: &str, title: &str, category: &str, subtitle: &str)
     let c = category.to_ascii_lowercase();
     let s = subtitle.to_ascii_lowercase();
 
-    // Direct full-phrase boost
     let phrase_bonus = if t.contains(&q) {
         260
     } else if s.contains(&q) {
@@ -82,7 +97,7 @@ fn palette_match_score(query: &str, title: &str, category: &str, subtitle: &str)
 }
 
 pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
-    let mut all = Vec::with_capacity(96);
+    let mut all = Vec::with_capacity(112);
 
     // Quick actions
     let lights_on = app.snapshot.effective_scene.on;
@@ -94,6 +109,7 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
         },
         subtitle: "Toggle all RGB zones smoothly".to_string(),
         category: "Action",
+        icon: UiIcon::Power,
         swatch: Some(if lights_on {
             [110, 100, 120]
         } else {
@@ -103,9 +119,71 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
     });
 
     all.push(PaletteItem {
+        title: if app.is_fullscreen {
+            "Exit Fullscreen (F11)".to_string()
+        } else {
+            "Toggle Fullscreen (F11)".to_string()
+        },
+        subtitle: "Switch between crisp windowed mode and true fullscreen".to_string(),
+        category: "Viewport",
+        icon: UiIcon::Expand,
+        swatch: Some([165, 222, 206]),
+        message: Message::ToggleFullscreen,
+    });
+
+    all.push(PaletteItem {
+        title: if app.theater_rig {
+            "Exit Theater Rig Mode (Shift+F11)".to_string()
+        } else {
+            "Theater Rig Mode (Shift+F11)".to_string()
+        },
+        subtitle: "Cinematic full-viewport Living Rig with floating CPU/GPU/Power HUD".to_string(),
+        category: "Viewport",
+        icon: UiIcon::Lighting,
+        swatch: Some([255, 195, 139]),
+        message: Message::ToggleTheaterRig,
+    });
+
+    all.push(PaletteItem {
+        title: if app.edit_tiles_mode {
+            "Finish Editing Dashboard Tiles".to_string()
+        } else {
+            "Customize Dashboard Tiles".to_string()
+        },
+        subtitle: "Drag-and-drop reorder, corner-drag resize, or restyle Overview Bento tiles"
+            .to_string(),
+        category: "Workshop",
+        icon: UiIcon::Customize,
+        swatch: Some([244, 143, 177]),
+        message: Message::ToggleEditTilesMode,
+    });
+
+    all.push(PaletteItem {
+        title: "Add Overview Tile".to_string(),
+        subtitle: "Open the Tile Catalog (Controls, 12 Sensors & live LHM sensors)".to_string(),
+        category: "Workshop",
+        icon: UiIcon::Plus,
+        swatch: Some([197, 155, 255]),
+        message: Message::OpenAddTileFromPalette,
+    });
+
+    all.push(PaletteItem {
+        title: "Check for Updates".to_string(),
+        subtitle: format!(
+            "Check GitHub Releases for newer Airglow builds (v{})",
+            airglow_core::updates::current_version()
+        ),
+        category: "Updates",
+        icon: UiIcon::Refresh,
+        swatch: Some([107, 203, 247]),
+        message: Message::CheckForUpdates,
+    });
+
+    all.push(PaletteItem {
         title: "Keyboard Shortcuts".to_string(),
-        subtitle: "View all quick keys (? or Ctrl+/)".to_string(),
+        subtitle: "View all quick keys & UI Zoom shortcuts (? or Ctrl+/)".to_string(),
         category: "Action",
+        icon: UiIcon::Sparkle,
         swatch: Some([209, 185, 240]),
         message: Message::ToggleShortcuts,
     });
@@ -116,20 +194,22 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
         } else {
             "Switch to Compact Mini-Mode".to_string()
         },
-        subtitle: "430×410 desktop companion widget (Ctrl+M)".to_string(),
-        category: "Action",
+        subtitle: "430×404 desktop companion widget (Ctrl+M)".to_string(),
+        category: "Viewport",
+        icon: UiIcon::Minimize,
         swatch: Some([244, 143, 177]),
         message: Message::ToggleCompactMode,
     });
 
     all.push(PaletteItem {
         title: if app.customize_open {
-            "Close Customize Drawer".to_string()
+            "Close Control Center Drawer".to_string()
         } else {
-            "Customize Workspace".to_string()
+            "Open Control Center Drawer".to_string()
         },
-        subtitle: "Toggle tiles, header pins, accent colour, rig style & FPS".to_string(),
+        subtitle: "Accent colour, UI scale, rig style, FPS power mode & header pins".to_string(),
         category: "Action",
+        icon: UiIcon::Sliders,
         swatch: Some([244, 143, 177]),
         message: Message::OpenCustomizeFromPalette,
     });
@@ -137,16 +217,40 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
     all.push(PaletteItem {
         title: "Surprise Me (Studio)".to_string(),
         subtitle: "Generate a fresh multi-layer Studio lighting scene".to_string(),
-        category: "Action",
+        category: "Studio",
+        icon: UiIcon::Studio,
         swatch: Some([197, 155, 255]),
         message: Message::StudioSurpriseMe,
     });
 
+    // UI Scale / HiDPI Zoom commands (`Ctrl + / Ctrl - / Ctrl 0`)
+    for &(pct, raw_lbl) in UI_SCALE_PRESETS {
+        let label = if pct == 0 {
+            "UI Scale: Auto (HiDPI) — Ctrl+0".to_string()
+        } else {
+            format!("UI Scale: {raw_lbl} Zoom")
+        };
+        let sub = if pct == 0 {
+            "Automatic 1.25× on 1440p & 1.50× on 4K displays".to_string()
+        } else {
+            "Set manual crisp vector UI scale factor (Ctrl + / Ctrl -)".to_string()
+        };
+        all.push(PaletteItem {
+            title: label,
+            subtitle: sub,
+            category: "Scale",
+            icon: UiIcon::Expand,
+            swatch: None,
+            message: Message::SetUiScalePct(pct),
+        });
+    }
+
     if let Some(rem) = app.snapshot.sleep_timer_remaining_s {
         all.push(PaletteItem {
             title: "Cancel Sleep Timer".to_string(),
-            subtitle: format!("Currently counting down ({}m {:02}s left)", rem / 60, rem % 60),
+            subtitle: format!("Counting down ({}m {:02}s left)", rem / 60, rem % 60),
             category: "Sleep",
+            icon: UiIcon::Reset,
             swatch: Some([255, 138, 117]),
             message: Message::CancelSleepTimer,
         });
@@ -156,6 +260,7 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
             title: format!("Sleep Timer: {mins} min"),
             subtitle: "Smoothly dim over the final 2 minutes, then turn lights off".to_string(),
             category: "Sleep",
+            icon: UiIcon::Power,
             swatch: Some([209, 185, 240]),
             message: Message::StartSleepTimer(mins),
         });
@@ -164,7 +269,8 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
     all.push(PaletteItem {
         title: "Rescan Hardware".to_string(),
         subtitle: "Refresh USB HID controllers, OpenRGB SDK & LHM fans".to_string(),
-        category: "Action",
+        category: "Devices",
+        icon: UiIcon::Refresh,
         swatch: Some([165, 222, 206]),
         message: Message::RescanHardware,
     });
@@ -173,10 +279,23 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
     for (idx, tab) in Tab::ALL.iter().enumerate() {
         all.push(PaletteItem {
             title: format!("Go to {}", tab.label()),
-            subtitle: format!("Switch tab (shortcut {})", idx + 1),
+            subtitle: format!("Switch workspace view (shortcut {})", idx + 1),
             category: "Tab",
+            icon: tab_ui_icon(*tab),
             swatch: None,
             message: Message::SelectTab(*tab),
+        });
+    }
+
+    // Settings Sections
+    for sec in crate::SettingsSection::ALL {
+        all.push(PaletteItem {
+            title: format!("Settings: {}", sec.label()),
+            subtitle: sec.subtitle().to_string(),
+            category: "Settings",
+            icon: UiIcon::Settings,
+            swatch: None,
+            message: Message::JumpSettingsSection(sec),
         });
     }
 
@@ -189,17 +308,19 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
             title: format!("Look: {}", look.name),
             subtitle: format!("{} · {} rig", look.design.label(), look.rig_style.label()),
             category: "Look",
+            icon: UiIcon::Customize,
             swatch: Some(swatch),
             message: Message::ApplyLook(look.id.clone()),
         });
     }
 
-    // Built-in & saved Profiles
+    // Profiles
     for preset in &app.snapshot.config.presets {
         all.push(PaletteItem {
             title: format!("Profile: {}", preset.name),
             subtitle: format!("{} · {}% brightness", preset.effect.label(), preset.brightness),
             category: "Profile",
+            icon: UiIcon::Sparkle,
             swatch: Some(preset_dot_color(preset.effect, preset.params.color)),
             message: Message::ApplyPreset(preset.id.clone()),
         });
@@ -211,6 +332,7 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
             title: format!("Effect: {}", eff.label()),
             subtitle: eff.description().to_string(),
             category: "Effect",
+            icon: UiIcon::Lighting,
             swatch: Some(preset_dot_color(eff, app.snapshot.config.scene.params.color)),
             message: Message::SelectEffect(eff),
         });
@@ -222,6 +344,7 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
             title: format!("Palette: {}", h.name),
             subtitle: "Apply 3-colour lighting harmony".to_string(),
             category: "Harmony",
+            icon: UiIcon::Sparkle,
             swatch: Some(h.colors[0]),
             message: Message::ApplyHarmony(idx),
         });
@@ -237,6 +360,7 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
             title: format!("Fan Curve: {label}"),
             subtitle: desc.to_string(),
             category: "Fans",
+            icon: UiIcon::Fans,
             swatch: Some([165, 222, 206]),
             message: Message::SelectFanCurve(id.to_string()),
         });
@@ -248,6 +372,7 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
             title: format!("Design: {}", d.label()),
             subtitle: d.tagline().to_string(),
             category: "Design",
+            icon: UiIcon::Customize,
             swatch: Some(theme::hex_to_rgb_arr(d.palette().brass)),
             message: Message::SetDesign(d),
         });
@@ -259,6 +384,7 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
             title: format!("Accent: {name}"),
             subtitle: "Live accent colour override across all themes".to_string(),
             category: "Accent",
+            icon: UiIcon::Sparkle,
             swatch: Some(*rgb),
             message: Message::SetAccentOverride(Some(*rgb)),
         });
@@ -267,12 +393,12 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
         title: "Accent: Design Default".to_string(),
         subtitle: "Reset accent colour override".to_string(),
         category: "Accent",
+        icon: UiIcon::Reset,
         swatch: None,
         message: Message::SetAccentOverride(None),
     });
 
     if app.palette_query.trim().is_empty() {
-        // Curated high-utility default list when first opened
         all.truncate(16);
         return all;
     }
@@ -309,24 +435,24 @@ pub fn view_command_palette<'a>(
     };
 
     let search_bar = row![
-        text("⌘")
-            .size(16)
-            .font(theme::ui_semibold(t.design))
-            .color(theme::rgb(p.brass_hi)),
+        container(icon_canvas(UiIcon::Search, theme::rgb(p.brass_hi), 17.0))
+            .padding(6)
+            .style(theme::chip_style(t, Some(p.brass))),
         text_input(
-            "Jump to tab, effect, design, harmony, profile, or sleep timer…",
+            "Jump to tab, effect, UI scale, design, harmony, profile, or sleep timer…",
             &app.palette_query
         )
         .id(iced::widget::Id::new(PALETTE_INPUT_ID))
         .size(14)
-        .padding([8, 10])
+        .padding([9, 12])
         .style(theme::text_input_style(t))
         .on_input(Message::PaletteQueryChanged)
         .on_submit(Message::PaletteExecuteSelected)
         .width(Length::Fill),
-        container(text("ESC").size(10.5).font(mono).color(theme::rgb(p.ink_3)))
-            .padding([4, 8])
-            .style(theme::chip_style(t, None)),
+        button(text("ESC").size(10.5).font(mono))
+            .padding([5, 10])
+            .style(theme::shortcut_badge_btn(t, false))
+            .on_press(Message::CloseCommandPalette),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
@@ -346,15 +472,27 @@ pub fn view_command_palette<'a>(
     } else {
         for (idx, item) in items.iter().enumerate() {
             let selected = idx == sel_idx;
-            let mut r = row![].spacing(10).align_y(Alignment::Center);
-            if let Some(rgb) = item.swatch {
-                r = r.push(color_dot(rgb, 10.0));
+            let icon_col = if selected {
+                theme::rgb(p.brass_hi)
             } else {
-                r = r.push(status_dot(
-                    if selected { p.brass_hi } else { p.ink_3 },
-                    7.0,
-                ));
+                theme::rgb(p.ink_2)
+            };
+
+            let mut r = row![
+                container(icon_canvas(item.icon, icon_col, 15.0))
+                    .padding(5)
+                    .style(theme::chip_style(
+                        t,
+                        if selected { Some(p.brass) } else { None }
+                    )),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center);
+
+            if let Some(rgb) = item.swatch {
+                r = r.push(color_dot(rgb, 9.5));
             }
+
             r = r
                 .push(
                     column![
@@ -377,7 +515,7 @@ pub fn view_command_palette<'a>(
                             .size(10)
                             .font(theme::ui_semibold(t.design)),
                     )
-                    .padding([3, 8])
+                    .padding([3, 9])
                     .style(theme::chip_style(
                         t,
                         if selected { Some(p.brass_hi) } else { None },
@@ -385,10 +523,14 @@ pub fn view_command_palette<'a>(
                 );
             if selected {
                 r = r.push(
-                    text("↵")
-                        .size(12)
-                        .font(mono)
-                        .color(theme::rgb(p.brass_hi)),
+                    container(
+                        text("↵")
+                            .size(11)
+                            .font(mono)
+                            .color(theme::rgb(p.brass_hi)),
+                    )
+                    .padding([2, 7])
+                    .style(theme::chip_style(t, Some(p.brass))),
                 );
             }
 
@@ -396,30 +538,34 @@ pub fn view_command_palette<'a>(
                 button(r)
                     .padding([7, 12])
                     .width(Length::Fill)
-                    .height(Length::Fixed(48.0))
+                    .height(Length::Fixed(50.0))
                     .style(theme::palette_row_btn(t, selected))
                     .on_press(Message::PaletteExecuteIndex(idx)),
             );
         }
     }
 
-    let visible_rows = items.len().clamp(1, 6);
+    let visible_rows = items.len().clamp(1, 7);
     let list_height = if items.is_empty() {
-        72.0
+        76.0
     } else {
-        (visible_rows as f32) * 48.0 + ((visible_rows.saturating_sub(1)) as f32) * 4.0
+        (visible_rows as f32) * 50.0 + ((visible_rows.saturating_sub(1)) as f32) * 4.0
     };
 
     let footer = row![
-        text("↑↓ Navigate  ·  ↵ Run  ·  Esc Close  ·  Ctrl+M Mini")
+        text("↑↓ Navigate  ·  ↵ Run  ·  Ctrl +/-/0 UI Zoom  ·  Esc Close")
             .size(11)
             .font(font)
             .color(theme::rgb(p.ink_3)),
         Space::new().width(Length::Fill),
-        text(format!("{} command(s)", items.len()))
-            .size(11)
-            .font(mono)
-            .color(theme::rgb(p.ink_3)),
+        container(
+            text(format!("{} cmd(s)", items.len()))
+                .size(10.5)
+                .font(mono)
+                .color(theme::rgb(p.ink_3)),
+        )
+        .padding([2, 8])
+        .style(theme::chip_style(t, None)),
     ]
     .align_y(Alignment::Center);
 
@@ -430,8 +576,8 @@ pub fn view_command_palette<'a>(
         }
     });
 
-    let modal_w = if app.compact_window { 398.0 } else { 610.0 };
-    let top_pad = if app.compact_window { 24.0 } else { 72.0 };
+    let modal_w = if app.compact_window { 404.0 } else { 640.0 };
+    let top_pad = if app.compact_window { 24.0 } else { 68.0 };
     let modal_card = mouse_area(
         container(
             column![
@@ -466,54 +612,71 @@ pub fn view_command_palette<'a>(
     .into()
 }
 
-/// Frosted 2-column Keyboard Shortcuts modal (`?` or `Ctrl+/`).
+/// Frosted 2-column Keyboard Shortcuts modal (`?` or `Ctrl+/`), documenting UI Zoom (`Ctrl + / - / 0`).
 pub fn view_shortcuts_modal<'a>(t: DesignTokens, font: iced::Font) -> Element<'a, Message> {
     let p = t.p;
     let mono = theme::mono_font();
 
     let shortcut_row = |keys: &'static str, desc: &'static str| {
-        row![
-            container(
-                text(keys)
-                    .size(11)
-                    .font(mono)
-                    .color(theme::rgb(p.brass_hi)),
-            )
-            .padding([4, 9])
-            .style(theme::chip_style(t, Some(p.brass))),
-            Space::new().width(Length::Fill),
-            text(desc).size(12.5).font(font).color(theme::rgb(p.ink)),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center)
+        container(
+            row![
+                container(
+                    text(keys)
+                        .size(11)
+                        .font(mono)
+                        .color(theme::rgb(p.brass_hi)),
+                )
+                .padding([3, 9])
+                .style(theme::chip_style(t, Some(p.brass))),
+                Space::new().width(Length::Fill),
+                text(desc).size(12).font(font).color(theme::rgb(p.ink)),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        )
+        .padding([6, 10])
+        .width(Length::Fill)
+        .style(theme::well_style(t))
     };
 
     let left_col = column![
-        text("NAVIGATION & OVERLAYS")
-            .size(10.5)
-            .font(theme::ui_semibold(t.design))
-            .color(theme::rgb(t.pink_rose)),
-        shortcut_row("1 – 7", "Switch workspace tabs"),
-        shortcut_row("Ctrl + K", "Command Palette"),
+        row![
+            icon_canvas(UiIcon::Expand, theme::rgb(t.pink_rose), 13.5),
+            text("NAVIGATION & VIEWPORT")
+                .size(10.5)
+                .font(theme::ui_semibold(t.design))
+                .color(theme::rgb(t.pink_rose)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+        shortcut_row("1 – 7  /  Ctrl+1–7", "Switch workspace tabs"),
+        shortcut_row("Ctrl +  /  Ctrl -", "Zoom UI scale up / down"),
+        shortcut_row("Ctrl + 0", "Reset UI scale to Auto (HiDPI)"),
+        shortcut_row("F11", "Toggle Fullscreen"),
+        shortcut_row("Shift + F11", "Theater Rig mode"),
         shortcut_row("Ctrl + M", "Compact Mini-Mode"),
-        shortcut_row("?  /  Ctrl + /", "Keyboard shortcuts"),
-        shortcut_row("Esc", "Close active overlay"),
     ]
-    .spacing(10)
+    .spacing(8)
     .width(Length::Fill);
 
     let right_col = column![
-        text("STUDIO & PALETTE")
-            .size(10.5)
-            .font(theme::ui_semibold(t.design))
-            .color(theme::rgb(t.data_primary)),
+        row![
+            icon_canvas(UiIcon::Sparkle, theme::rgb(t.data_primary), 13.5),
+            text("COMMAND PALETTE & STUDIO")
+                .size(10.5)
+                .font(theme::ui_semibold(t.design))
+                .color(theme::rgb(t.data_primary)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+        shortcut_row("Ctrl + K", "Open Command Palette"),
+        shortcut_row("?  /  Ctrl + /", "Keyboard Shortcuts sheet"),
+        shortcut_row("↑  /  ↓  /  Enter", "Navigate & run command"),
         shortcut_row("Ctrl + Z", "Studio Undo (30 steps)"),
-        shortcut_row("Ctrl + Y", "Studio Redo"),
-        shortcut_row("↑  /  ↓", "Navigate palette commands"),
-        shortcut_row("Enter", "Run selected command"),
-        shortcut_row("Ctrl + 1–7", "Jump tab anytime"),
+        shortcut_row("Ctrl + Y  /  ⇧⌘Z", "Studio Redo"),
+        shortcut_row("Esc", "Close active overlay"),
     ]
-    .spacing(10)
+    .spacing(8)
     .width(Length::Fill);
 
     let divider = container(Space::new().width(Length::Fill).height(1)).style(move |_| {
@@ -527,12 +690,15 @@ pub fn view_shortcuts_modal<'a>(t: DesignTokens, font: iced::Font) -> Element<'a
         container(
             column![
                 row![
+                    container(icon_canvas(UiIcon::Sparkle, theme::rgb(p.brass_hi), 18.0))
+                        .padding(7)
+                        .style(theme::chip_style(t, Some(p.brass))),
                     column![
                         text("Keyboard Shortcuts")
                             .size(20)
                             .font(theme::display_semibold(t.design))
                             .color(theme::rgb(p.ink)),
-                        text("Fast hands-on-keyboard control across every Airglow view.")
+                        text("Instant hands-on-keyboard control & HiDPI viewport zoom across Airglow.")
                             .size(11.5)
                             .font(font)
                             .color(theme::rgb(p.ink_3)),
@@ -540,18 +706,19 @@ pub fn view_shortcuts_modal<'a>(t: DesignTokens, font: iced::Font) -> Element<'a
                     .spacing(2)
                     .width(Length::Fill),
                     button(text("ESC").size(10.5).font(mono))
-                        .padding([4, 9])
+                        .padding([5, 11])
                         .style(theme::shortcut_badge_btn(t, false))
                         .on_press(Message::ToggleShortcuts),
                 ]
+                .spacing(10)
                 .align_y(Alignment::Center),
                 divider,
-                row![left_col, Space::new().width(18), right_col].spacing(8),
+                row![left_col, right_col].spacing(14),
             ]
             .spacing(14),
         )
         .padding(20)
-        .width(Length::Fixed(580.0))
+        .width(Length::Fixed(650.0))
         .style(theme::palette_modal_style(t)),
     )
     .on_press(Message::Noop);
@@ -559,7 +726,7 @@ pub fn view_shortcuts_modal<'a>(t: DesignTokens, font: iced::Font) -> Element<'a
     mouse_area(
         container(
             column![
-                Space::new().height(Length::Fixed(110.0)),
+                Space::new().height(Length::Fixed(92.0)),
                 container(modal_card).center_x(Length::Fill),
                 Space::new().height(Length::Fill),
             ]
@@ -574,7 +741,7 @@ pub fn view_shortcuts_modal<'a>(t: DesignTokens, font: iced::Font) -> Element<'a
     .into()
 }
 
-/// Interactive collapsible Customize Drawer right on Overview.
+/// Interactive collapsible Control Center / Customize Drawer right on Overview.
 pub fn view_customize_drawer<'a>(
     app: &'a AirglowApp,
     t: DesignTokens,
@@ -589,7 +756,7 @@ pub fn view_customize_drawer<'a>(
         let selected = appr.accent_override == Some(*rgb);
         let _ = name;
         accent_row = accent_row.push(
-            button(Space::new().width(18).height(18))
+            button(Space::new().width(20).height(20))
                 .padding(0)
                 .width(Length::Fixed(23.0))
                 .height(Length::Fixed(23.0))
@@ -599,61 +766,107 @@ pub fn view_customize_drawer<'a>(
     }
     accent_row = accent_row.push(
         button(text("Default").size(11).font(font))
-            .padding([4, 9])
+            .padding([4, 10])
             .style(theme::btn_secondary(t, appr.accent_override.is_none()))
             .on_press(Message::SetAccentOverride(None)),
     );
+
+    // UI Scale segmented rail
+    let mut scale_rail = row![].spacing(2);
+    for &(pct, lbl) in UI_SCALE_PRESETS {
+        scale_rail = scale_rail.push(
+            button(text(lbl).size(11).font(font))
+                .padding([4, 9])
+                .style(theme::segmented_pill_style(t, appr.ui_scale_pct == pct))
+                .on_press(Message::SetUiScalePct(pct)),
+        );
+    }
 
     // Rig Style segmented rail
     let mut rig_rail = row![].spacing(2);
     for style in RigStyle::ALL {
         rig_rail = rig_rail.push(
-            button(text(style.label()).size(11.5).font(font))
-                .padding([5, 10])
-                .style(theme::segmented_item_btn(t, appr.rig_style == style))
+            button(text(style.label()).size(11).font(font))
+                .padding([4, 9])
+                .style(theme::segmented_pill_style(t, appr.rig_style == style))
                 .on_press(Message::SetRigStyle(style)),
         );
     }
 
-    // GPU Power Mode (UI FPS Cap) segmented rail
+    // GPU Power Mode segmented rail
     let mut fps_rail = row![].spacing(2);
-    for (fps, label) in [(15u8, "Eco 15fps"), (30, "Balanced 30fps"), (60, "Smooth 60fps")] {
+    for (fps, label) in [(15u8, "15fps"), (30, "30fps"), (60, "60fps")] {
         fps_rail = fps_rail.push(
             button(text(label).size(11).font(font))
-                .padding([5, 9])
-                .style(theme::segmented_item_btn(t, appr.ui_fps_cap == fps))
+                .padding([4, 9])
+                .style(theme::segmented_pill_style(t, appr.ui_fps_cap == fps))
                 .on_press(Message::SetUiFpsCap(fps)),
         );
     }
 
-    // Overview Tile visibility chips
-    let mut tile_row = row![].spacing(6).align_y(Alignment::Center);
-    for (key, label) in [
-        ("profiles", "Profiles"),
-        ("power", "Power"),
-        ("fans", "Fans"),
-        ("memory", "Memory"),
-        ("drive", "Drive"),
-        ("download", "Download"),
-        ("cost", "Cost"),
-        ("hardware", "Hardware"),
-    ] {
-        let vis = appr.is_tile_visible(key);
-        tile_row = tile_row.push(
-            button(
-                text(if vis {
-                    format!("✓ {label}")
+    // Dashboard Tile Workshop quick actions
+    let tile_row = row![
+        button(
+            row![
+                icon_canvas(UiIcon::Customize, theme::rgb(p.brass_hi), 12.5),
+                text(if app.edit_tiles_mode {
+                    "Done editing"
                 } else {
-                    label.to_string()
+                    "Edit tiles"
                 })
-                .size(11)
-                .font(font),
-            )
-            .padding([4, 9])
-            .style(theme::btn_secondary(t, vis))
-            .on_press(Message::ToggleOverviewTile(key.to_string())),
-        );
-    }
+                .size(11.5)
+                .font(theme::ui_semibold(t.design)),
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center),
+        )
+        .padding([5, 11])
+        .style(theme::btn_secondary(t, app.edit_tiles_mode))
+        .on_press(Message::ToggleEditTilesMode),
+        button(
+            row![
+                icon_canvas(UiIcon::Plus, theme::rgb(t.primary_ink), 12.0),
+                text("Add tile")
+                    .size(11.5)
+                    .font(theme::ui_semibold(t.design)),
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center),
+        )
+        .padding([5, 12])
+        .style(theme::btn_primary(t))
+        .on_press(Message::ToggleAddTileCatalog),
+        button(
+            row![
+                icon_canvas(UiIcon::Expand, theme::rgb(p.ink_2), 12.0),
+                text("Theater").size(11.5).font(font),
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center),
+        )
+        .padding([5, 11])
+        .style(theme::btn_secondary(t, app.theater_rig))
+        .on_press(Message::ToggleTheaterRig),
+        button(
+            text(if app.snapshot.config.fullscreen_fill_width {
+                "✓ Full-bleed width"
+            } else {
+                "Fluid centered"
+            })
+            .size(11.5)
+            .font(font),
+        )
+        .padding([5, 11])
+        .style(theme::btn_secondary(
+            t,
+            app.snapshot.config.fullscreen_fill_width
+        ))
+        .on_press(Message::SetFullscreenFillWidth(
+            !app.snapshot.config.fullscreen_fill_width
+        )),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
 
     // Header pinned sensor chips
     let mut pin_row = row![].spacing(6).align_y(Alignment::Center);
@@ -702,7 +915,7 @@ pub fn view_customize_drawer<'a>(
         .align_y(Alignment::Center),
         row![
             pill_toggle(t, appr.firefly_particles, Message::ToggleFireflyParticles),
-            text("Fireflies").size(11.5).font(font),
+            text("Motes").size(11.5).font(font),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -719,7 +932,8 @@ pub fn view_customize_drawer<'a>(
     container(
         column![
             row![
-                text("Customize workspace")
+                icon_canvas(UiIcon::Sliders, theme::rgb(p.brass_hi), 15.0),
+                text("Control Center")
                     .size(15)
                     .font(theme::display_semibold(t.design))
                     .color(theme::rgb(p.ink)),
@@ -730,14 +944,20 @@ pub fn view_customize_drawer<'a>(
                     .color(theme::rgb(p.ink_3)),
                 Space::new().width(Length::Fill),
                 button(
-                    text("Done")
-                        .size(11.5)
-                        .font(theme::ui_semibold(t.design)),
+                    row![
+                        icon_canvas(UiIcon::Check, theme::rgb(t.primary_ink), 12.0),
+                        text("Done")
+                            .size(11.5)
+                            .font(theme::ui_semibold(t.design)),
+                    ]
+                    .spacing(5)
+                    .align_y(Alignment::Center),
                 )
                 .padding([5, 13])
                 .style(theme::btn_primary(t))
                 .on_press(Message::ToggleCustomizeDrawer),
             ]
+            .spacing(7)
             .align_y(Alignment::Center),
             row![
                 column![
@@ -750,27 +970,33 @@ pub fn view_customize_drawer<'a>(
                 .spacing(6)
                 .width(Length::FillPortion(5)),
                 column![
-                    text("RIG VISUAL STYLE")
+                    text("UI SCALE")
                         .size(10.5)
                         .font(theme::ui_semibold(t.design))
                         .color(theme::rgb(p.ink_3)),
-                    container(rig_rail)
+                    container(scale_rail)
                         .padding(2)
-                        .style(theme::segmented_rail_style(t)),
+                        .style(theme::segmented_track_style(t)),
                 ]
                 .spacing(6)
                 .width(Length::FillPortion(4)),
                 column![
-                    text("GPU POWER MODE")
+                    text("RIG STYLE & FPS")
                         .size(10.5)
                         .font(theme::ui_semibold(t.design))
                         .color(theme::rgb(p.ink_3)),
-                    container(fps_rail)
-                        .padding(2)
-                        .style(theme::segmented_rail_style(t)),
+                    row![
+                        container(rig_rail)
+                            .padding(2)
+                            .style(theme::segmented_track_style(t)),
+                        container(fps_rail)
+                            .padding(2)
+                            .style(theme::segmented_track_style(t)),
+                    ]
+                    .spacing(6),
                 ]
                 .spacing(6)
-                .width(Length::FillPortion(4)),
+                .width(Length::FillPortion(5)),
             ]
             .spacing(12)
             .align_y(Alignment::End),
@@ -862,7 +1088,6 @@ mod tests {
             palette_match_score("pink", "Design: Spore", "Design", "Warm espresso and oyster pink")
                 .is_some()
         );
-        // Must NOT match unrelated designs via scattered p-i-n-k letters
         assert!(
             palette_match_score("pink", "Design: Paper", "Design", "Daylight paper and dark ink")
                 .is_none()
@@ -885,9 +1110,12 @@ mod tests {
             )
             .is_none()
         );
-        // Multi-word prefix search works
         assert!(
             palette_match_score("firefly p", "Look: Firefly Pink", "Look", "Firefly")
+                .is_some()
+        );
+        assert!(
+            palette_match_score("125%", "UI Scale: 125% Zoom", "Scale", "HiDPI")
                 .is_some()
         );
     }

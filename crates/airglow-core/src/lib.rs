@@ -16,3 +16,4 @@ pub mod migrate;
 pub mod openrgb;
 pub mod sensors;
 pub mod system;
+pub mod updates;

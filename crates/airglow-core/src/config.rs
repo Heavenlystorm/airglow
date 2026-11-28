@@ -797,6 +797,14 @@ impl RigStyle {
     }
 }
 
+pub const UI_SCALE_PRESETS: &[(u16, &str)] = &[
+    (0, "Auto"),
+    (100, "100%"),
+    (115, "115%"),
+    (125, "125%"),
+    (140, "140%"),
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppearanceConfig {
     #[serde(default)]
@@ -813,6 +821,8 @@ pub struct AppearanceConfig {
     pub firefly_particles: bool,
     #[serde(default)]
     pub compact_density: bool,
+    #[serde(default)]
+    pub ui_scale_pct: u16,
     #[serde(default = "default_ui_fps_cap")]
     pub ui_fps_cap: u8,
     #[serde(default = "default_pulse_window_mins")]
@@ -833,6 +843,7 @@ impl Default for AppearanceConfig {
             ambient_bloom: true,
             firefly_particles: true,
             compact_density: false,
+            ui_scale_pct: 0,
             ui_fps_cap: 30,
             pulse_window_mins: 5,
             hidden_overview_tiles: Vec::new(),
@@ -842,7 +853,9 @@ impl Default for AppearanceConfig {
 }
 
 impl AppearanceConfig {
-    pub fn normalized(mut self) -> Self {
+    pub const UI_SCALE_PRESETS: &'static [(u16, &'static str)] = UI_SCALE_PRESETS;
+
+    pub fn normalize(&mut self) {
         self.ui_fps_cap = match self.ui_fps_cap {
             0..=22 => 15,
             23..=45 => 30,
@@ -853,7 +866,28 @@ impl AppearanceConfig {
             3..=7 => 5,
             _ => 10,
         };
+        if self.ui_scale_pct != 0 {
+            self.ui_scale_pct = self.ui_scale_pct.clamp(85, 150);
+        }
+    }
+
+    pub fn normalized(mut self) -> Self {
+        self.normalize();
         self
+    }
+
+    pub fn resolve_scale_factor(&self, approx_physical_width: f32) -> f32 {
+        if self.ui_scale_pct > 0 {
+            (self.ui_scale_pct as f32 / 100.0).clamp(0.85, 1.50)
+        } else if approx_physical_width >= 3250.0 {
+            1.50
+        } else if approx_physical_width >= 2200.0 {
+            1.25
+        } else if approx_physical_width >= 1820.0 {
+            1.10
+        } else {
+            1.0
+        }
     }
 
     pub fn is_tile_visible(&self, tile_id: &str) -> bool {
@@ -960,6 +994,725 @@ impl Default for AppSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+impl UpdateChannel {
+    pub const ALL: [UpdateChannel; 2] = [Self::Stable, Self::Beta];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Stable => "Stable",
+            Self::Beta => "Beta",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TileStyle {
+    #[default]
+    Auto,
+    Number,
+    Gauge,
+    Graph,
+    Bar,
+}
+
+impl TileStyle {
+    pub const ALL: [TileStyle; 5] = [
+        Self::Auto,
+        Self::Number,
+        Self::Gauge,
+        Self::Graph,
+        Self::Bar,
+    ];
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Auto => Self::Number,
+            Self::Number => Self::Gauge,
+            Self::Gauge => Self::Graph,
+            Self::Graph => Self::Bar,
+            Self::Bar => Self::Auto,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Instrument",
+            Self::Number => "Number",
+            Self::Gauge => "Gauge",
+            Self::Graph => "Graph",
+            Self::Bar => "Bar",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OverviewTileKind {
+    Lighting,
+    Profiles,
+    Fans,
+    Hardware,
+    DeskDisplay,
+    Lookbook,
+    CpuTemp,
+    GpuTemp,
+    GpuHotspot,
+    LiquidTemp,
+    CpuLoad,
+    GpuLoad,
+    RamUsage,
+    DriveTemp,
+    PowerDraw,
+    CostEfficiency,
+    NetDown,
+    NetUp,
+    CustomSensor {
+        sensor_id: String,
+        label: String,
+        unit: String,
+    },
+}
+
+impl OverviewTileKind {
+    pub fn builtin_controls() -> Vec<Self> {
+        vec![
+            Self::Lighting,
+            Self::Profiles,
+            Self::Fans,
+            Self::Hardware,
+            Self::DeskDisplay,
+            Self::Lookbook,
+        ]
+    }
+
+    pub fn builtin_sensors() -> Vec<Self> {
+        vec![
+            Self::CpuTemp,
+            Self::GpuTemp,
+            Self::GpuHotspot,
+            Self::LiquidTemp,
+            Self::CpuLoad,
+            Self::GpuLoad,
+            Self::RamUsage,
+            Self::DriveTemp,
+            Self::PowerDraw,
+            Self::CostEfficiency,
+            Self::NetDown,
+            Self::NetUp,
+        ]
+    }
+
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Lighting => "Living Rig",
+            Self::Profiles => "Profiles",
+            Self::Fans => "Case Fans",
+            Self::Hardware => "Hardware Status",
+            Self::DeskDisplay => "Desk Display",
+            Self::Lookbook => "Lighting Lookbook",
+            Self::CpuTemp => "CPU Temp",
+            Self::GpuTemp => "GPU Temp",
+            Self::GpuHotspot => "GPU Hotspot",
+            Self::LiquidTemp => "Liquid Temp",
+            Self::CpuLoad => "CPU Load",
+            Self::GpuLoad => "GPU Load",
+            Self::RamUsage => "RAM Usage",
+            Self::DriveTemp => "Drive Temp",
+            Self::PowerDraw => "Power Draw",
+            Self::CostEfficiency => "Energy Cost",
+            Self::NetDown => "Net Down",
+            Self::NetUp => "Net Up",
+            Self::CustomSensor {
+                sensor_id, label, ..
+            } => {
+                let trimmed = label.trim();
+                if !trimmed.is_empty() {
+                    trimmed
+                } else {
+                    sensor_id.as_str()
+                }
+            }
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Lighting => "Live rig stage with quick brightness, power, and expand controls.",
+            Self::Profiles => "One-click lighting and cooling profiles with live trial preview.",
+            Self::Fans => "Live cooling curve selector, fan RPM telemetry, and duty readout.",
+            Self::Hardware => "USB HID controllers, OpenRGB bridge, and LHM sensor status.",
+            Self::DeskDisplay => "Ambient desk clock, focus timer, and compact mini-mode launcher.",
+            Self::Lookbook => "Curated lighting harmonies and favorite effects at a glance.",
+            Self::CpuTemp => "Processor package temperature and recent thermal trend.",
+            Self::GpuTemp => "Graphics core temperature and recent thermal trend.",
+            Self::GpuHotspot => "Graphics hotspot peak temperature readout.",
+            Self::LiquidTemp => "AIO coolant temperature readout.",
+            Self::CpuLoad => "Processor utilization percentage.",
+            Self::GpuLoad => "Graphics card utilization percentage.",
+            Self::RamUsage => "System memory usage and capacity.",
+            Self::DriveTemp => "Primary NVMe / SSD thermal reading.",
+            Self::PowerDraw => "Combined CPU and GPU package power draw in watts.",
+            Self::CostEfficiency => "Estimated hourly electricity cost from live wattage.",
+            Self::NetDown => "Network download throughput.",
+            Self::NetUp => "Network upload throughput.",
+            Self::CustomSensor { .. } => "Pinned live LibreHardwareMonitor sensor tile.",
+        }
+    }
+
+    pub fn category(&self) -> &'static str {
+        match self {
+            Self::Lighting
+            | Self::Profiles
+            | Self::Fans
+            | Self::Hardware
+            | Self::DeskDisplay
+            | Self::Lookbook => "Controls",
+            Self::CustomSensor { .. } => "Live Sensors",
+            _ => "Sensors",
+        }
+    }
+
+    pub fn default_span(&self) -> u8 {
+        match self {
+            Self::Lighting
+            | Self::Profiles
+            | Self::PowerDraw
+            | Self::DeskDisplay
+            | Self::Lookbook
+            | Self::Hardware
+            | Self::CostEfficiency => 2,
+            Self::CpuTemp
+            | Self::GpuTemp
+            | Self::CpuLoad
+            | Self::GpuLoad
+            | Self::Fans
+            | Self::RamUsage
+            | Self::DriveTemp
+            | Self::NetDown
+            | Self::NetUp
+            | Self::GpuHotspot
+            | Self::LiquidTemp
+            | Self::CustomSensor { .. } => 1,
+        }
+    }
+
+    pub fn default_rows(&self) -> u8 {
+        match self {
+            Self::Lighting => 2,
+            _ => 1,
+        }
+    }
+
+    pub fn default_tall(&self) -> bool {
+        self.default_rows() >= 2
+    }
+
+    pub fn is_sensor(&self) -> bool {
+        !matches!(
+            self,
+            Self::Lighting
+                | Self::Profiles
+                | Self::Fans
+                | Self::Hardware
+                | Self::DeskDisplay
+                | Self::Lookbook
+        )
+    }
+
+    fn id_prefix(&self) -> &'static str {
+        match self {
+            Self::Lighting => "lighting",
+            Self::Profiles => "profiles",
+            Self::Fans => "fans",
+            Self::Hardware => "hardware",
+            Self::DeskDisplay => "desk-display",
+            Self::Lookbook => "lookbook",
+            Self::CpuTemp => "cpu-temp",
+            Self::GpuTemp => "gpu-temp",
+            Self::GpuHotspot => "gpu-hotspot",
+            Self::LiquidTemp => "liquid-temp",
+            Self::CpuLoad => "cpu-load",
+            Self::GpuLoad => "gpu-load",
+            Self::RamUsage => "ram-usage",
+            Self::DriveTemp => "drive-temp",
+            Self::PowerDraw => "power-draw",
+            Self::CostEfficiency => "cost",
+            Self::NetDown => "net-down",
+            Self::NetUp => "net-up",
+            Self::CustomSensor { .. } => "sensor",
+        }
+    }
+}
+
+fn default_tile_span() -> u8 {
+    1
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "OverviewTileSerde")]
+pub struct OverviewTile {
+    pub id: String,
+    pub kind: OverviewTileKind,
+    #[serde(default = "default_tile_span")]
+    pub span: u8,
+    #[serde(default)]
+    pub rows: u8,
+    #[serde(default)]
+    pub tall: bool,
+    #[serde(default)]
+    pub style: TileStyle,
+    #[serde(default)]
+    pub accent: Option<[u8; 3]>,
+}
+
+#[derive(Deserialize)]
+struct OverviewTileSerde {
+    id: String,
+    kind: OverviewTileKind,
+    #[serde(default = "default_tile_span")]
+    span: u8,
+    #[serde(default)]
+    rows: u8,
+    #[serde(default)]
+    tall: bool,
+    #[serde(default)]
+    style: TileStyle,
+    #[serde(default)]
+    accent: Option<[u8; 3]>,
+}
+
+impl From<OverviewTileSerde> for OverviewTile {
+    fn from(raw: OverviewTileSerde) -> Self {
+        let rows = if raw.rows == 0 {
+            if raw.tall { 2 } else { 1 }
+        } else {
+            raw.rows.clamp(1, 3)
+        };
+        let tall = rows >= 2;
+        Self {
+            id: raw.id,
+            kind: raw.kind,
+            span: raw.span.clamp(1, 4),
+            rows,
+            tall,
+            style: raw.style,
+            accent: raw.accent,
+        }
+    }
+}
+
+impl OverviewTile {
+    pub fn new(id: impl Into<String>, kind: OverviewTileKind) -> Self {
+        let span = kind.default_span();
+        let rows = kind.default_rows().clamp(1, 3);
+        let tall = rows >= 2;
+        Self {
+            id: id.into(),
+            kind,
+            span,
+            rows,
+            tall,
+            style: TileStyle::Auto,
+            accent: None,
+        }
+    }
+
+    pub fn with_dims(
+        id: impl Into<String>,
+        kind: OverviewTileKind,
+        span: u8,
+        rows: u8,
+        style: TileStyle,
+    ) -> Self {
+        let clamped_rows = rows.clamp(1, 3);
+        Self {
+            id: id.into(),
+            kind,
+            span: span.clamp(1, 4),
+            rows: clamped_rows,
+            tall: clamped_rows >= 2,
+            style,
+            accent: None,
+        }
+    }
+
+    fn with_layout(
+        id: impl Into<String>,
+        kind: OverviewTileKind,
+        span: u8,
+        tall: bool,
+        style: TileStyle,
+    ) -> Self {
+        Self::with_dims(id, kind, span, if tall { 2 } else { 1 }, style)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverviewWorkspace {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub tiles: Vec<OverviewTile>,
+}
+
+impl OverviewWorkspace {
+    pub fn default_workspace() -> Self {
+        Self {
+            id: "default".to_string(),
+            name: "My workspace".to_string(),
+            tiles: vec![
+                OverviewTile::with_dims(
+                    "lighting-1",
+                    OverviewTileKind::Lighting,
+                    2,
+                    2,
+                    TileStyle::Auto,
+                ),
+                OverviewTile::with_dims(
+                    "cpu-temp-1",
+                    OverviewTileKind::CpuTemp,
+                    1,
+                    1,
+                    TileStyle::Number,
+                ),
+                OverviewTile::with_dims(
+                    "gpu-temp-1",
+                    OverviewTileKind::GpuTemp,
+                    1,
+                    1,
+                    TileStyle::Number,
+                ),
+                OverviewTile::with_dims(
+                    "cpu-load-1",
+                    OverviewTileKind::CpuLoad,
+                    1,
+                    1,
+                    TileStyle::Gauge,
+                ),
+                OverviewTile::with_dims(
+                    "gpu-load-1",
+                    OverviewTileKind::GpuLoad,
+                    1,
+                    1,
+                    TileStyle::Gauge,
+                ),
+                OverviewTile::with_dims(
+                    "profiles-1",
+                    OverviewTileKind::Profiles,
+                    2,
+                    1,
+                    TileStyle::Auto,
+                ),
+                OverviewTile::with_dims(
+                    "power-draw-1",
+                    OverviewTileKind::PowerDraw,
+                    2,
+                    1,
+                    TileStyle::Auto,
+                ),
+                OverviewTile::with_dims(
+                    "fans-1",
+                    OverviewTileKind::Fans,
+                    1,
+                    1,
+                    TileStyle::Auto,
+                ),
+                OverviewTile::with_dims(
+                    "ram-usage-1",
+                    OverviewTileKind::RamUsage,
+                    1,
+                    1,
+                    TileStyle::Bar,
+                ),
+                OverviewTile::with_dims(
+                    "drive-temp-1",
+                    OverviewTileKind::DriveTemp,
+                    1,
+                    1,
+                    TileStyle::Number,
+                ),
+                OverviewTile::with_dims(
+                    "net-down-1",
+                    OverviewTileKind::NetDown,
+                    1,
+                    1,
+                    TileStyle::Number,
+                ),
+            ],
+        }
+    }
+
+    pub fn starter_templates() -> Vec<Self> {
+        vec![
+            Self {
+                id: "gaming".to_string(),
+                name: "Gaming".to_string(),
+                tiles: vec![
+                    OverviewTile::with_layout(
+                        "lighting-1",
+                        OverviewTileKind::Lighting,
+                        2,
+                        true,
+                        TileStyle::Auto,
+                    ),
+                    OverviewTile::with_layout(
+                        "profiles-1",
+                        OverviewTileKind::Profiles,
+                        2,
+                        true,
+                        TileStyle::Auto,
+                    ),
+                    OverviewTile::with_layout(
+                        "gpu-temp-1",
+                        OverviewTileKind::GpuTemp,
+                        1,
+                        false,
+                        TileStyle::Gauge,
+                    ),
+                    OverviewTile::with_layout(
+                        "gpu-hotspot-1",
+                        OverviewTileKind::GpuHotspot,
+                        1,
+                        false,
+                        TileStyle::Number,
+                    ),
+                    OverviewTile::with_layout(
+                        "gpu-load-1",
+                        OverviewTileKind::GpuLoad,
+                        1,
+                        false,
+                        TileStyle::Bar,
+                    ),
+                    OverviewTile::with_layout(
+                        "cpu-temp-1",
+                        OverviewTileKind::CpuTemp,
+                        1,
+                        false,
+                        TileStyle::Gauge,
+                    ),
+                    OverviewTile::with_layout(
+                        "fans-1",
+                        OverviewTileKind::Fans,
+                        2,
+                        false,
+                        TileStyle::Auto,
+                    ),
+                    OverviewTile::with_layout(
+                        "power-draw-1",
+                        OverviewTileKind::PowerDraw,
+                        1,
+                        false,
+                        TileStyle::Graph,
+                    ),
+                    OverviewTile::with_layout(
+                        "net-down-1",
+                        OverviewTileKind::NetDown,
+                        1,
+                        false,
+                        TileStyle::Graph,
+                    ),
+                ],
+            },
+            Self {
+                id: "quiet-studio".to_string(),
+                name: "Quiet Studio".to_string(),
+                tiles: vec![
+                    OverviewTile::with_layout(
+                        "lighting-1",
+                        OverviewTileKind::Lighting,
+                        2,
+                        true,
+                        TileStyle::Auto,
+                    ),
+                    OverviewTile::with_layout(
+                        "desk-display-1",
+                        OverviewTileKind::DeskDisplay,
+                        2,
+                        true,
+                        TileStyle::Auto,
+                    ),
+                    OverviewTile::with_layout(
+                        "lookbook-1",
+                        OverviewTileKind::Lookbook,
+                        2,
+                        false,
+                        TileStyle::Auto,
+                    ),
+                    OverviewTile::with_layout(
+                        "fans-1",
+                        OverviewTileKind::Fans,
+                        2,
+                        false,
+                        TileStyle::Auto,
+                    ),
+                    OverviewTile::with_layout(
+                        "cpu-temp-1",
+                        OverviewTileKind::CpuTemp,
+                        1,
+                        false,
+                        TileStyle::Number,
+                    ),
+                    OverviewTile::with_layout(
+                        "gpu-temp-1",
+                        OverviewTileKind::GpuTemp,
+                        1,
+                        false,
+                        TileStyle::Number,
+                    ),
+                    OverviewTile::with_layout(
+                        "power-draw-1",
+                        OverviewTileKind::PowerDraw,
+                        1,
+                        false,
+                        TileStyle::Number,
+                    ),
+                    OverviewTile::with_layout(
+                        "cost-1",
+                        OverviewTileKind::CostEfficiency,
+                        1,
+                        false,
+                        TileStyle::Number,
+                    ),
+                ],
+            },
+            Self {
+                id: "thermal-lab".to_string(),
+                name: "Thermal Lab".to_string(),
+                tiles: vec![
+                    OverviewTile::with_layout(
+                        "lighting-1",
+                        OverviewTileKind::Lighting,
+                        2,
+                        true,
+                        TileStyle::Auto,
+                    ),
+                    OverviewTile::with_layout(
+                        "fans-1",
+                        OverviewTileKind::Fans,
+                        2,
+                        true,
+                        TileStyle::Auto,
+                    ),
+                    OverviewTile::with_layout(
+                        "cpu-temp-1",
+                        OverviewTileKind::CpuTemp,
+                        1,
+                        false,
+                        TileStyle::Graph,
+                    ),
+                    OverviewTile::with_layout(
+                        "gpu-temp-1",
+                        OverviewTileKind::GpuTemp,
+                        1,
+                        false,
+                        TileStyle::Graph,
+                    ),
+                    OverviewTile::with_layout(
+                        "gpu-hotspot-1",
+                        OverviewTileKind::GpuHotspot,
+                        1,
+                        false,
+                        TileStyle::Graph,
+                    ),
+                    OverviewTile::with_layout(
+                        "liquid-temp-1",
+                        OverviewTileKind::LiquidTemp,
+                        1,
+                        false,
+                        TileStyle::Graph,
+                    ),
+                    OverviewTile::with_layout(
+                        "drive-temp-1",
+                        OverviewTileKind::DriveTemp,
+                        1,
+                        false,
+                        TileStyle::Gauge,
+                    ),
+                    OverviewTile::with_layout(
+                        "cpu-load-1",
+                        OverviewTileKind::CpuLoad,
+                        1,
+                        false,
+                        TileStyle::Bar,
+                    ),
+                    OverviewTile::with_layout(
+                        "gpu-load-1",
+                        OverviewTileKind::GpuLoad,
+                        1,
+                        false,
+                        TileStyle::Bar,
+                    ),
+                    OverviewTile::with_layout(
+                        "power-draw-1",
+                        OverviewTileKind::PowerDraw,
+                        1,
+                        false,
+                        TileStyle::Graph,
+                    ),
+                    OverviewTile::with_layout(
+                        "hardware-1",
+                        OverviewTileKind::Hardware,
+                        2,
+                        false,
+                        TileStyle::Auto,
+                    ),
+                    OverviewTile::with_layout(
+                        "ram-usage-1",
+                        OverviewTileKind::RamUsage,
+                        1,
+                        false,
+                        TileStyle::Bar,
+                    ),
+                    OverviewTile::with_layout(
+                        "cost-1",
+                        OverviewTileKind::CostEfficiency,
+                        1,
+                        false,
+                        TileStyle::Number,
+                    ),
+                ],
+            },
+        ]
+    }
+}
+
+fn default_overview_workspaces() -> Vec<OverviewWorkspace> {
+    vec![OverviewWorkspace::default_workspace()]
+}
+
+fn default_active_workspace_id() -> String {
+    "default".to_string()
+}
+
+fn slugify_id(raw: &str, fallback: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for ch in raw.trim().to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            prev_dash = false;
+        } else if !prev_dash && !out.is_empty() {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
     pub settings: AppSettings,
@@ -981,6 +1734,331 @@ pub struct AppConfig {
     pub automations_paused: bool,
     #[serde(default = "default_studio_effects")]
     pub studio_effects: Vec<SavedStudioEffect>,
+    #[serde(default = "default_overview_workspaces")]
+    pub overview_workspaces: Vec<OverviewWorkspace>,
+    #[serde(default = "default_active_workspace_id")]
+    pub active_workspace_id: String,
+    #[serde(default)]
+    pub update_channel: UpdateChannel,
+    #[serde(default = "default_true")]
+    pub auto_check_updates: bool,
+    #[serde(default)]
+    pub fullscreen_fill_width: bool,
+}
+
+impl AppConfig {
+    /// Normalizes config invariants: valid appearance bounds, hysteresis range, at least one
+    /// Overview workspace, valid tile spans/IDs, and a valid `active_workspace_id`.
+    pub fn normalize(&mut self) {
+        self.appearance.normalize();
+        self.settings.fan_hysteresis_c = self.settings.fan_hysteresis_c.clamp(0.0, 10.0);
+
+        if self.overview_workspaces.is_empty() {
+            self.overview_workspaces = default_overview_workspaces();
+        }
+        let mut seen_ws_ids: Vec<String> = Vec::with_capacity(self.overview_workspaces.len());
+        for (idx, ws) in self.overview_workspaces.iter_mut().enumerate() {
+            if ws.name.trim().is_empty() {
+                ws.name = format!("Workspace {}", idx + 1);
+            }
+            let base_id = if ws.id.trim().is_empty() {
+                slugify_id(&ws.name, &format!("workspace-{}", idx + 1))
+            } else {
+                ws.id.trim().to_string()
+            };
+            let mut candidate = base_id.clone();
+            let mut suffix = 2usize;
+            while seen_ws_ids.iter().any(|existing| existing == &candidate) {
+                candidate = format!("{base_id}-{suffix}");
+                suffix += 1;
+            }
+            ws.id = candidate.clone();
+            seen_ws_ids.push(candidate);
+
+            let is_default_ws = ws.id == "default"
+                || ws.id == "my-workspace"
+                || ws.name.eq_ignore_ascii_case("my workspace");
+            let missing_gpu_load = !ws
+                .tiles
+                .iter()
+                .any(|t| matches!(t.kind, OverviewTileKind::GpuLoad));
+            let has_custom_sensor = ws
+                .tiles
+                .iter()
+                .any(|t| matches!(t.kind, OverviewTileKind::CustomSensor { .. }));
+            let has_legacy_tall_profiles = ws
+                .tiles
+                .iter()
+                .any(|t| matches!(t.kind, OverviewTileKind::Profiles) && (t.tall || t.rows >= 2));
+            let has_legacy_v21_spans = !ws.tiles.is_empty()
+                && ws.tiles.iter().all(|t| t.style == TileStyle::Auto)
+                && ws
+                    .tiles
+                    .iter()
+                    .any(|t| matches!(t.kind, OverviewTileKind::PowerDraw) && t.span == 1)
+                && ws
+                    .tiles
+                    .iter()
+                    .any(|t| matches!(t.kind, OverviewTileKind::Fans) && t.span == 2);
+            if is_default_ws
+                && missing_gpu_load
+                && !has_custom_sensor
+                && (has_legacy_tall_profiles || has_legacy_v21_spans)
+            {
+                ws.tiles = OverviewWorkspace::default_workspace().tiles;
+            }
+
+            let mut seen_tile_ids: Vec<String> = Vec::with_capacity(ws.tiles.len());
+            for (tidx, tile) in ws.tiles.iter_mut().enumerate() {
+                tile.span = tile.span.clamp(1, 4);
+                if tile.rows == 0 {
+                    tile.rows = if tile.tall { 2 } else { 1 };
+                }
+                tile.rows = tile.rows.clamp(1, 3);
+                tile.tall = tile.rows >= 2;
+                let base_tid = if tile.id.trim().is_empty() {
+                    format!("{}-{}", tile.kind.id_prefix(), tidx + 1)
+                } else {
+                    tile.id.trim().to_string()
+                };
+                let mut tcand = base_tid.clone();
+                let mut tsuf = 2usize;
+                while seen_tile_ids.iter().any(|existing| existing == &tcand) {
+                    tcand = format!("{base_tid}-{tsuf}");
+                    tsuf += 1;
+                }
+                tile.id = tcand.clone();
+                seen_tile_ids.push(tcand);
+            }
+        }
+
+        if !self
+            .overview_workspaces
+            .iter()
+            .any(|w| w.id == self.active_workspace_id)
+        {
+            self.active_workspace_id = self.overview_workspaces[0].id.clone();
+        }
+    }
+
+    pub fn normalized(mut self) -> Self {
+        self.normalize();
+        self
+    }
+
+    pub fn active_workspace(&self) -> &OverviewWorkspace {
+        self.overview_workspaces
+            .iter()
+            .find(|w| w.id == self.active_workspace_id)
+            .or_else(|| self.overview_workspaces.first())
+            .expect("AppConfig always has at least one OverviewWorkspace")
+    }
+
+    pub fn active_workspace_mut(&mut self) -> &mut OverviewWorkspace {
+        if self.overview_workspaces.is_empty() {
+            self.overview_workspaces = default_overview_workspaces();
+        }
+        let idx = self
+            .overview_workspaces
+            .iter()
+            .position(|w| w.id == self.active_workspace_id)
+            .unwrap_or_else(|| {
+                self.active_workspace_id = self.overview_workspaces[0].id.clone();
+                0
+            });
+        &mut self.overview_workspaces[idx]
+    }
+
+    pub fn add_overview_tile(&mut self, kind: OverviewTileKind) -> String {
+        let ws = self.active_workspace_mut();
+        let prefix = kind.id_prefix();
+        let mut n = 1usize;
+        let id = loop {
+            let candidate = format!("{prefix}-{n}");
+            if !ws.tiles.iter().any(|t| t.id == candidate) {
+                break candidate;
+            }
+            n += 1;
+        };
+        if ws.tiles.len() < 36 {
+            ws.tiles.push(OverviewTile::new(id.clone(), kind));
+        }
+        id
+    }
+
+    pub fn remove_overview_tile(&mut self, id: &str) -> bool {
+        let ws = self.active_workspace_mut();
+        let before = ws.tiles.len();
+        ws.tiles.retain(|t| t.id != id);
+        ws.tiles.len() != before
+    }
+
+    pub fn move_overview_tile(&mut self, id: &str, delta: isize) -> bool {
+        let ws = self.active_workspace_mut();
+        let Some(pos) = ws.tiles.iter().position(|t| t.id == id) else {
+            return false;
+        };
+        if ws.tiles.len() <= 1 || delta == 0 {
+            return false;
+        }
+        let max_idx = (ws.tiles.len() - 1) as isize;
+        let target = (pos as isize + delta).clamp(0, max_idx) as usize;
+        if target == pos {
+            return false;
+        }
+        let tile = ws.tiles.remove(pos);
+        ws.tiles.insert(target, tile);
+        true
+    }
+
+    pub fn reorder_overview_tile_to(&mut self, id: &str, to_index: usize) -> bool {
+        let ws = self.active_workspace_mut();
+        let Some(from_index) = ws.tiles.iter().position(|t| t.id == id) else {
+            return false;
+        };
+        if ws.tiles.len() <= 1 {
+            return false;
+        }
+        let target = to_index.min(ws.tiles.len() - 1);
+        if target == from_index {
+            return false;
+        }
+        let tile = ws.tiles.remove(from_index);
+        ws.tiles.insert(target, tile);
+        true
+    }
+
+    pub fn resize_overview_tile(&mut self, id: &str, span: u8, rows: u8) -> bool {
+        let ws = self.active_workspace_mut();
+        let Some(tile) = ws.tiles.iter_mut().find(|t| t.id == id) else {
+            return false;
+        };
+        let new_span = span.clamp(1, 4);
+        let new_rows = rows.clamp(1, 3);
+        let new_tall = new_rows >= 2;
+        if tile.span == new_span && tile.rows == new_rows && tile.tall == new_tall {
+            return false;
+        }
+        tile.span = new_span;
+        tile.rows = new_rows;
+        tile.tall = new_tall;
+        true
+    }
+
+    pub fn cycle_overview_tile_span(&mut self, id: &str) -> Option<u8> {
+        let ws = self.active_workspace_mut();
+        let tile = ws.tiles.iter_mut().find(|t| t.id == id)?;
+        tile.span = (tile.span.clamp(1, 4) % 4) + 1;
+        Some(tile.span)
+    }
+
+    pub fn toggle_overview_tile_tall(&mut self, id: &str) -> Option<bool> {
+        let ws = self.active_workspace_mut();
+        let tile = ws.tiles.iter_mut().find(|t| t.id == id)?;
+        tile.tall = !tile.tall;
+        tile.rows = if tile.tall { 2 } else { 1 };
+        Some(tile.tall)
+    }
+
+    pub fn cycle_overview_tile_style(&mut self, id: &str) -> Option<TileStyle> {
+        let ws = self.active_workspace_mut();
+        let tile = ws.tiles.iter_mut().find(|t| t.id == id)?;
+        tile.style = tile.style.next();
+        Some(tile.style)
+    }
+
+    pub fn reset_active_workspace(&mut self) {
+        let active_id = self.active_workspace().id.clone();
+        let template_tiles = OverviewWorkspace::starter_templates()
+            .into_iter()
+            .find(|t| t.id == active_id)
+            .map(|t| t.tiles)
+            .unwrap_or_else(|| OverviewWorkspace::default_workspace().tiles);
+        self.active_workspace_mut().tiles = template_tiles;
+    }
+
+    pub fn switch_workspace(&mut self, id: &str) -> bool {
+        if self.overview_workspaces.iter().any(|w| w.id == id) {
+            self.active_workspace_id = id.to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn create_workspace(&mut self, name: &str, template_id: Option<&str>) -> String {
+        self.normalize();
+        if self.overview_workspaces.len() >= 12 {
+            return self.active_workspace_id.clone();
+        }
+        let templates = OverviewWorkspace::starter_templates();
+        let matched_template = template_id.and_then(|tid| {
+            let needle = tid.trim().to_ascii_lowercase();
+            templates
+                .iter()
+                .find(|t| t.id == needle || t.name.to_ascii_lowercase() == needle)
+        });
+
+        let trimmed_name = name.trim();
+        let final_name = if !trimmed_name.is_empty() {
+            trimmed_name.to_string()
+        } else if let Some(tpl) = matched_template {
+            tpl.name.clone()
+        } else {
+            format!("Workspace {}", self.overview_workspaces.len() + 1)
+        };
+
+        let base_id = slugify_id(
+            &final_name,
+            &format!("workspace-{}", self.overview_workspaces.len() + 1),
+        );
+        let mut id = base_id.clone();
+        let mut suffix = 2usize;
+        while self.overview_workspaces.iter().any(|w| w.id == id) {
+            id = format!("{base_id}-{suffix}");
+            suffix += 1;
+        }
+
+        let tiles = matched_template
+            .map(|t| t.tiles.clone())
+            .unwrap_or_else(|| OverviewWorkspace::default_workspace().tiles);
+
+        self.overview_workspaces.push(OverviewWorkspace {
+            id: id.clone(),
+            name: final_name,
+            tiles,
+        });
+        self.active_workspace_id = id.clone();
+        id
+    }
+
+    pub fn rename_workspace(&mut self, id: &str, name: &str) -> bool {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        if let Some(ws) = self.overview_workspaces.iter_mut().find(|w| w.id == id) {
+            ws.name = trimmed.to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn delete_workspace(&mut self, id: &str) -> bool {
+        if self.overview_workspaces.len() <= 1 {
+            return false;
+        }
+        let before = self.overview_workspaces.len();
+        self.overview_workspaces.retain(|w| w.id != id);
+        if self.overview_workspaces.len() == before {
+            return false;
+        }
+        if self.active_workspace_id == id {
+            self.active_workspace_id = self.overview_workspaces[0].id.clone();
+        }
+        true
+    }
 }
 
 pub fn default_curves() -> BTreeMap<String, Vec<CurvePoint>> {
@@ -1110,6 +2188,11 @@ impl Default for AppConfig {
             automations: default_rules(),
             automations_paused: false,
             studio_effects: default_studio_effects(),
+            overview_workspaces: default_overview_workspaces(),
+            active_workspace_id: default_active_workspace_id(),
+            update_channel: UpdateChannel::Stable,
+            auto_check_updates: true,
+            fullscreen_fill_width: false,
         }
     }
 }
@@ -1149,10 +2232,12 @@ impl ConfigStore {
     }
 
     pub fn load_or_default(&self) -> AppConfig {
-        match fs::read_to_string(&self.path) {
+        let mut cfg = match fs::read_to_string(&self.path) {
             Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
             Err(_) => AppConfig::default(),
-        }
+        };
+        cfg.normalize();
+        cfg
     }
 
     /// Loads `%APPDATA%\Airglow-rs\config.json` if present; otherwise on first launch,
@@ -1168,9 +2253,11 @@ impl ConfigStore {
             && let Ok(migrated) = import_python_airglow(&py_dir)
         {
             apply_migrated_data(&mut cfg, &migrated);
+            cfg.normalize();
             let _ = self.save(&cfg);
             return (cfg, true);
         }
+        cfg.normalize();
         (cfg, false)
     }
 
@@ -1698,5 +2785,335 @@ mod tests {
             parse_hex_rgb(&format_hex_rgb([0x7c, 0xe8, 0xc8])),
             Some([0x7c, 0xe8, 0xc8])
         );
+    }
+
+    #[test]
+    fn overview_tile_crud_reorder_resize_and_style_cycling() {
+        let mut cfg = AppConfig::default();
+        let initial_len = cfg.active_workspace().tiles.len();
+        assert!(initial_len >= 8);
+
+        // Add built-in and custom sensors
+        let net_id = cfg.add_overview_tile(OverviewTileKind::NetUp);
+        let custom_id = cfg.add_overview_tile(OverviewTileKind::CustomSensor {
+            sensor_id: "/amdcpu/0/temperature/2".to_string(),
+            label: "Tctl / Tdie".to_string(),
+            unit: "°C".to_string(),
+        });
+        assert_eq!(cfg.active_workspace().tiles.len(), initial_len + 2);
+        let custom_tile = cfg
+            .active_workspace()
+            .tiles
+            .iter()
+            .find(|t| t.id == custom_id)
+            .expect("custom tile exists");
+        assert_eq!(custom_tile.kind.label(), "Tctl / Tdie");
+        assert_eq!(custom_tile.kind.category(), "Live Sensors");
+        assert!(custom_tile.kind.is_sensor());
+        assert!(!OverviewTileKind::Lighting.is_sensor());
+        assert_eq!(OverviewTileKind::DeskDisplay.category(), "Controls");
+
+        // Cycle span: 1 -> 2 -> 3 -> 4 -> 1
+        assert_eq!(cfg.cycle_overview_tile_span(&net_id), Some(2));
+        assert_eq!(cfg.cycle_overview_tile_span(&net_id), Some(3));
+        assert_eq!(cfg.cycle_overview_tile_span(&net_id), Some(4));
+        assert_eq!(cfg.cycle_overview_tile_span(&net_id), Some(1));
+
+        // Toggle tall
+        assert_eq!(cfg.toggle_overview_tile_tall(&net_id), Some(true));
+        assert_eq!(cfg.toggle_overview_tile_tall(&net_id), Some(false));
+
+        // Cycle style: Auto -> Number -> Gauge -> Graph -> Bar -> Auto
+        assert_eq!(cfg.cycle_overview_tile_style(&net_id), Some(TileStyle::Number));
+        assert_eq!(cfg.cycle_overview_tile_style(&net_id), Some(TileStyle::Gauge));
+        assert_eq!(cfg.cycle_overview_tile_style(&net_id), Some(TileStyle::Graph));
+        assert_eq!(cfg.cycle_overview_tile_style(&net_id), Some(TileStyle::Bar));
+        assert_eq!(cfg.cycle_overview_tile_style(&net_id), Some(TileStyle::Auto));
+        assert_eq!(TileStyle::Auto.label(), "Instrument");
+
+        // Reorder tile backward and forward
+        let pos_before = cfg
+            .active_workspace()
+            .tiles
+            .iter()
+            .position(|t| t.id == custom_id)
+            .unwrap();
+        assert!(cfg.move_overview_tile(&custom_id, -2));
+        let pos_after = cfg
+            .active_workspace()
+            .tiles
+            .iter()
+            .position(|t| t.id == custom_id)
+            .unwrap();
+        assert_eq!(pos_after, pos_before - 2);
+        assert!(cfg.move_overview_tile(&custom_id, 1));
+        let pos_fwd = cfg
+            .active_workspace()
+            .tiles
+            .iter()
+            .position(|t| t.id == custom_id)
+            .unwrap();
+        assert_eq!(pos_fwd, pos_before - 1);
+
+        // Remove tile
+        assert!(cfg.remove_overview_tile(&custom_id));
+        assert!(!cfg.remove_overview_tile(&custom_id));
+        assert_eq!(cfg.active_workspace().tiles.len(), initial_len + 1);
+    }
+
+    #[test]
+    fn default_bento_workspace_is_4x4_sixteen_cells_and_upgrades_v21_default() {
+        let ws = OverviewWorkspace::default_workspace();
+        assert_eq!(ws.tiles.len(), 11);
+        let total_cells: usize = ws
+            .tiles
+            .iter()
+            .map(|t| (t.span as usize) * (t.rows as usize))
+            .sum();
+        assert_eq!(total_cells, 16);
+
+        // Verify key default dimensions and styles
+        assert_eq!(ws.tiles[0].kind, OverviewTileKind::Lighting);
+        assert_eq!((ws.tiles[0].span, ws.tiles[0].rows, ws.tiles[0].tall), (2, 2, true));
+        assert_eq!(ws.tiles[1].kind, OverviewTileKind::CpuTemp);
+        assert_eq!(ws.tiles[1].style, TileStyle::Number);
+        assert_eq!(ws.tiles[3].kind, OverviewTileKind::CpuLoad);
+        assert_eq!(ws.tiles[3].style, TileStyle::Gauge);
+        assert_eq!(ws.tiles[4].kind, OverviewTileKind::GpuLoad);
+        assert_eq!(ws.tiles[4].style, TileStyle::Gauge);
+        assert_eq!(ws.tiles[5].kind, OverviewTileKind::Profiles);
+        assert_eq!((ws.tiles[5].span, ws.tiles[5].rows, ws.tiles[5].tall), (2, 1, false));
+        assert_eq!(ws.tiles[6].kind, OverviewTileKind::PowerDraw);
+        assert_eq!((ws.tiles[6].span, ws.tiles[6].rows), (2, 1));
+        assert_eq!(ws.tiles[7].kind, OverviewTileKind::Fans);
+        assert_eq!((ws.tiles[7].span, ws.tiles[7].rows), (1, 1));
+
+        assert_eq!(OverviewTileKind::Lighting.default_rows(), 2);
+        assert_eq!(OverviewTileKind::Lighting.default_span(), 2);
+        assert_eq!(OverviewTileKind::Profiles.default_rows(), 1);
+        assert_eq!(OverviewTileKind::Profiles.default_span(), 2);
+        assert_eq!(OverviewTileKind::PowerDraw.default_span(), 2);
+        assert_eq!(OverviewTileKind::CostEfficiency.default_span(), 2);
+        assert_eq!(OverviewTileKind::Fans.default_span(), 1);
+        assert_eq!(OverviewTileKind::GpuLoad.default_span(), 1);
+
+        // Legacy tile JSON without `rows` initializes rows from `tall`
+        let raw_tall = r#"{"id":"lighting-1","kind":{"type":"lighting"},"span":2,"tall":true}"#;
+        let parsed_tall: OverviewTile = serde_json::from_str(raw_tall).expect("parse tall tile");
+        assert_eq!(parsed_tall.rows, 2);
+        assert!(parsed_tall.tall);
+
+        let raw_short = r#"{"id":"fans-1","kind":{"type":"fans"},"span":1,"tall":false}"#;
+        let parsed_short: OverviewTile = serde_json::from_str(raw_short).expect("parse short tile");
+        assert_eq!(parsed_short.rows, 1);
+        assert!(!parsed_short.tall);
+
+        // Unedited v2.1 "my-workspace" (Profiles tall == true, missing GpuLoad) upgrades cleanly
+        let mut legacy_cfg = AppConfig::default();
+        legacy_cfg.overview_workspaces = vec![OverviewWorkspace {
+            id: "my-workspace".to_string(),
+            name: "My workspace".to_string(),
+            tiles: vec![
+                OverviewTile::with_layout(
+                    "lighting-1",
+                    OverviewTileKind::Lighting,
+                    2,
+                    true,
+                    TileStyle::Auto,
+                ),
+                OverviewTile::with_layout(
+                    "profiles-1",
+                    OverviewTileKind::Profiles,
+                    2,
+                    true,
+                    TileStyle::Auto,
+                ),
+                OverviewTile::with_layout(
+                    "cpu-temp-1",
+                    OverviewTileKind::CpuTemp,
+                    1,
+                    false,
+                    TileStyle::Auto,
+                ),
+            ],
+        }];
+        legacy_cfg.active_workspace_id = "my-workspace".to_string();
+        legacy_cfg.normalize();
+        assert_eq!(legacy_cfg.active_workspace().tiles.len(), 11);
+        let upgraded_cells: usize = legacy_cfg
+            .active_workspace()
+            .tiles
+            .iter()
+            .map(|t| (t.span as usize) * (t.rows as usize))
+            .sum();
+        assert_eq!(upgraded_cells, 16);
+    }
+
+    #[test]
+    fn reorder_overview_tile_to_and_2d_resize_clamp_and_sync_tall() {
+        let mut cfg = AppConfig::default();
+        let first_id = cfg.active_workspace().tiles[0].id.clone();
+        let last_idx = cfg.active_workspace().tiles.len() - 1;
+
+        // Same index and unknown ID return false
+        assert!(!cfg.reorder_overview_tile_to(&first_id, 0));
+        assert!(!cfg.reorder_overview_tile_to("nonexistent", 2));
+
+        // Splice first tile to index 3
+        assert!(cfg.reorder_overview_tile_to(&first_id, 3));
+        assert_eq!(cfg.active_workspace().tiles[3].id, first_id);
+
+        // Out-of-bounds target index clamps cleanly to last index
+        assert!(cfg.reorder_overview_tile_to(&first_id, 999));
+        assert_eq!(cfg.active_workspace().tiles[last_idx].id, first_id);
+
+        // Splice back to index 0
+        assert!(cfg.reorder_overview_tile_to(&first_id, 0));
+        assert_eq!(cfg.active_workspace().tiles[0].id, first_id);
+
+        // 2D resize clamps span to 1..=4, rows to 1..=3, and syncs tall = rows >= 2
+        assert!(!cfg.resize_overview_tile("nonexistent", 2, 2));
+        assert!(cfg.resize_overview_tile("cpu-temp-1", 10, 9));
+        let resized = cfg
+            .active_workspace()
+            .tiles
+            .iter()
+            .find(|t| t.id == "cpu-temp-1")
+            .unwrap();
+        assert_eq!((resized.span, resized.rows, resized.tall), (4, 3, true));
+        // Redundant identical resize returns false
+        assert!(!cfg.resize_overview_tile("cpu-temp-1", 4, 3));
+
+        // Shrinking to 0 clamps to 1x1 and clears tall
+        assert!(cfg.resize_overview_tile("cpu-temp-1", 0, 0));
+        let shrunk = cfg
+            .active_workspace()
+            .tiles
+            .iter()
+            .find(|t| t.id == "cpu-temp-1")
+            .unwrap();
+        assert_eq!((shrunk.span, shrunk.rows, shrunk.tall), (1, 1, false));
+    }
+
+    #[test]
+    fn workspace_lifecycle_templates_reset_and_normalization() {
+        let mut cfg = AppConfig::default();
+        assert_eq!(cfg.overview_workspaces.len(), 1);
+        assert_eq!(cfg.active_workspace_id, "default");
+
+        // Cannot delete last workspace
+        assert!(!cfg.delete_workspace("default"));
+
+        // Starter templates exist
+        let templates = OverviewWorkspace::starter_templates();
+        let names: Vec<&str> = templates.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["Gaming", "Quiet Studio", "Thermal Lab"]);
+
+        // Create workspace from template
+        let gaming_id = cfg.create_workspace("Night Gaming", Some("gaming"));
+        assert_eq!(cfg.active_workspace_id, gaming_id);
+        assert_eq!(cfg.active_workspace().name, "Night Gaming");
+        assert!(
+            cfg.active_workspace()
+                .tiles
+                .iter()
+                .any(|t| matches!(t.kind, OverviewTileKind::GpuHotspot))
+        );
+
+        // Rename workspace
+        assert!(cfg.rename_workspace(&gaming_id, "FPS Rig"));
+        assert_eq!(cfg.active_workspace().name, "FPS Rig");
+        assert!(!cfg.rename_workspace(&gaming_id, "   "));
+
+        // Modify & reset active workspace
+        cfg.active_workspace_mut().tiles.clear();
+        assert!(cfg.active_workspace().tiles.is_empty());
+        cfg.reset_active_workspace();
+        assert!(!cfg.active_workspace().tiles.is_empty());
+
+        // Switch & delete
+        assert!(cfg.switch_workspace("default"));
+        assert_eq!(cfg.active_workspace_id, "default");
+        assert!(cfg.delete_workspace(&gaming_id));
+        assert_eq!(cfg.overview_workspaces.len(), 1);
+
+        // Normalization repairs empty workspaces & invalid active_workspace_id
+        cfg.overview_workspaces.clear();
+        cfg.active_workspace_id = "nonexistent".to_string();
+        cfg.normalize();
+        assert_eq!(cfg.overview_workspaces.len(), 1);
+        assert_eq!(cfg.active_workspace_id, "default");
+        assert_eq!(cfg.update_channel, UpdateChannel::Stable);
+        assert!(cfg.auto_check_updates);
+        assert!(!cfg.fullscreen_fill_width);
+    }
+
+    #[test]
+    fn ui_scale_presets_normalization_and_responsive_scale_factor() {
+        assert_eq!(
+            UI_SCALE_PRESETS,
+            &[
+                (0, "Auto"),
+                (100, "100%"),
+                (115, "115%"),
+                (125, "125%"),
+                (140, "140%"),
+            ]
+        );
+        assert_eq!(AppearanceConfig::UI_SCALE_PRESETS, UI_SCALE_PRESETS);
+
+        let mut auto_cfg = AppearanceConfig::default();
+        assert_eq!(auto_cfg.ui_scale_pct, 0);
+        auto_cfg.normalize();
+        assert_eq!(auto_cfg.ui_scale_pct, 0);
+
+        // Auto responsive HiDPI scaling across standard & widescreen physical widths
+        assert!((auto_cfg.resolve_scale_factor(1440.0) - 1.0).abs() < 1e-6); // 1440x900
+        assert!((auto_cfg.resolve_scale_factor(1819.0) - 1.0).abs() < 1e-6);
+        assert!((auto_cfg.resolve_scale_factor(1820.0) - 1.10).abs() < 1e-6);
+        assert!((auto_cfg.resolve_scale_factor(1920.0) - 1.10).abs() < 1e-6); // 1920x1080
+        assert!((auto_cfg.resolve_scale_factor(2199.0) - 1.10).abs() < 1e-6);
+        assert!((auto_cfg.resolve_scale_factor(2200.0) - 1.25).abs() < 1e-6);
+        assert!((auto_cfg.resolve_scale_factor(2560.0) - 1.25).abs() < 1e-6); // 2560x1440 -> 2048x1152 logical
+        assert!((auto_cfg.resolve_scale_factor(3249.0) - 1.25).abs() < 1e-6);
+        assert!((auto_cfg.resolve_scale_factor(3250.0) - 1.50).abs() < 1e-6);
+        assert!((auto_cfg.resolve_scale_factor(3840.0) - 1.50).abs() < 1e-6); // 3840x2160 (4K)
+
+        // Manual overrides ignore physical width and clamp to 0.85..=1.50
+        for &(pct, expected) in &[
+            (100u16, 1.00f32),
+            (115, 1.15),
+            (125, 1.25),
+            (140, 1.40),
+            (50, 0.85),
+            (200, 1.50),
+        ] {
+            let manual = AppearanceConfig {
+                ui_scale_pct: pct,
+                ..AppearanceConfig::default()
+            };
+            assert!((manual.resolve_scale_factor(1440.0) - expected).abs() < 1e-6);
+            assert!((manual.resolve_scale_factor(3840.0) - expected).abs() < 1e-6);
+        }
+
+        // Normalization preserves 0 (Auto) and clamps non-zero to 85..=150
+        let mut low = AppearanceConfig {
+            ui_scale_pct: 40,
+            ..AppearanceConfig::default()
+        };
+        low.normalize();
+        assert_eq!(low.ui_scale_pct, 85);
+
+        let mut high = AppearanceConfig {
+            ui_scale_pct: 250,
+            ..AppearanceConfig::default()
+        };
+        high.normalize();
+        assert_eq!(high.ui_scale_pct, 150);
+
+        let mut app_cfg = AppConfig::default();
+        app_cfg.appearance.ui_scale_pct = 180;
+        app_cfg.normalize();
+        assert_eq!(app_cfg.appearance.ui_scale_pct, 150);
     }
 }

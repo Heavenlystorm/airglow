@@ -14,8 +14,9 @@ use tokio::sync::watch;
 use crate::automations::{self, Action, AutomationContext, AutomationRule, AutomationStatus};
 use crate::config::{
     AppConfig, AppSettings, AppearanceConfig, ColorOrder, ConfigStore, CurvePoint, DesignId,
-    FanChannelMode, Preset, SavedLook, SceneConfig, TempUnit, ZoneConfig, ZoneOverride,
-    apply_migrated_data, default_curves, default_data_dir, import_preset_json,
+    FanChannelMode, OverviewTileKind, Preset, SavedLook, SceneConfig, TempUnit, UpdateChannel,
+    ZoneConfig, ZoneOverride, apply_migrated_data, default_curves, default_data_dir,
+    import_preset_json,
 };
 use crate::cooling::{
     CoolingChannelSample, CoolingCurveMeta, CoolingRecorder, CoolingSampleInput,
@@ -33,6 +34,7 @@ use crate::migrate;
 use crate::openrgb::{OpenRgbClient, OpenRgbStatus};
 use crate::sensors::{SensorPoller, SensorSnapshot};
 use crate::system::{self, ConflictingApp};
+use crate::updates::{self, UpdateStatus};
 
 const ACTIVE_TICK_MS: u64 = 33; // ~30 FPS
 const IDLE_TICK_MS: u64 = 250; // ~4 FPS when static
@@ -124,6 +126,7 @@ pub struct EngineSnapshot {
     pub cooling_session_count: usize,
     pub cooling_sessions: Vec<CoolingSessionSummary>,
     pub last_notice: Option<String>,
+    pub update_status: UpdateStatus,
     pub hid_devices: Vec<DiscoveredDevice>,
     pub openrgb: OpenRgbStatus,
     pub fps: f32,
@@ -199,6 +202,30 @@ pub enum EngineCommand {
     CloseConflictingApp(String),
     ImportPythonSettings,
     ExportDiagnostics,
+    ExportRigBundle,
+    ImportRigBundle(String),
+    OpenUrl(String),
+    OpenConfigFolder,
+    CheckForUpdates,
+    DownloadAndStageUpdate,
+    ApplyStagedUpdateAndRestart,
+    SetUpdateChannel(UpdateChannel),
+    SetAutoCheckUpdates(bool),
+    SetFullscreenFillWidth(bool),
+    SetUiScalePct(u16),
+    AddOverviewTile(OverviewTileKind),
+    RemoveOverviewTile(String),
+    MoveOverviewTile { id: String, delta: isize },
+    ReorderOverviewTile { id: String, to_index: usize },
+    ResizeOverviewTile { id: String, span: u8, rows: u8 },
+    CycleOverviewTileSpan(String),
+    ToggleOverviewTileTall(String),
+    CycleOverviewTileStyle(String),
+    ResetActiveWorkspace,
+    SwitchWorkspace(String),
+    CreateWorkspace { name: String, template_id: Option<String> },
+    RenameWorkspace { id: String, name: String },
+    DeleteWorkspace(String),
     ClearNotice,
     RescanHardware,
     Shutdown,
@@ -505,6 +532,7 @@ fn build_initial_snapshot(
         cooling_session_count: 0,
         cooling_sessions: Vec::new(),
         last_notice,
+        update_status: UpdateStatus::Idle,
         hid_devices: Vec::new(),
         openrgb: OpenRgbStatus {
             connected: false,
@@ -796,6 +824,76 @@ fn apply_preset_to_scene(scene: &mut SceneConfig, preset: &Preset) {
     }
     scene.zone_overrides = preset.zone_overrides.clone();
     scene.active_studio_effect = None;
+}
+
+fn spawn_update_check(channel: UpdateChannel, tx: mpsc::Sender<UpdateStatus>) {
+    let _ = thread::Builder::new()
+        .name("airglow-updater".to_string())
+        .spawn(move || {
+            let status = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt.block_on(updates::check_github_updates_async(channel)),
+                Err(e) => UpdateStatus::Error(format!("Update runtime error: {e}")),
+            };
+            let _ = tx.send(status);
+        });
+}
+
+fn spawn_update_download(
+    exe_url: String,
+    sha256_url: Option<String>,
+    latest: String,
+    tx: mpsc::Sender<UpdateStatus>,
+) {
+    let _ = thread::Builder::new()
+        .name("airglow-updater-dl".to_string())
+        .spawn(move || {
+            let progress_tx = tx.clone();
+            let progress_latest = latest.clone();
+            let status = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt.block_on(updates::download_update_with_progress_async(
+                    exe_url,
+                    sha256_url,
+                    latest,
+                    move |pct| {
+                        let _ = progress_tx.send(UpdateStatus::Downloading {
+                            latest: progress_latest.clone(),
+                            progress_pct: pct,
+                        });
+                    },
+                )),
+                Err(e) => UpdateStatus::Error(format!("Update runtime error: {e}")),
+            };
+            let _ = tx.send(status);
+        });
+}
+
+fn apply_set_ui_scale_pct(
+    config: &mut AppConfig,
+    pct: u16,
+    store: &ConfigStore,
+    in_trial: bool,
+    dirty_save: &mut bool,
+    last_save: &mut Instant,
+    watch_tx: &watch::Sender<EngineSnapshot>,
+) {
+    config.appearance.ui_scale_pct = pct;
+    config.appearance.normalize();
+    if !in_trial {
+        let _ = store.save(config);
+        *dirty_save = false;
+        *last_save = Instant::now();
+    } else {
+        *dirty_save = true;
+    }
+    watch_tx.send_modify(|snap| {
+        snap.config.appearance = config.appearance.clone();
+    });
 }
 
 fn run_engine(
@@ -1122,6 +1220,11 @@ fn run_engine(
     let mut dirty_save = false;
     let mut last_save = Instant::now();
     let mut tick_count: u64 = 0;
+
+    let (update_tx, update_rx) = mpsc::channel::<UpdateStatus>();
+    let mut update_status = UpdateStatus::Idle;
+    let mut auto_update_checked = false;
+    let mut exit_after_shutdown = false;
 
     loop {
         let mut shutdown = false;
@@ -1834,6 +1937,223 @@ fn run_engine(
                         }
                     }
                 }
+                EngineCommand::ExportRigBundle => match system::export_rig_bundle(&config) {
+                    Ok(path) => {
+                        last_notice =
+                            Some(format!("Exported rig backup to {}", path.display()));
+                        push_activity(&mut activity_log, "system", "Exported rig backup");
+                    }
+                    Err(e) => {
+                        last_notice = Some(format!("Rig backup export failed: {e}"));
+                    }
+                },
+                EngineCommand::ImportRigBundle(raw_path) => {
+                    let trimmed = raw_path.trim().trim_matches('"').trim();
+                    if trimmed.is_empty() {
+                        last_notice =
+                            Some("Enter a path to an Airglow rig backup JSON file.".to_string());
+                    } else {
+                        match system::import_rig_bundle(std::path::Path::new(trimmed)) {
+                            Ok(mut imported) => {
+                                let rescan = imported.settings.openrgb_enabled
+                                    != config.settings.openrgb_enabled
+                                    || imported.settings.openrgb_host
+                                        != config.settings.openrgb_host
+                                    || imported.settings.openrgb_port
+                                        != config.settings.openrgb_port;
+                                imported.settings.start_with_windows =
+                                    system::is_autostart_enabled();
+                                config = imported;
+                                trial = None;
+                                zones_dirty = true;
+                                crossfader.trigger(cmd_now);
+                                if let Ok(mut wcfg) = shared_cfg.lock() {
+                                    wcfg.lhm_url = config.settings.lhm_url.clone();
+                                    wcfg.demo_mode = config.settings.demo_mode;
+                                }
+                                if rescan {
+                                    let (lock, cvar) = &*hw_desired;
+                                    if let Ok(mut hw) = lock.lock() {
+                                        hw.openrgb_enabled = config.settings.openrgb_enabled;
+                                        hw.openrgb_host = config.settings.openrgb_host.clone();
+                                        hw.openrgb_port = config.settings.openrgb_port;
+                                        hw.rescan_gen = hw.rescan_gen.wrapping_add(1);
+                                        cvar.notify_one();
+                                    }
+                                }
+                                let _ = store.save(&config);
+                                dirty_save = false;
+                                last_save = Instant::now();
+                                last_notice =
+                                    Some(format!("Restored rig backup from {trimmed}"));
+                                push_activity(&mut activity_log, "system", "Restored rig backup");
+                            }
+                            Err(e) => {
+                                last_notice = Some(format!("Rig backup import failed: {e}"));
+                            }
+                        }
+                    }
+                }
+                EngineCommand::OpenUrl(url) => {
+                    if let Err(e) = system::open_url(&url) {
+                        last_notice = Some(format!("Could not open URL: {e}"));
+                    }
+                }
+                EngineCommand::OpenConfigFolder => {
+                    if let Err(e) = system::open_config_folder() {
+                        last_notice = Some(format!("Could not open config folder: {e}"));
+                    }
+                }
+                EngineCommand::CheckForUpdates => {
+                    if !matches!(
+                        update_status,
+                        UpdateStatus::Checking | UpdateStatus::Downloading { .. }
+                    ) {
+                        auto_update_checked = true;
+                        update_status = UpdateStatus::Checking;
+                        spawn_update_check(config.update_channel, update_tx.clone());
+                    }
+                }
+                EngineCommand::DownloadAndStageUpdate => {
+                    if let UpdateStatus::Available {
+                        latest,
+                        exe_url,
+                        sha256_url,
+                        ..
+                    } = update_status.clone()
+                    {
+                        if let Some(url) = exe_url {
+                            update_status = UpdateStatus::Downloading {
+                                latest: latest.clone(),
+                                progress_pct: 0,
+                            };
+                            spawn_update_download(url, sha256_url, latest, update_tx.clone());
+                        } else {
+                            let msg = "This release has no Airglow.exe asset — open GitHub Releases to download manually.".to_string();
+                            update_status = UpdateStatus::Error(msg.clone());
+                            last_notice = Some(msg);
+                        }
+                    }
+                }
+                EngineCommand::ApplyStagedUpdateAndRestart => {
+                    if let UpdateStatus::ReadyToRestart { staged_exe, .. } = update_status.clone() {
+                        match updates::apply_staged_update_and_restart(&staged_exe) {
+                            Ok(()) => {
+                                last_notice = Some("Restarting to apply update…".to_string());
+                                dirty_save = true;
+                                shutdown = true;
+                                exit_after_shutdown = true;
+                            }
+                            Err(e) => {
+                                let msg = format!("Could not launch updater: {e}");
+                                update_status = UpdateStatus::Error(msg.clone());
+                                last_notice = Some(msg);
+                            }
+                        }
+                    }
+                }
+                EngineCommand::SetUpdateChannel(channel) => {
+                    if config.update_channel != channel {
+                        config.update_channel = channel;
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::SetAutoCheckUpdates(enabled) => {
+                    if config.auto_check_updates != enabled {
+                        config.auto_check_updates = enabled;
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::SetFullscreenFillWidth(fill) => {
+                    if config.fullscreen_fill_width != fill {
+                        config.fullscreen_fill_width = fill;
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::SetUiScalePct(pct) => {
+                    apply_set_ui_scale_pct(
+                        &mut config,
+                        pct,
+                        &store,
+                        trial.is_some(),
+                        &mut dirty_save,
+                        &mut last_save,
+                        &watch_tx,
+                    );
+                }
+                EngineCommand::AddOverviewTile(kind) => {
+                    let label = kind.label().to_string();
+                    config.add_overview_tile(kind);
+                    last_notice = Some(format!("Added \"{label}\" tile to Overview."));
+                    dirty_save = true;
+                }
+                EngineCommand::RemoveOverviewTile(id) => {
+                    if config.remove_overview_tile(&id) {
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::MoveOverviewTile { id, delta } => {
+                    if config.move_overview_tile(&id, delta) {
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::ReorderOverviewTile { id, to_index } => {
+                    if config.reorder_overview_tile_to(&id, to_index) {
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::ResizeOverviewTile { id, span, rows } => {
+                    if config.resize_overview_tile(&id, span, rows) {
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::CycleOverviewTileSpan(id) => {
+                    if config.cycle_overview_tile_span(&id).is_some() {
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::ToggleOverviewTileTall(id) => {
+                    if config.toggle_overview_tile_tall(&id).is_some() {
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::CycleOverviewTileStyle(id) => {
+                    if config.cycle_overview_tile_style(&id).is_some() {
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::ResetActiveWorkspace => {
+                    config.reset_active_workspace();
+                    last_notice = Some(format!(
+                        "Reset \"{}\" layout to defaults.",
+                        config.active_workspace().name
+                    ));
+                    dirty_save = true;
+                }
+                EngineCommand::SwitchWorkspace(id) => {
+                    if config.switch_workspace(&id) {
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::CreateWorkspace { name, template_id } => {
+                    config.create_workspace(&name, template_id.as_deref());
+                    last_notice = Some(format!(
+                        "Created workspace \"{}\".",
+                        config.active_workspace().name
+                    ));
+                    dirty_save = true;
+                }
+                EngineCommand::RenameWorkspace { id, name } => {
+                    if config.rename_workspace(&id, &name) {
+                        dirty_save = true;
+                    }
+                }
+                EngineCommand::DeleteWorkspace(id) => {
+                    if config.delete_workspace(&id) {
+                        last_notice = Some("Deleted workspace.".to_string());
+                        dirty_save = true;
+                    }
+                }
                 EngineCommand::ClearNotice => {
                     last_notice = None;
                 }
@@ -1869,7 +2189,47 @@ fn run_engine(
             if let Some(worker) = sensor_worker {
                 let _ = worker.join();
             }
+            if exit_after_shutdown {
+                std::process::exit(0);
+            }
             break;
+        }
+
+        while let Ok(next_status) = update_rx.try_recv() {
+            match &next_status {
+                UpdateStatus::Available { latest, .. } => {
+                    push_activity(
+                        &mut activity_log,
+                        "update",
+                        format!("Airglow v{latest} available"),
+                    );
+                }
+                UpdateStatus::ReadyToRestart { latest, .. } => {
+                    last_notice = Some(format!(
+                        "Airglow v{latest} downloaded — restart to apply."
+                    ));
+                    push_activity(
+                        &mut activity_log,
+                        "update",
+                        format!("Airglow v{latest} staged and ready to restart"),
+                    );
+                }
+                UpdateStatus::Error(msg) => {
+                    push_activity(&mut activity_log, "update", format!("Update error: {msg}"));
+                }
+                _ => {}
+            }
+            update_status = next_status;
+        }
+
+        if !auto_update_checked
+            && config.auto_check_updates
+            && started.elapsed() >= Duration::from_secs(10)
+            && matches!(update_status, UpdateStatus::Idle)
+        {
+            auto_update_checked = true;
+            update_status = UpdateStatus::Checking;
+            spawn_update_check(config.update_channel, update_tx.clone());
         }
 
         let now = Instant::now();
@@ -2384,6 +2744,7 @@ fn run_engine(
             cooling_session_count: cooling_recorder.sessions().len(),
             cooling_sessions: cooling_recorder.summaries(),
             last_notice: last_notice.clone(),
+            update_status: update_status.clone(),
             hid_devices: hid_devices.clone(),
             openrgb: openrgb_status.clone(),
             fps: smoothed_fps,
@@ -2605,5 +2966,100 @@ mod tests {
             assert!(frame.colors.iter().any(|c| c[0] > 0 || c[1] > 0 || c[2] > 0));
         }
         assert_ne!(preview_a[0].colors, preview_b[0].colors);
+    }
+
+    #[test]
+    fn set_ui_scale_pct_command_normalizes_persists_and_broadcasts() {
+        let dir = std::env::temp_dir().join(format!(
+            "airglow_engine_ui_scale_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = ConfigStore::new(&dir);
+        let mut cfg = AppConfig::default();
+        let initial = build_initial_snapshot(&cfg, false, None);
+        let (watch_tx, mut watch_rx) = watch::channel(initial);
+        let mut dirty_save = false;
+        let mut last_save = Instant::now();
+
+        let dispatch = |cmd: EngineCommand,
+                        cfg: &mut AppConfig,
+                        in_trial: bool,
+                        dirty_save: &mut bool,
+                        last_save: &mut Instant| {
+            if let EngineCommand::SetUiScalePct(pct) = cmd {
+                apply_set_ui_scale_pct(
+                    cfg, pct, &store, in_trial, dirty_save, last_save, &watch_tx,
+                );
+            } else {
+                panic!("expected SetUiScalePct");
+            }
+        };
+
+        // Valid preset 125% saves to disk and broadcasts snapshot immediately
+        let _ = watch_rx.borrow_and_update();
+        dispatch(
+            EngineCommand::SetUiScalePct(125),
+            &mut cfg,
+            false,
+            &mut dirty_save,
+            &mut last_save,
+        );
+        assert_eq!(cfg.appearance.ui_scale_pct, 125);
+        assert!(!dirty_save);
+        assert!(watch_rx.has_changed().expect("watch channel open"));
+        assert_eq!(watch_rx.borrow_and_update().config.appearance.ui_scale_pct, 125);
+        assert_eq!(store.load_or_default().appearance.ui_scale_pct, 125);
+
+        // Out-of-bounds low (50 -> 85) and high (220 -> 150) clamp on normalize, save, and broadcast
+        dispatch(
+            EngineCommand::SetUiScalePct(50),
+            &mut cfg,
+            false,
+            &mut dirty_save,
+            &mut last_save,
+        );
+        assert_eq!(cfg.appearance.ui_scale_pct, 85);
+        assert!(watch_rx.has_changed().expect("watch channel open"));
+        assert_eq!(watch_rx.borrow_and_update().config.appearance.ui_scale_pct, 85);
+        assert_eq!(store.load_or_default().appearance.ui_scale_pct, 85);
+
+        dispatch(
+            EngineCommand::SetUiScalePct(220),
+            &mut cfg,
+            false,
+            &mut dirty_save,
+            &mut last_save,
+        );
+        assert_eq!(cfg.appearance.ui_scale_pct, 150);
+        assert_eq!(watch_rx.borrow_and_update().config.appearance.ui_scale_pct, 150);
+        assert_eq!(store.load_or_default().appearance.ui_scale_pct, 150);
+
+        // 0 resets back to Auto
+        dispatch(
+            EngineCommand::SetUiScalePct(0),
+            &mut cfg,
+            false,
+            &mut dirty_save,
+            &mut last_save,
+        );
+        assert_eq!(cfg.appearance.ui_scale_pct, 0);
+        assert_eq!(watch_rx.borrow_and_update().config.appearance.ui_scale_pct, 0);
+        assert_eq!(store.load_or_default().appearance.ui_scale_pct, 0);
+
+        // During trial preview, broadcasts snapshot and marks dirty_save without overwriting disk
+        dispatch(
+            EngineCommand::SetUiScalePct(140),
+            &mut cfg,
+            true,
+            &mut dirty_save,
+            &mut last_save,
+        );
+        assert_eq!(cfg.appearance.ui_scale_pct, 140);
+        assert!(dirty_save);
+        assert_eq!(watch_rx.borrow_and_update().config.appearance.ui_scale_pct, 140);
+        assert_eq!(store.load_or_default().appearance.ui_scale_pct, 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

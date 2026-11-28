@@ -2,6 +2,7 @@
 
 //! Airglow 2.0 (Iced 0.14 + pure-Rust hardware core + Tauri tray-icon).
 
+mod bento_grid;
 mod brand;
 mod canvas_ambient;
 mod canvas_colorwheel;
@@ -19,12 +20,13 @@ use std::time::{Duration, Instant};
 
 use airglow_core::automations::{ALL_DAYS_MASK, Action, AutomationRule, Trigger};
 use airglow_core::config::{
-    ACCENT_SWATCHES, CurvePoint, DesignId, FanChannelMode, RigStyle, TempSource, TempUnit,
-    ZoneConfig, ZoneOverride, format_hex_rgb, parse_hex_rgb,
+    ACCENT_SWATCHES, CurvePoint, DesignId, FanChannelMode, OverviewTileKind, RigStyle, TempSource,
+    TempUnit, UpdateChannel, ZoneConfig, ZoneOverride, format_hex_rgb, parse_hex_rgb,
 };
 use airglow_core::effects::{EffectId, HARMONIES, Layer, LayerKind, LayerStack, SceneParams};
 use airglow_core::engine::{EngineCommand, EngineHandle, EngineSnapshot};
 use airglow_core::sensors;
+use airglow_core::updates::UpdateStatus;
 use iced::widget::{
     Space, button, column, container, image, operation, row, scrollable, stack, text,
 };
@@ -32,6 +34,7 @@ use iced::{
     Alignment, Element, Event, Length, Size, Subscription, Task, Theme, keyboard, time, window,
 };
 
+use crate::canvas_ambient::{UiIcon, WindowBackdropCanvas, icon_canvas};
 use crate::canvas_stage::StageMessage;
 use crate::canvas_widgets::{BrandMarkCanvas, HeaderGlowCanvas};
 use crate::theme::DesignTokens;
@@ -146,17 +149,118 @@ pub enum StarterIdea {
     ThermalBoost,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsSection {
+    Appearance,
+    Updates,
+    General,
+    LightingCooling,
+    SensorsDevices,
+    BackupDiagnostics,
+}
+
+impl SettingsSection {
+    pub const ALL: [SettingsSection; 6] = [
+        Self::Appearance,
+        Self::Updates,
+        Self::General,
+        Self::LightingCooling,
+        Self::SensorsDevices,
+        Self::BackupDiagnostics,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance",
+            Self::Updates => "Updates & About",
+            Self::General => "General & Telemetry",
+            Self::LightingCooling => "Lighting & Cooling",
+            Self::SensorsDevices => "Sensors & Devices",
+            Self::BackupDiagnostics => "Backup & Diagnostics",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Appearance => "✦",
+            Self::Updates => "↻",
+            Self::General => "⚙",
+            Self::LightingCooling => "☼",
+            Self::SensorsDevices => "◈",
+            Self::BackupDiagnostics => "⛁",
+        }
+    }
+
+    pub fn subtitle(self) -> &'static str {
+        match self {
+            Self::Appearance => "Designs, accents, looks & viewport",
+            Self::Updates => "Version, updates & shortcuts",
+            Self::General => "Units, tariff, startup & pulse",
+            Self::LightingCooling => "Sleep/lock, hysteresis & fans",
+            Self::SensorsDevices => "LHM, OpenRGB & conflict guard",
+            Self::BackupDiagnostics => "Rig backup, folder & reset",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddTileTab {
+    Controls,
+    Sensors,
+    LiveLhm,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Noop,
     Tick,
     WindowOpened(window::Id),
+    WindowResized(window::Id, Size),
     CloseRequested(window::Id),
     SelectTab(Tab),
     SetPulseSpan(PulseSpan),
     ClearNotice,
     DismissToast,
     CloseConflictingApp(String),
+
+    // Fullscreen, Viewport, UI Scale & Theater Rig
+    ToggleFullscreen,
+    ToggleTheaterRig,
+    SetFullscreenFillWidth(bool),
+    SetUiScalePct(u16),
+    CycleUiScale,
+    StepUiScale(i8),
+
+    // Overview Tile Workshop & Workspaces
+    ToggleEditTilesMode,
+    ToggleAddTileCatalog,
+    OpenAddTileFromPalette,
+    SetAddTileTab(AddTileTab),
+    SensorSearchChanged(String),
+    AddOverviewTile(OverviewTileKind),
+    RemoveOverviewTile(String),
+    MoveOverviewTile(String, isize),
+    ReorderOverviewTile(String, usize),
+    ResizeOverviewTile(String, u8, u8),
+    CycleOverviewTileSpan(String),
+    ToggleOverviewTileTall(String),
+    CycleOverviewTileStyle(String),
+    ResetActiveWorkspace,
+    ToggleWorkspacesBar,
+    SwitchWorkspace(String),
+    ToggleWorkspaceCreate,
+    WorkspaceNameDraftChanged(String),
+    WorkspaceTemplateSelected(Option<String>),
+    CreateWorkspace,
+    ToggleWorkspaceRename,
+    WorkspaceRenameDraftChanged(String),
+    ConfirmWorkspaceRename,
+    DeleteWorkspace(String),
+
+    // Desk Display Focus Timer
+    ToggleFocusTimer,
+    ResetFocusTimer,
+    SetFocusTimerMins(u16),
 
     // Command Palette & Global Overlays
     ToggleCommandPalette,
@@ -284,6 +388,20 @@ pub enum Message {
     RescanHardware,
 
     // Settings
+    SelectSettingsSection(SettingsSection),
+    JumpSettingsSection(SettingsSection),
+    CheckForUpdates,
+    DownloadAndStageUpdate,
+    ApplyStagedUpdateAndRestart,
+    SetUpdateChannel(UpdateChannel),
+    ToggleAutoCheckUpdates(bool),
+    OpenUrl(String),
+    OpenConfigFolder,
+    ExportRigBundle,
+    ImportBackupPathChanged(String),
+    ImportRigBundle,
+    ToggleMinimizeToTray(bool),
+    ToggleLhmFanControl(bool),
     SetDesign(DesignId),
     SetTempUnit(TempUnit),
     ToggleStartWithWindows(bool),
@@ -307,11 +425,43 @@ pub struct AirglowApp {
     pub tab: Tab,
     pub pulse_span: PulseSpan,
 
+    // Live Viewport, Fullscreen, Auto-HiDPI Scale & Theater Rig
+    pub window_size: Size,
+    pub approx_physical_width: f32,
+    pub auto_scale: f32,
+    pub applied_scale: f32,
+    pub is_fullscreen: bool,
+    pub theater_rig: bool,
+    pub minimize_to_tray_on_close: bool,
+    start_fullscreen: bool,
+    start_maximized: bool,
+
     // Adaptive GPU animation clock & cached bundled Firefly artworks
     pub boot_instant: Instant,
     pub anim_t: f32,
     pub moth_art: image::Handle,
     pub dusk_art: image::Handle,
+    pub clock_hhmm: String,
+    pub clock_date: String,
+    pub focus_timer_secs: u32,
+    pub focus_timer_running: bool,
+    focus_timer_last_tick: Instant,
+
+    // Overview Tile Workshop & Workspaces
+    pub edit_tiles_mode: bool,
+    pub workspaces_bar_open: bool,
+    pub add_tile_open: bool,
+    pub add_tile_tab: AddTileTab,
+    pub sensor_search_query: String,
+    pub workspace_create_open: bool,
+    pub workspace_name_draft: String,
+    pub workspace_template_draft: Option<String>,
+    pub workspace_rename_open: bool,
+    pub workspace_rename_draft: String,
+
+    // 2-Pane Settings Navigation & Backup
+    pub settings_section: SettingsSection,
+    pub import_backup_path_draft: String,
 
     // Command Palette, Shortcuts Modal, Customize Drawer, Compact Mini-Mode, Activity Strip & Toast
     pub compact_window: bool,
@@ -366,8 +516,35 @@ fn main() -> iced::Result {
     iced::daemon(AirglowApp::boot, AirglowApp::update, AirglowApp::view)
         .title(AirglowApp::title)
         .theme(AirglowApp::theme)
+        .scale_factor(AirglowApp::scale_factor)
         .subscription(AirglowApp::subscription)
         .run()
+}
+
+/// Resolves responsive Auto UI scale factor from `approx_physical_width` with a 120px hysteresis
+/// band around each tier threshold so `window::resize_events` never oscillate.
+pub fn resolve_auto_scale_with_hysteresis(approx_phys_w: f32, current_auto_scale: f32) -> f32 {
+    const BAND: f32 = 120.0;
+    if (current_auto_scale - 1.50).abs() < 0.02 && approx_phys_w >= 3250.0 - BAND {
+        return 1.50;
+    }
+    if (current_auto_scale - 1.25).abs() < 0.02
+        && approx_phys_w >= 2200.0 - BAND
+        && approx_phys_w < 3250.0
+    {
+        return 1.25;
+    }
+    if (current_auto_scale - 1.10).abs() < 0.02
+        && approx_phys_w >= 1820.0 - BAND
+        && approx_phys_w < 2200.0
+    {
+        return 1.10;
+    }
+    airglow_core::config::AppearanceConfig {
+        ui_scale_pct: 0,
+        ..Default::default()
+    }
+    .resolve_scale_factor(approx_phys_w)
 }
 
 impl AirglowApp {
@@ -407,6 +584,9 @@ impl AirglowApp {
         if launch.tab == Tab::Studio {
             engine.send(EngineCommand::SetStudioPreviewActive(true));
         }
+        if launch.check_updates {
+            engine.send(EngineCommand::CheckForUpdates);
+        }
         let lighting_hex_draft = format_hex_rgb(snapshot.config.scene.params.color);
         let studio_hex_draft = snapshot
             .config
@@ -424,6 +604,19 @@ impl AirglowApp {
                 .unwrap_or_else(|| theme::hex_to_rgb_arr(snapshot.config.settings.design.palette().brass)),
         );
         let compact_window = launch.compact_window;
+        let (clock_hhmm, clock_date) = local_clock_strings();
+        let approx_physical_width = 1440.0_f32;
+        let auto_scale = resolve_auto_scale_with_hysteresis(approx_physical_width, 1.0);
+        let applied_scale = if compact_window {
+            1.0
+        } else {
+            snapshot.config.appearance.resolve_scale_factor(approx_physical_width)
+        };
+        let initial_window_size = if compact_window {
+            Size::new(430.0, 404.0)
+        } else {
+            Size::new(1440.0 / applied_scale, 900.0 / applied_scale)
+        };
 
         let app = Self {
             engine,
@@ -432,10 +625,36 @@ impl AirglowApp {
             main_window: None,
             tab: launch.tab,
             pulse_span,
+            window_size: initial_window_size,
+            approx_physical_width,
+            auto_scale,
+            applied_scale,
+            is_fullscreen: launch.fullscreen,
+            theater_rig: launch.theater_rig,
+            minimize_to_tray_on_close: true,
+            start_fullscreen: launch.fullscreen,
+            start_maximized: launch.maximized,
             boot_instant: Instant::now(),
             anim_t: 0.0,
             moth_art: image::Handle::from_bytes(FIREFLY_MOTH_PNG),
             dusk_art: image::Handle::from_bytes(FIREFLY_DUSK_PNG),
+            clock_hhmm,
+            clock_date,
+            focus_timer_secs: 25 * 60,
+            focus_timer_running: false,
+            focus_timer_last_tick: Instant::now(),
+            edit_tiles_mode: launch.edit_tiles,
+            workspaces_bar_open: false,
+            add_tile_open: launch.add_tile,
+            add_tile_tab: AddTileTab::Controls,
+            sensor_search_query: String::new(),
+            workspace_create_open: false,
+            workspace_name_draft: String::new(),
+            workspace_template_draft: None,
+            workspace_rename_open: false,
+            workspace_rename_draft: String::new(),
+            settings_section: launch.settings_section,
+            import_backup_path_draft: String::new(),
             compact_window,
             titlebar_applied: false,
             show_shortcuts: launch.show_shortcuts,
@@ -476,7 +695,23 @@ impl AirglowApp {
             sync_drafts_pending: false,
         };
 
-        (app, open_main_window(compact_window))
+        (app, open_main_window(compact_window, initial_window_size))
+    }
+
+    pub fn effective_scale_factor(&self) -> f32 {
+        if self.compact_window {
+            return 1.0;
+        }
+        let pct = self.snapshot.config.appearance.ui_scale_pct;
+        if pct > 0 {
+            (pct as f32 / 100.0).clamp(0.85, 1.50)
+        } else {
+            self.auto_scale
+        }
+    }
+
+    fn scale_factor(&self, _window: window::Id) -> f32 {
+        self.effective_scale_factor()
     }
 
     fn title(&self, _window: window::Id) -> String {
@@ -506,14 +741,25 @@ impl AirglowApp {
         Subscription::batch([
             time::every(Duration::from_millis(tick_ms)).map(|_| Message::Tick),
             window::close_requests().map(Message::CloseRequested),
+            window::resize_events().map(|(id, size)| Message::WindowResized(id, size)),
             iced::event::listen_with(|ev, status, _win| match ev {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     match key {
+                        keyboard::Key::Named(keyboard::key::Named::F11) => {
+                            if modifiers.shift() {
+                                Some(Message::ToggleTheaterRig)
+                            } else {
+                                Some(Message::ToggleFullscreen)
+                            }
+                        }
                         keyboard::Key::Character(ref ch) if modifiers.command() => {
                             match ch.to_ascii_lowercase().as_str() {
                                 "k" => Some(Message::ToggleCommandPalette),
                                 "m" => Some(Message::ToggleCompactMode),
                                 "/" => Some(Message::ToggleShortcuts),
+                                "+" | "=" => Some(Message::StepUiScale(1)),
+                                "-" | "_" => Some(Message::StepUiScale(-1)),
+                                "0" => Some(Message::StepUiScale(0)),
                                 "z" if modifiers.shift() => Some(Message::StudioRedo),
                                 "z" => Some(Message::StudioUndo),
                                 "y" => Some(Message::StudioRedo),
@@ -587,9 +833,17 @@ impl AirglowApp {
             self.snapshot.config.appearance.accent_override,
             self.snapshot.config.appearance.compact_density,
         );
-        let caption = theme::hex_to_rgb_arr(t.appbar_mid);
+        let caption = if t.is_firefly() {
+            [0x1f, 0x19, 0x2c]
+        } else {
+            theme::hex_to_rgb_arr(t.appbar_mid)
+        };
         let ink = theme::hex_to_rgb_arr(t.p.ink);
-        let border = theme::hex_to_rgb_arr(t.appbar_border);
+        let border = if t.is_firefly() {
+            [0x2d, 0x25, 0x3f]
+        } else {
+            theme::hex_to_rgb_arr(t.appbar_border)
+        };
         self.titlebar_applied =
             airglow_core::system::apply_window_titlebar_theme(caption, ink, border, !t.p.is_light);
     }
@@ -634,6 +888,22 @@ impl AirglowApp {
             Message::Noop => Task::none(),
             Message::Tick => {
                 self.anim_t = self.boot_instant.elapsed().as_secs_f32();
+                if self.focus_timer_last_tick.elapsed() >= Duration::from_secs(1) {
+                    let secs_elapsed = self.focus_timer_last_tick.elapsed().as_secs() as u32;
+                    self.focus_timer_last_tick = Instant::now();
+                    let (hhmm, date) = local_clock_strings();
+                    self.clock_hhmm = hhmm;
+                    self.clock_date = date;
+                    if self.focus_timer_running {
+                        if self.focus_timer_secs <= secs_elapsed {
+                            self.focus_timer_secs = 0;
+                            self.focus_timer_running = false;
+                            self.show_toast("Focus session complete!", self.current_accent_hex());
+                        } else {
+                            self.focus_timer_secs -= secs_elapsed;
+                        }
+                    }
+                }
                 if let Some((_, _, at)) = self.toast
                     && at.elapsed().as_secs_f32() >= TOAST_DURATION_SECS
                 {
@@ -645,7 +915,16 @@ impl AirglowApp {
                 if self.engine.rx.has_changed().unwrap_or(false) {
                     let prev_design = self.snapshot.config.settings.design;
                     let prev_accent = self.snapshot.config.appearance.accent_override;
+                    let prev_scale = self.applied_scale.max(0.5);
                     self.snapshot = self.engine.rx.borrow_and_update().clone();
+                    let next_scale = self.effective_scale_factor();
+                    if (prev_scale - next_scale).abs() > 0.001 && !self.compact_window {
+                        self.applied_scale = next_scale;
+                        self.window_size = Size::new(
+                            self.window_size.width * prev_scale / next_scale,
+                            self.window_size.height * prev_scale / next_scale,
+                        );
+                    }
                     if self.snapshot.config.settings.design != prev_design
                         || self.snapshot.config.appearance.accent_override != prev_accent
                     {
@@ -710,17 +989,28 @@ impl AirglowApp {
                                 if let Some(id) = self.main_window {
                                     return window::gain_focus(id);
                                 }
-                                return open_main_window(self.compact_window);
+                                let sz = if self.compact_window {
+                                    Size::new(430.0, 404.0)
+                                } else {
+                                    let s = self.effective_scale_factor();
+                                    Size::new(1440.0 / s, 900.0 / s)
+                                };
+                                return open_main_window(self.compact_window, sz);
                             }
                             TrayAction::ToggleCompactMode => {
                                 if let Some(id) = self.main_window {
+                                    let prev_scale = self.applied_scale.max(0.5);
                                     self.compact_window = !self.compact_window;
                                     self.palette_open = false;
+                                    let next_scale = self.effective_scale_factor();
+                                    self.applied_scale = next_scale;
                                     let target = if self.compact_window {
                                         Size::new(430.0, 404.0)
                                     } else {
-                                        Size::new(1340.0, 920.0)
+                                        Size::new(1440.0 / next_scale, 900.0 / next_scale)
                                     };
+                                    let _ = prev_scale;
+                                    self.window_size = target;
                                     self.titlebar_applied = false;
                                     self.sync_window_titlebar();
                                     return Task::batch([
@@ -729,7 +1019,8 @@ impl AirglowApp {
                                     ]);
                                 }
                                 self.compact_window = true;
-                                return open_main_window(true);
+                                self.applied_scale = 1.0;
+                                return open_main_window(true, Size::new(430.0, 404.0));
                             }
                             TrayAction::ToggleLights => {
                                 let next = !self.snapshot.config.scene.on;
@@ -757,18 +1048,375 @@ impl AirglowApp {
                 self.main_window = Some(id);
                 self.titlebar_applied = false;
                 self.sync_window_titlebar();
+                if self.start_fullscreen && !self.compact_window {
+                    self.start_fullscreen = false;
+                    self.is_fullscreen = true;
+                    return window::set_mode(id, window::Mode::Fullscreen);
+                }
+                if self.start_maximized && !self.compact_window {
+                    self.start_maximized = false;
+                    return window::maximize(id, true);
+                }
+                Task::none()
+            }
+            Message::WindowResized(id, size) => {
+                if self.main_window == Some(id) || self.main_window.is_none() {
+                    if self.compact_window {
+                        self.window_size = size;
+                        self.applied_scale = 1.0;
+                    } else {
+                        let prev_scale = self.applied_scale.max(0.5);
+                        let phys_w = (size.width * prev_scale).max(400.0);
+                        self.approx_physical_width = phys_w;
+                        self.auto_scale =
+                            resolve_auto_scale_with_hysteresis(phys_w, self.auto_scale);
+                        let next_scale = self.effective_scale_factor();
+                        self.applied_scale = next_scale;
+                        self.window_size = Size::new(
+                            size.width * prev_scale / next_scale,
+                            size.height * prev_scale / next_scale,
+                        );
+                    }
+                }
                 Task::none()
             }
             Message::CloseRequested(id) => {
                 if self.main_window == Some(id) {
                     self.main_window = None;
                 }
-                if self.tray.is_some() {
+                if self.tray.is_some() && self.minimize_to_tray_on_close {
                     window::close(id)
                 } else {
                     self.engine.shutdown();
                     iced::exit()
                 }
+            }
+            Message::ToggleFullscreen => {
+                if self.compact_window {
+                    self.compact_window = false;
+                }
+                self.is_fullscreen = !self.is_fullscreen;
+                self.show_toast(
+                    if self.is_fullscreen {
+                        "Fullscreen mode (F11 to exit)"
+                    } else {
+                        "Windowed mode"
+                    },
+                    self.current_accent_hex(),
+                );
+                if let Some(id) = self.main_window {
+                    let mode = if self.is_fullscreen {
+                        window::Mode::Fullscreen
+                    } else {
+                        window::Mode::Windowed
+                    };
+                    window::set_mode(id, mode)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::ToggleTheaterRig => {
+                if self.compact_window {
+                    self.compact_window = false;
+                }
+                self.theater_rig = !self.theater_rig;
+                self.palette_open = false;
+                self.show_toast(
+                    if self.theater_rig {
+                        "Theater Rig Mode (Shift+F11 or Esc to exit)"
+                    } else {
+                        "Returned to Dashboard"
+                    },
+                    self.current_accent_hex(),
+                );
+                Task::none()
+            }
+            Message::SetFullscreenFillWidth(fill) => {
+                self.snapshot.config.fullscreen_fill_width = fill;
+                self.engine.send(EngineCommand::SetFullscreenFillWidth(fill));
+                self.show_toast(
+                    if fill {
+                        "Fullscreen edge-to-edge layout enabled"
+                    } else {
+                        "Centered 2400px max-width layout enabled"
+                    },
+                    self.current_accent_hex(),
+                );
+                Task::none()
+            }
+            Message::SetUiScalePct(pct) => {
+                let prev_scale = self.applied_scale.max(0.5);
+                let normalized_pct = if pct == 0 { 0 } else { pct.clamp(85, 150) };
+                self.snapshot.config.appearance.ui_scale_pct = normalized_pct;
+                self.engine.send(EngineCommand::SetUiScalePct(normalized_pct));
+                if normalized_pct == 0 {
+                    self.auto_scale = resolve_auto_scale_with_hysteresis(
+                        self.approx_physical_width,
+                        self.auto_scale,
+                    );
+                }
+                let next_scale = self.effective_scale_factor();
+                self.applied_scale = next_scale;
+                if !self.compact_window && (prev_scale - next_scale).abs() > 0.001 {
+                    self.window_size = Size::new(
+                        self.window_size.width * prev_scale / next_scale,
+                        self.window_size.height * prev_scale / next_scale,
+                    );
+                }
+                let toast_lbl = if normalized_pct == 0 {
+                    format!("UI Scale: Auto ({:.0}%)", next_scale * 100.0)
+                } else {
+                    format!("UI Scale: {normalized_pct}%")
+                };
+                self.show_toast(toast_lbl, self.current_accent_hex());
+                Task::none()
+            }
+            Message::CycleUiScale => {
+                let next = match self.snapshot.config.appearance.ui_scale_pct {
+                    0 => 100,
+                    100 => 125,
+                    _ => 0,
+                };
+                self.update(Message::SetUiScalePct(next))
+            }
+            Message::StepUiScale(dir) => {
+                if dir == 0 {
+                    return self.update(Message::SetUiScalePct(0));
+                }
+                let cur_pct = if self.snapshot.config.appearance.ui_scale_pct == 0 {
+                    (self.effective_scale_factor() * 100.0).round() as u16
+                } else {
+                    self.snapshot.config.appearance.ui_scale_pct
+                };
+                const STEPS: &[u16] = &[85, 90, 100, 110, 115, 125, 140, 150];
+                let next_pct = if dir > 0 {
+                    STEPS.iter().copied().find(|&s| s > cur_pct).unwrap_or(150)
+                } else {
+                    STEPS.iter().copied().rev().find(|&s| s < cur_pct).unwrap_or(85)
+                };
+                self.update(Message::SetUiScalePct(next_pct))
+            }
+
+            // Overview Tile Workshop & Workspaces
+            Message::ToggleEditTilesMode => {
+                self.tab = Tab::Overview;
+                self.theater_rig = false;
+                self.edit_tiles_mode = !self.edit_tiles_mode;
+                if !self.edit_tiles_mode {
+                    self.add_tile_open = false;
+                    self.workspace_create_open = false;
+                    self.workspace_rename_open = false;
+                }
+                Task::none()
+            }
+            Message::ToggleAddTileCatalog => {
+                self.add_tile_open = !self.add_tile_open;
+                if self.add_tile_open {
+                    self.tab = Tab::Overview;
+                    self.theater_rig = false;
+                }
+                Task::none()
+            }
+            Message::OpenAddTileFromPalette => {
+                self.tab = Tab::Overview;
+                self.theater_rig = false;
+                self.engine
+                    .send(EngineCommand::SetStudioPreviewActive(false));
+                self.edit_tiles_mode = true;
+                self.add_tile_open = true;
+                Task::none()
+            }
+            Message::SetAddTileTab(tab) => {
+                self.add_tile_tab = tab;
+                Task::none()
+            }
+            Message::SensorSearchChanged(q) => {
+                self.sensor_search_query = q;
+                Task::none()
+            }
+            Message::AddOverviewTile(kind) => {
+                let label = kind.label().to_string();
+                self.snapshot.config.add_overview_tile(kind.clone());
+                self.engine.send(EngineCommand::AddOverviewTile(kind));
+                self.show_toast(format!("Pinned \"{label}\" tile"), self.current_accent_hex());
+                Task::none()
+            }
+            Message::RemoveOverviewTile(id) => {
+                self.snapshot.config.remove_overview_tile(&id);
+                self.engine.send(EngineCommand::RemoveOverviewTile(id));
+                self.show_toast("Removed tile from workspace", self.current_accent_hex());
+                Task::none()
+            }
+            Message::MoveOverviewTile(id, delta) => {
+                self.snapshot.config.move_overview_tile(&id, delta);
+                self.engine
+                    .send(EngineCommand::MoveOverviewTile { id, delta });
+                Task::none()
+            }
+            Message::ReorderOverviewTile(id, to_index) => {
+                if self.snapshot.config.reorder_overview_tile_to(&id, to_index) {
+                    self.engine
+                        .send(EngineCommand::ReorderOverviewTile { id, to_index });
+                }
+                Task::none()
+            }
+            Message::ResizeOverviewTile(id, span, rows) => {
+                if self.snapshot.config.resize_overview_tile(&id, span, rows) {
+                    self.engine
+                        .send(EngineCommand::ResizeOverviewTile { id, span, rows });
+                }
+                Task::none()
+            }
+            Message::CycleOverviewTileSpan(id) => {
+                if let Some(span) = self.snapshot.config.cycle_overview_tile_span(&id) {
+                    self.show_toast(format!("Tile width: {span}×"), self.current_accent_hex());
+                }
+                self.engine.send(EngineCommand::CycleOverviewTileSpan(id));
+                Task::none()
+            }
+            Message::ToggleOverviewTileTall(id) => {
+                if let Some(tall) = self.snapshot.config.toggle_overview_tile_tall(&id) {
+                    self.show_toast(
+                        if tall {
+                            "Tile height: Tall"
+                        } else {
+                            "Tile height: Standard"
+                        },
+                        self.current_accent_hex(),
+                    );
+                }
+                self.engine.send(EngineCommand::ToggleOverviewTileTall(id));
+                Task::none()
+            }
+            Message::CycleOverviewTileStyle(id) => {
+                if let Some(style) = self.snapshot.config.cycle_overview_tile_style(&id) {
+                    self.show_toast(
+                        format!("Tile style: {}", style.label()),
+                        self.current_accent_hex(),
+                    );
+                }
+                self.engine.send(EngineCommand::CycleOverviewTileStyle(id));
+                Task::none()
+            }
+            Message::ResetActiveWorkspace => {
+                self.snapshot.config.reset_active_workspace();
+                self.engine.send(EngineCommand::ResetActiveWorkspace);
+                self.show_toast("Workspace layout reset to default", self.current_accent_hex());
+                Task::none()
+            }
+            Message::ToggleWorkspacesBar => {
+                self.workspaces_bar_open = !self.workspaces_bar_open;
+                if !self.workspaces_bar_open {
+                    self.workspace_create_open = false;
+                    self.workspace_rename_open = false;
+                }
+                Task::none()
+            }
+            Message::SwitchWorkspace(id) => {
+                self.snapshot.config.switch_workspace(&id);
+                self.workspace_rename_open = false;
+                self.engine.send(EngineCommand::SwitchWorkspace(id));
+                Task::none()
+            }
+            Message::ToggleWorkspaceCreate => {
+                self.workspace_create_open = !self.workspace_create_open;
+                if self.workspace_create_open {
+                    self.workspace_rename_open = false;
+                    self.workspace_name_draft.clear();
+                    self.workspace_template_draft = None;
+                }
+                Task::none()
+            }
+            Message::WorkspaceNameDraftChanged(s) => {
+                self.workspace_name_draft = s;
+                Task::none()
+            }
+            Message::WorkspaceTemplateSelected(tpl) => {
+                self.workspace_template_draft = tpl;
+                Task::none()
+            }
+            Message::CreateWorkspace => {
+                let raw = self.workspace_name_draft.trim();
+                let name = if raw.is_empty() {
+                    match self.workspace_template_draft.as_deref() {
+                        Some("gaming") => "Gaming".to_string(),
+                        Some("quiet-studio") => "Quiet Studio".to_string(),
+                        Some("thermal-lab") => "Thermal Lab".to_string(),
+                        _ => format!(
+                            "Workspace {}",
+                            self.snapshot.config.overview_workspaces.len() + 1
+                        ),
+                    }
+                } else {
+                    raw.to_string()
+                };
+                let tpl = self.workspace_template_draft.clone();
+                self.snapshot
+                    .config
+                    .create_workspace(&name, tpl.as_deref());
+                self.engine.send(EngineCommand::CreateWorkspace {
+                    name: name.clone(),
+                    template_id: tpl,
+                });
+                self.workspace_create_open = false;
+                self.workspace_name_draft.clear();
+                self.show_toast(format!("Created workspace \"{name}\""), self.current_accent_hex());
+                Task::none()
+            }
+            Message::ToggleWorkspaceRename => {
+                self.workspace_rename_open = !self.workspace_rename_open;
+                if self.workspace_rename_open {
+                    self.workspace_create_open = false;
+                    self.workspace_rename_draft =
+                        self.snapshot.config.active_workspace().name.clone();
+                }
+                Task::none()
+            }
+            Message::WorkspaceRenameDraftChanged(s) => {
+                self.workspace_rename_draft = s;
+                Task::none()
+            }
+            Message::ConfirmWorkspaceRename => {
+                let name = self.workspace_rename_draft.trim().to_string();
+                let id = self.snapshot.config.active_workspace_id.clone();
+                if !name.is_empty() {
+                    self.snapshot.config.rename_workspace(&id, &name);
+                    self.engine
+                        .send(EngineCommand::RenameWorkspace { id, name: name.clone() });
+                    self.show_toast(format!("Renamed workspace to \"{name}\""), self.current_accent_hex());
+                }
+                self.workspace_rename_open = false;
+                Task::none()
+            }
+            Message::DeleteWorkspace(id) => {
+                if self.snapshot.config.overview_workspaces.len() > 1 {
+                    self.snapshot.config.delete_workspace(&id);
+                    self.engine.send(EngineCommand::DeleteWorkspace(id));
+                    self.show_toast("Workspace deleted", self.current_accent_hex());
+                }
+                Task::none()
+            }
+
+            // Desk Display Focus Timer
+            Message::ToggleFocusTimer => {
+                self.focus_timer_running = !self.focus_timer_running;
+                if self.focus_timer_running && self.focus_timer_secs == 0 {
+                    self.focus_timer_secs = 25 * 60;
+                }
+                self.focus_timer_last_tick = Instant::now();
+                Task::none()
+            }
+            Message::ResetFocusTimer => {
+                self.focus_timer_running = false;
+                self.focus_timer_secs = 25 * 60;
+                self.focus_timer_last_tick = Instant::now();
+                Task::none()
+            }
+            Message::SetFocusTimerMins(mins) => {
+                self.focus_timer_secs = (mins as u32) * 60;
+                self.focus_timer_running = true;
+                self.focus_timer_last_tick = Instant::now();
+                Task::none()
             }
             Message::SelectTab(tab) => {
                 self.tab = tab;
@@ -837,8 +1485,19 @@ impl AirglowApp {
                     self.palette_selected = 0;
                 } else if self.show_shortcuts {
                     self.show_shortcuts = false;
+                } else if self.theater_rig {
+                    self.theater_rig = false;
+                } else if self.add_tile_open {
+                    self.add_tile_open = false;
+                } else if self.workspace_create_open || self.workspace_rename_open {
+                    self.workspace_create_open = false;
+                    self.workspace_rename_open = false;
                 } else if self.customize_open {
                     self.customize_open = false;
+                } else if self.edit_tiles_mode {
+                    self.edit_tiles_mode = false;
+                } else if self.workspaces_bar_open {
+                    self.workspaces_bar_open = false;
                 }
                 Task::none()
             }
@@ -854,11 +1513,14 @@ impl AirglowApp {
                 self.compact_window = !self.compact_window;
                 self.palette_open = false;
                 self.show_shortcuts = false;
+                let next_scale = self.effective_scale_factor();
+                self.applied_scale = next_scale;
                 let target = if self.compact_window {
                     Size::new(430.0, 404.0)
                 } else {
-                    Size::new(1340.0, 920.0)
+                    Size::new(1440.0 / next_scale, 900.0 / next_scale)
                 };
+                self.window_size = target;
                 self.show_toast(
                     if self.compact_window {
                         "Compact Mini-Mode (Ctrl+M to expand)"
@@ -1785,6 +2447,104 @@ impl AirglowApp {
             }
 
             // Settings
+            Message::SelectSettingsSection(sec) => {
+                self.settings_section = sec;
+                Task::none()
+            }
+            Message::JumpSettingsSection(sec) => {
+                self.tab = Tab::Settings;
+                self.theater_rig = false;
+                self.settings_section = sec;
+                self.engine
+                    .send(EngineCommand::SetStudioPreviewActive(false));
+                Task::none()
+            }
+            Message::CheckForUpdates => {
+                self.snapshot.update_status = UpdateStatus::Checking;
+                self.engine.send(EngineCommand::CheckForUpdates);
+                self.show_toast("Checking GitHub for Airglow updates…", 0x6bcbf7);
+                Task::none()
+            }
+            Message::DownloadAndStageUpdate => {
+                self.engine.send(EngineCommand::DownloadAndStageUpdate);
+                self.show_toast("Downloading Airglow update…", 0x6bcbf7);
+                Task::none()
+            }
+            Message::ApplyStagedUpdateAndRestart => {
+                self.engine.send(EngineCommand::ApplyStagedUpdateAndRestart);
+                self.show_toast("Applying update & restarting Airglow…", self.current_accent_hex());
+                self.engine.shutdown();
+                iced::exit()
+            }
+            Message::SetUpdateChannel(ch) => {
+                self.snapshot.config.update_channel = ch;
+                self.engine.send(EngineCommand::SetUpdateChannel(ch));
+                self.show_toast(
+                    format!("Update channel: {}", ch.label()),
+                    self.current_accent_hex(),
+                );
+                Task::none()
+            }
+            Message::ToggleAutoCheckUpdates(enabled) => {
+                self.snapshot.config.auto_check_updates = enabled;
+                self.engine.send(EngineCommand::SetAutoCheckUpdates(enabled));
+                Task::none()
+            }
+            Message::OpenUrl(url) => {
+                self.engine.send(EngineCommand::OpenUrl(url));
+                Task::none()
+            }
+            Message::OpenConfigFolder => {
+                self.engine.send(EngineCommand::OpenConfigFolder);
+                self.show_toast("Opened Airglow config folder", self.current_accent_hex());
+                Task::none()
+            }
+            Message::ExportRigBundle => {
+                self.engine.send(EngineCommand::ExportRigBundle);
+                self.show_toast("Exported Airglow rig backup (.json)", 0xa5dece);
+                Task::none()
+            }
+            Message::ImportBackupPathChanged(path) => {
+                self.import_backup_path_draft = path;
+                Task::none()
+            }
+            Message::ImportRigBundle => {
+                let path = self.import_backup_path_draft.trim().trim_matches('"').to_string();
+                if path.is_empty() {
+                    self.show_toast("Enter a path to an airglow-rig-backup.json file", 0xf2b94b);
+                } else {
+                    self.sync_drafts_pending = true;
+                    self.engine.send(EngineCommand::ImportRigBundle(path));
+                    self.show_toast("Importing Airglow rig backup…", 0xa5dece);
+                }
+                Task::none()
+            }
+            Message::ToggleMinimizeToTray(enabled) => {
+                self.minimize_to_tray_on_close = enabled;
+                Task::none()
+            }
+            Message::ToggleLhmFanControl(enable_curve) => {
+                let mode = if enable_curve {
+                    FanChannelMode::Curve
+                } else {
+                    FanChannelMode::Auto
+                };
+                for ch in &self.snapshot.lhm_channels {
+                    self.engine.send(EngineCommand::SetFanChannelMode {
+                        channel_id: ch.id.clone(),
+                        mode,
+                    });
+                }
+                self.show_toast(
+                    if enable_curve {
+                        "LHM fan channels switched to Airglow Curve"
+                    } else {
+                        "LHM fan channels returned to BIOS/Auto"
+                    },
+                    0xa5dece,
+                );
+                Task::none()
+            }
             Message::SetDesign(design) => {
                 self.snapshot.config.settings.design = design;
                 self.sync_window_titlebar();
@@ -1886,9 +2646,18 @@ impl AirglowApp {
         let p = t.p;
         let font = theme::ui_font(design);
 
+        let backdrop = iced::widget::canvas(WindowBackdropCanvas {
+            design,
+            accent_override: appr.accent_override,
+            phase: self.anim_t,
+            animate_motes: appr.firefly_particles,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
+
         if self.compact_window {
             let mini = views::view_compact_companion(self, t, font);
-            let mut layers: Vec<Element<'_, Message>> = vec![mini];
+            let mut layers: Vec<Element<'_, Message>> = vec![backdrop.into(), mini];
             if let Some((msg, accent, _)) = &self.toast {
                 layers.push(views_palette::view_toast_overlay(msg, *accent, t, font));
             }
@@ -1898,29 +2667,42 @@ impl AirglowApp {
             if self.show_shortcuts {
                 layers.push(views_palette::view_shortcuts_modal(t, font));
             }
-            return if layers.len() == 1 {
-                layers.pop().unwrap()
-            } else {
-                stack(layers).width(Length::Fill).height(Length::Fill).into()
-            };
+            return stack(layers).width(Length::Fill).height(Length::Fill).into();
+        }
+
+        if self.theater_rig {
+            let theater = views::view_theater_rig(self, t, font);
+            let mut layers: Vec<Element<'_, Message>> = vec![backdrop.into(), theater];
+            if let Some((msg, accent, _)) = &self.toast {
+                layers.push(views_palette::view_toast_overlay(msg, *accent, t, font));
+            }
+            if self.palette_open {
+                layers.push(views_palette::view_command_palette(self, t, font));
+            }
+            if self.show_shortcuts {
+                layers.push(views_palette::view_shortcuts_modal(t, font));
+            }
+            return stack(layers).width(Length::Fill).height(Length::Fill).into();
         }
 
         let header = self.view_header(t, font);
         let body: Element<'_, Message> = match self.tab {
             Tab::Overview => views::view_overview(self, t, font),
             Tab::Lighting => views_lighting::view_lighting(self, t, font),
-            Tab::Studio => views_lighting::view_studio(self, t, font),
-            Tab::Fans => views::view_fans(self, t, font),
+            Tab::Studio => views::view_studio(self, t, font),
+            Tab::Fans => views_system::view_fans(self, t, font),
             Tab::Automations => views_system::view_automations(self, t, font),
             Tab::Devices => views_system::view_devices(self, t, font),
             Tab::Settings => views_system::view_settings(self, t, font),
         };
 
-        let mut content_col = column![].spacing(t.sp(12));
+        let mut banner_col = column![].spacing(t.sp(8));
+        let mut has_banners = false;
 
         // Trial profile Keep / Revert banner
         if let Some(trial) = &self.snapshot.trial {
-            content_col = content_col.push(
+            has_banners = true;
+            banner_col = banner_col.push(
                 container(
                     row![
                         text(format!("Trying profile \"{}\"", trial.preset_name))
@@ -1951,7 +2733,8 @@ impl AirglowApp {
 
         // Global status notice banner
         if let Some(notice) = &self.snapshot.last_notice {
-            content_col = content_col.push(
+            has_banners = true;
+            banner_col = banner_col.push(
                 container(
                     row![
                         text(notice)
@@ -1972,22 +2755,58 @@ impl AirglowApp {
             );
         }
 
-        content_col = content_col.push(body);
+        let main_stage: Element<'_, Message> = if self.tab == Tab::Overview {
+            let mut content_col = column![].spacing(t.sp(12));
+            if has_banners {
+                content_col = content_col.push(banner_col);
+            }
+            content_col = content_col.push(body);
 
-        let page_scroll = scrollable(
-            container(content_col)
-                .padding([t.pad(12), t.pad(24)])
-                .width(Length::Fill),
+            let side_pad: u16 = 28;
+            let vert_pad: u16 = 10;
+            let responsive_inner: Element<'_, Message> = if self.snapshot.config.fullscreen_fill_width {
+                container(content_col)
+                    .padding([vert_pad, side_pad])
+                    .width(Length::Fill)
+                    .into()
+            } else {
+                container(
+                    container(content_col)
+                        .max_width(2400.0)
+                        .width(Length::Fill),
+                )
+                .padding([vert_pad, side_pad])
+                .center_x(Length::Fill)
+                .width(Length::Fill)
+                .into()
+            };
+
+            scrollable(responsive_inner).height(Length::Fill).into()
+        } else {
+            let mut stage_col = column![].spacing(0).width(Length::Fill).height(Length::Fill);
+            if has_banners {
+                stage_col = stage_col.push(
+                    container(banner_col)
+                        .padding([10, 26])
+                        .width(Length::Fill),
+                );
+            }
+            stage_col = stage_col.push(body);
+            stage_col.into()
+        };
+
+        let base: Element<'_, Message> = container(
+            column![header, main_stage]
+                .spacing(0)
+                .width(Length::Fill)
+                .height(Length::Fill),
         )
-        .height(Length::Fill);
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(theme::window_ground_style(t))
+        .into();
 
-        let base: Element<'_, Message> = container(column![header, page_scroll].spacing(0))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(theme::window_ground_style(t))
-            .into();
-
-        let mut layers: Vec<Element<'_, Message>> = vec![base];
+        let mut layers: Vec<Element<'_, Message>> = vec![backdrop.into(), base];
 
         if let Some((msg, accent, _)) = &self.toast {
             layers.push(views_palette::view_toast_overlay(msg, *accent, t, font));
@@ -2001,11 +2820,7 @@ impl AirglowApp {
             layers.push(views_palette::view_shortcuts_modal(t, font));
         }
 
-        if layers.len() == 1 {
-            layers.pop().unwrap()
-        } else {
-            stack(layers).width(Length::Fill).height(Length::Fill).into()
-        }
+        stack(layers).width(Length::Fill).height(Length::Fill).into()
     }
 
     fn view_header(&self, t: DesignTokens, font: iced::Font) -> Element<'_, Message> {
@@ -2019,83 +2834,111 @@ impl AirglowApp {
                 palette: p,
                 accent_override: t.accent_override,
             })
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0)),
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(26.0)),
         )
-        .padding(5)
+        .padding(4)
         .style(theme::brand_badge_style(t));
+
+        let active_profile = self
+            .snapshot
+            .config
+            .active_preset
+            .as_deref()
+            .and_then(|pid| self.snapshot.config.presets.iter().find(|pr| pr.id == pid));
+        let (prof_name, prof_dot) = if let Some(pr) = active_profile {
+            (
+                views::truncate_str(&pr.name, 12),
+                views::preset_dot_color(pr.effect, pr.params.color),
+            )
+        } else {
+            (
+                "Custom".to_string(),
+                theme::hex_to_rgb_arr(p.brass_hi),
+            )
+        };
+
+        let profile_pill = button(
+            row![
+                views::color_dot(prof_dot, 7.0),
+                text(prof_name)
+                    .size(11.5)
+                    .font(theme::ui_semibold(design))
+                    .color(theme::rgb(p.ink_2)),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .padding([4, 10])
+        .style(theme::shortcut_badge_btn(t, false))
+        .on_press(Message::SelectTab(Tab::Lighting));
 
         let brand = row![
             mark,
             text("Airglow")
-                .size(19)
-                .font(theme::display_semibold(design))
+                .size(18)
+                .font(theme::ui_bold(design))
                 .color(theme::rgb(p.ink)),
+            profile_pill,
         ]
-        .spacing(10)
+        .spacing(9)
         .align_y(Alignment::Center);
 
-        let mut nav = row![]
-            .spacing(if t.pill_tabs { 4 } else { 9 })
-            .align_y(Alignment::Center);
+        let mut dock_row = row![].spacing(3).align_y(Alignment::Center);
+        let update_available = matches!(
+            self.snapshot.update_status,
+            UpdateStatus::Available { .. } | UpdateStatus::ReadyToRestart { .. }
+        );
         for tab_item in Tab::ALL {
             let active = self.tab == tab_item;
+            let icon = match tab_item {
+                Tab::Overview => UiIcon::Overview,
+                Tab::Lighting => UiIcon::Lighting,
+                Tab::Studio => UiIcon::Studio,
+                Tab::Fans => UiIcon::Fans,
+                Tab::Automations => UiIcon::Automations,
+                Tab::Devices => UiIcon::Devices,
+                Tab::Settings => UiIcon::Settings,
+            };
+            let icon_col = if active {
+                theme::rgb(if p.is_light { p.brass } else { p.brass_hi })
+            } else {
+                theme::rgb(p.ink_2)
+            };
             let tab_font = if active {
                 theme::ui_semibold(design)
             } else {
                 font
             };
+            let show_dot = tab_item == Tab::Settings && update_available;
 
-            if t.pill_tabs {
-                nav = nav.push(
-                    button(text(tab_item.label()).size(13).font(tab_font))
-                        .padding([6, 12])
-                        .style(theme::nav_tab_btn(t, active))
-                        .on_press(Message::SelectTab(tab_item)),
-                );
-            } else {
-                let underline =
-                    container(Space::new().width(Length::Fill).height(2)).style(move |_| {
-                        iced::widget::container::Style {
-                            background: Some(iced::Background::Color(if active {
-                                theme::rgb(p.brass)
-                            } else {
-                                iced::Color::TRANSPARENT
-                            })),
-                            ..Default::default()
-                        }
-                    });
-                nav = nav.push(
-                    button(
-                        column![text(tab_item.label()).size(13.5).font(tab_font), underline]
-                            .spacing(4)
-                            .width(Length::Shrink),
-                    )
-                    .padding([4, 6])
-                    .style(theme::nav_tab_btn(t, active))
-                    .on_press(Message::SelectTab(tab_item)),
-                );
+            let mut tab_content = row![
+                icon_canvas(icon, icon_col, 15.0),
+                text(tab_item.label()).size(13.5).font(tab_font),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center);
+
+            if show_dot {
+                tab_content = tab_content.push(views::status_dot(p.brass_hi, 6.0));
             }
+
+            dock_row = dock_row.push(
+                button(tab_content)
+                    .padding([6, 11])
+                    .style(theme::nav_tab_style(t, active))
+                    .on_press(Message::SelectTab(tab_item)),
+            );
         }
 
-        // Compact Mini-Mode toggle pill (`Ctrl+M`)
-        let compact_pill = button(
-            text("⤡")
-                .size(12.5)
-                .font(font)
-                .color(theme::rgb(p.ink_2)),
-        )
-        .padding([5, 9])
-        .style(theme::shortcut_badge_btn(t, self.compact_window))
-        .on_press(Message::ToggleCompactMode);
+        let nav_dock = container(dock_row)
+            .padding([3, 4])
+            .style(theme::nav_dock_style(t));
 
-        // Quick Command Palette pill (`Ctrl+K`)
+        // Quick Command Palette search pill (`Ctrl+K`)
         let cmd_pill = button(
             row![
-                text("⌘")
-                    .size(11.5)
-                    .font(theme::ui_semibold(design))
-                    .color(theme::rgb(p.brass_hi)),
+                icon_canvas(UiIcon::Search, theme::rgb(p.brass_hi), 13.5),
                 text("Ctrl+K").size(11).font(mono),
             ]
             .spacing(5)
@@ -2114,7 +2957,12 @@ impl AirglowApp {
 
         for pin in &appr.header_pins {
             if pinned_count > 0 {
-                pin_row = pin_row.push(Space::new().width(8));
+                pin_row = pin_row.push(
+                    text("·")
+                        .size(11)
+                        .font(font)
+                        .color(theme::rgba(p.ink_3, 0.55)),
+                );
             }
             match pin.as_str() {
                 "cpu_temp" => {
@@ -2190,16 +3038,58 @@ impl AirglowApp {
         }
 
         let temp_pill = container(pin_row)
-            .padding([6, 12])
+            .padding([6, 11])
             .style(theme::ambient_pill_style(t));
+
+        // UI Scale badge pill (click cycles Auto / 100% / 125%)
+        let scale_pct = (self.effective_scale_factor() * 100.0).round() as u16;
+        let scale_is_auto = appr.ui_scale_pct == 0;
+        let scale_label = if scale_is_auto {
+            format!("Auto {scale_pct}%")
+        } else {
+            format!("{scale_pct}%")
+        };
+        let scale_pill = button(
+            text(scale_label)
+                .size(11)
+                .font(mono)
+                .color(theme::rgb(if !scale_is_auto || scale_pct != 100 {
+                    p.brass_hi
+                } else {
+                    p.ink_2
+                })),
+        )
+        .padding([6, 10])
+        .style(theme::shortcut_badge_btn(t, !scale_is_auto))
+        .on_press(Message::CycleUiScale);
+
+        // Fullscreen toggle pill (`F11`)
+        let fullscreen_pill = button(icon_canvas(
+            UiIcon::Expand,
+            theme::rgb(if self.is_fullscreen { p.brass_hi } else { p.ink_2 }),
+            14.0,
+        ))
+        .padding([7, 8])
+        .style(theme::shortcut_badge_btn(t, self.is_fullscreen))
+        .on_press(Message::ToggleFullscreen);
+
+        // Compact Mini-Mode toggle pill (`Ctrl+M`)
+        let compact_pill = button(icon_canvas(
+            UiIcon::Minimize,
+            theme::rgb(p.ink_2),
+            14.0,
+        ))
+        .padding([7, 8])
+        .style(theme::shortcut_badge_btn(t, self.compact_window))
+        .on_press(Message::ToggleCompactMode);
 
         let power_on = self.snapshot.effective_scene.on;
         let power_btn = button(
-            container(
-                text(if power_on { "⏻" } else { "○" })
-                    .size(15)
-                    .font(font),
-            )
+            container(icon_canvas(
+                UiIcon::Power,
+                theme::rgb(if power_on { t.primary_ink } else { p.ink_2 }),
+                16.0,
+            ))
             .center_x(Length::Fill)
             .center_y(Length::Fill),
         )
@@ -2209,22 +3099,32 @@ impl AirglowApp {
         .style(theme::power_circle_btn(t, power_on))
         .on_press(Message::TogglePower);
 
+        let right_group = row![
+            cmd_pill,
+            temp_pill,
+            scale_pill,
+            fullscreen_pill,
+            compact_pill,
+            power_btn,
+        ]
+        .spacing(7)
+        .align_y(Alignment::Center);
+
         let bar = container(
             row![
                 brand,
-                Space::new().width(14),
-                nav,
                 Space::new().width(Length::Fill),
-                compact_pill,
-                cmd_pill,
-                temp_pill,
-                power_btn,
+                nav_dock,
+                Space::new().width(Length::Fill),
+                right_group,
             ]
             .spacing(10)
-            .align_y(Alignment::Center),
+            .align_y(Alignment::Center)
+            .height(Length::Fill),
         )
-        .padding([8, 22])
+        .padding([0, 22])
         .width(Length::Fill)
+        .height(Length::Fixed(58.0))
         .style(theme::appbar_style(t));
 
         let glow_line = iced::widget::canvas(HeaderGlowCanvas {
@@ -2235,7 +3135,7 @@ impl AirglowApp {
             anim_t: self.anim_t,
         })
         .width(Length::Fill)
-        .height(Length::Fixed(2.0));
+        .height(Length::Fixed(1.0));
 
         column![bar, glow_line].spacing(0).into()
     }
@@ -2254,6 +3154,18 @@ fn parse_tab_name(raw: &str) -> Option<Tab> {
     }
 }
 
+fn parse_settings_section(raw: &str) -> Option<SettingsSection> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "appearance" | "design" | "theme" => Some(SettingsSection::Appearance),
+        "updates" | "about" | "update" => Some(SettingsSection::Updates),
+        "general" | "telemetry" => Some(SettingsSection::General),
+        "lighting" | "cooling" | "lighting-cooling" => Some(SettingsSection::LightingCooling),
+        "sensors" | "devices" | "sensors-devices" => Some(SettingsSection::SensorsDevices),
+        "backup" | "diagnostics" | "tools" => Some(SettingsSection::BackupDiagnostics),
+        _ => None,
+    }
+}
+
 struct LaunchFlags {
     tab: Tab,
     palette_open: bool,
@@ -2261,6 +3173,13 @@ struct LaunchFlags {
     customize_open: bool,
     compact_window: bool,
     show_shortcuts: bool,
+    fullscreen: bool,
+    maximized: bool,
+    theater_rig: bool,
+    edit_tiles: bool,
+    add_tile: bool,
+    settings_section: SettingsSection,
+    check_updates: bool,
 }
 
 fn parse_launch_flags_from<I: IntoIterator<Item = String>>(iter: I) -> LaunchFlags {
@@ -2271,6 +3190,13 @@ fn parse_launch_flags_from<I: IntoIterator<Item = String>>(iter: I) -> LaunchFla
         customize_open: false,
         compact_window: false,
         show_shortcuts: false,
+        fullscreen: false,
+        maximized: false,
+        theater_rig: false,
+        edit_tiles: false,
+        add_tile: false,
+        settings_section: SettingsSection::Appearance,
+        check_updates: false,
     };
     let mut args = iter.into_iter();
     while let Some(arg) = args.next() {
@@ -2283,6 +3209,17 @@ fn parse_launch_flags_from<I: IntoIterator<Item = String>>(iter: I) -> LaunchFla
             && let Some(tab) = parse_tab_name(&val)
         {
             flags.tab = tab;
+        } else if let Some(val) = arg.strip_prefix("--settings-section=")
+            && let Some(sec) = parse_settings_section(val)
+        {
+            flags.tab = Tab::Settings;
+            flags.settings_section = sec;
+        } else if arg == "--settings-section"
+            && let Some(val) = args.next()
+            && let Some(sec) = parse_settings_section(&val)
+        {
+            flags.tab = Tab::Settings;
+            flags.settings_section = sec;
         } else if arg == "--palette" {
             flags.palette_open = true;
         } else if let Some(val) = arg.strip_prefix("--palette-query=") {
@@ -2299,6 +3236,19 @@ fn parse_launch_flags_from<I: IntoIterator<Item = String>>(iter: I) -> LaunchFla
             flags.compact_window = true;
         } else if arg == "--shortcuts" {
             flags.show_shortcuts = true;
+        } else if arg == "--fullscreen" {
+            flags.fullscreen = true;
+        } else if arg == "--maximized" {
+            flags.maximized = true;
+        } else if arg == "--theater" {
+            flags.theater_rig = true;
+        } else if arg == "--edit-tiles" {
+            flags.edit_tiles = true;
+        } else if arg == "--add-tile" {
+            flags.edit_tiles = true;
+            flags.add_tile = true;
+        } else if arg == "--check-updates" {
+            flags.check_updates = true;
         }
     }
     flags
@@ -2311,6 +3261,12 @@ fn parse_launch_flags() -> LaunchFlags {
         && let Some(tab) = parse_tab_name(&env_tab)
     {
         flags.tab = tab;
+    }
+    if let Ok(env_sec) = std::env::var("AIRGLOW_SETTINGS_SECTION")
+        && let Some(sec) = parse_settings_section(&env_sec)
+    {
+        flags.tab = Tab::Settings;
+        flags.settings_section = sec;
     }
     if !flags.palette_open
         && std::env::var("AIRGLOW_PALETTE")
@@ -2340,7 +3296,109 @@ fn parse_launch_flags() -> LaunchFlags {
     {
         flags.compact_window = true;
     }
+    if !flags.fullscreen
+        && std::env::var("AIRGLOW_FULLSCREEN")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    {
+        flags.fullscreen = true;
+    }
+    if !flags.maximized
+        && std::env::var("AIRGLOW_MAXIMIZED")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    {
+        flags.maximized = true;
+    }
+    if !flags.theater_rig
+        && std::env::var("AIRGLOW_THEATER")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    {
+        flags.theater_rig = true;
+    }
+    if !flags.edit_tiles
+        && std::env::var("AIRGLOW_EDIT_TILES")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    {
+        flags.edit_tiles = true;
+    }
+    if !flags.add_tile
+        && std::env::var("AIRGLOW_ADD_TILE")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    {
+        flags.edit_tiles = true;
+        flags.add_tile = true;
+    }
+    if !flags.check_updates
+        && std::env::var("AIRGLOW_CHECK_UPDATES")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    {
+        flags.check_updates = true;
+    }
     flags
+}
+
+#[cfg(windows)]
+fn local_clock_strings() -> (String, String) {
+    #[repr(C)]
+    #[derive(Default)]
+    struct SystemTimeWin {
+        year: u16,
+        month: u16,
+        day_of_week: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        millis: u16,
+    }
+    unsafe extern "system" {
+        fn GetLocalTime(lp_system_time: *mut SystemTimeWin);
+    }
+    let mut st = SystemTimeWin::default();
+    unsafe { GetLocalTime(&mut st) };
+    let dow = match st.day_of_week {
+        0 => "Sun",
+        1 => "Mon",
+        2 => "Tue",
+        3 => "Wed",
+        4 => "Thu",
+        5 => "Fri",
+        _ => "Sat",
+    };
+    let mon = match st.month {
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        _ => "Dec",
+    };
+    (
+        format!("{:02}:{:02}", st.hour, st.minute),
+        format!("{dow}, {mon} {:02}", st.day),
+    )
+}
+
+#[cfg(not(windows))]
+fn local_clock_strings() -> (String, String) {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    (format!("{h:02}:{m:02}"), "Local time".to_string())
 }
 
 fn parse_hhmm(raw: &str) -> Option<(u8, u8)> {
@@ -2354,14 +3412,10 @@ fn parse_hhmm(raw: &str) -> Option<(u8, u8)> {
     }
 }
 
-fn open_main_window(compact: bool) -> Task<Message> {
+fn open_main_window(compact: bool, size: Size) -> Task<Message> {
     let rgba = brand::app_icon_rgba(64);
     let icon = window::icon::from_rgba(rgba, 64, 64).ok();
-    let size = if compact {
-        Size::new(430.0, 404.0)
-    } else {
-        Size::new(1340.0, 920.0)
-    };
+    let _ = compact;
     let (_id, task) = window::open(window::Settings {
         size,
         min_size: Some(Size::new(390.0, 370.0)),
@@ -2418,6 +3472,29 @@ mod tests {
     }
 
     #[test]
+    fn parses_cli_v21_flags() {
+        let f = parse_launch_flags_from(
+            [
+                "--fullscreen",
+                "--edit-tiles",
+                "--add-tile",
+                "--theater",
+                "--settings-section=updates",
+                "--check-updates",
+            ]
+            .into_iter()
+            .map(String::from),
+        );
+        assert!(f.fullscreen);
+        assert!(f.edit_tiles);
+        assert!(f.add_tile);
+        assert!(f.theater_rig);
+        assert_eq!(f.tab, Tab::Settings);
+        assert_eq!(f.settings_section, super::SettingsSection::Updates);
+        assert!(f.check_updates);
+    }
+
+    #[test]
     fn pulse_span_maps_minutes_and_sample_counts() {
         assert_eq!(PulseSpan::from_mins(1), PulseSpan::OneMin);
         assert_eq!(PulseSpan::from_mins(5), PulseSpan::FiveMin);
@@ -2425,5 +3502,21 @@ mod tests {
         assert_eq!(PulseSpan::OneMin.max_samples(), 30);
         assert_eq!(PulseSpan::FiveMin.max_samples(), 150);
         assert_eq!(PulseSpan::TenMin.max_samples(), 300);
+    }
+
+    #[test]
+    fn auto_scale_hysteresis_locks_cleanly_across_resolutions() {
+        use super::resolve_auto_scale_with_hysteresis;
+
+        // 1440x900 -> 1.0, 2560x1440 -> 1.25, 3840x2160 -> 1.50
+        assert!((resolve_auto_scale_with_hysteresis(1440.0, 1.0) - 1.0).abs() < 0.001);
+        assert!((resolve_auto_scale_with_hysteresis(2560.0, 1.0) - 1.25).abs() < 0.001);
+        assert!((resolve_auto_scale_with_hysteresis(3840.0, 1.25) - 1.50).abs() < 0.001);
+
+        // Hysteresis 120px band prevents oscillation around 2200px & 3250px thresholds
+        assert!((resolve_auto_scale_with_hysteresis(2120.0, 1.25) - 1.25).abs() < 0.001);
+        assert!((resolve_auto_scale_with_hysteresis(2050.0, 1.25) - 1.10).abs() < 0.001);
+        assert!((resolve_auto_scale_with_hysteresis(3180.0, 1.50) - 1.50).abs() < 0.001);
+        assert!((resolve_auto_scale_with_hysteresis(3100.0, 1.50) - 1.25).abs() < 0.001);
     }
 }
