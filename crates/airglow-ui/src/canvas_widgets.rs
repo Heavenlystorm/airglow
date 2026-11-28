@@ -24,6 +24,23 @@ pub struct CachedLayerState {
     key: Cell<u64>,
 }
 
+fn hash_palette_visuals(p: DesignPalette, h: &mut DefaultHasher) {
+    p.ground.hash(h);
+    p.panel.hash(h);
+    p.well.hash(h);
+    p.line.hash(h);
+    p.ink.hash(h);
+    p.ink_2.hash(h);
+    p.ink_3.hash(h);
+    p.brass.hash(h);
+    p.brass_hi.hash(h);
+    p.warm.hash(h);
+    p.ok.hash(h);
+    p.is_light.hash(h);
+    p.square_corners.hash(h);
+    p.radius_panel.to_bits().hash(h);
+}
+
 fn is_firefly_palette(p: DesignPalette) -> bool {
     p.ground == 0x221d30 || p.radius_panel >= 15.0
 }
@@ -814,20 +831,20 @@ pub struct SparklineCanvas<'a> {
     pub palette: DesignPalette,
     pub accent_override: Option<[u8; 3]>,
     pub anim_t: f32,
+    pub show_halo: bool,
 }
 
 impl<'a, Message> canvas::Program<Message> for SparklineCanvas<'a> {
-    type State = ();
+    type State = CachedLayerState;
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
         let w = bounds.width.max(8.0);
         let h = bounds.height.max(8.0);
         let pad_l = if w >= 260.0 { 3.0 } else { 1.5 };
@@ -837,12 +854,19 @@ impl<'a, Message> canvas::Program<Message> for SparklineCanvas<'a> {
         let plot_w = (w - pad_l - pad_r).max(6.0);
         let plot_h = (plot_bottom - pad_top).max(4.0);
         let stroke_col = resolve_semantic_or_accent(self.color, self.palette, self.accent_override);
-        let glow = if self.palette.square_corners { 0.25 } else { 0.88 };
+        let glow = if !self.show_halo {
+            0.0
+        } else if self.palette.square_corners {
+            0.25
+        } else {
+            0.88
+        };
 
-        // 1. Soft ambient radial wash in the bottom-right corner so cards feel lamp-lit
-        if !self.palette.square_corners && w >= 48.0 && h >= 22.0 {
+        let render_sparkline = |frame: &mut Frame| {
+        // 1. Soft ambient radial wash in the bottom-right corner when halos are enabled
+        if self.show_halo && !self.palette.square_corners && w >= 48.0 && h >= 22.0 {
             fill_radial_glow(
-                &mut frame,
+                frame,
                 Point::new(w * 0.83, h * 0.86),
                 w.min(h * 2.4) * 0.64,
                 stroke_col,
@@ -864,14 +888,14 @@ impl<'a, Message> canvas::Program<Message> for SparklineCanvas<'a> {
         };
         if plot_h >= 18.0 {
             draw_dotted_guide(
-                &mut frame,
+                frame,
                 pad_l,
                 pad_l + plot_w,
                 pad_top + plot_h * 0.25,
                 dotted_col,
             );
             draw_dotted_guide(
-                &mut frame,
+                frame,
                 pad_l,
                 pad_l + plot_w,
                 pad_top + plot_h * 0.75,
@@ -1031,7 +1055,7 @@ impl<'a, Message> canvas::Program<Message> for SparklineCanvas<'a> {
                     let peak_r = (2.1 * scale_h.sqrt()).clamp(1.8, 3.2);
                     if glow > 0.05 {
                         fill_radial_glow(
-                            &mut frame,
+                            frame,
                             peak_pt,
                             peak_r * 3.4,
                             stroke_col,
@@ -1057,7 +1081,7 @@ impl<'a, Message> canvas::Program<Message> for SparklineCanvas<'a> {
             if glow > 0.05 {
                 let pulse = 0.5 + 0.5 * (self.anim_t * 2.6).sin();
                 fill_radial_glow(
-                    &mut frame,
+                    frame,
                     head,
                     (11.5 * scale_h.sqrt()).clamp(9.0, 18.0),
                     stroke_col,
@@ -1106,7 +1130,31 @@ impl<'a, Message> canvas::Program<Message> for SparklineCanvas<'a> {
                 stroke_col,
             );
         }
+        };
 
+        if !self.show_halo {
+            let mut hasher = DefaultHasher::new();
+            ((w * 2.0).round() as i32).hash(&mut hasher);
+            ((h * 2.0).round() as i32).hash(&mut hasher);
+            self.color.hash(&mut hasher);
+            self.min_val.to_bits().hash(&mut hasher);
+            self.max_val.to_bits().hash(&mut hasher);
+            self.accent_override.hash(&mut hasher);
+            hash_palette_visuals(self.palette, &mut hasher);
+            self.samples.len().hash(&mut hasher);
+            for &v in self.samples {
+                (v * 10.0).round().clamp(-1e6, 1e6).to_bits().hash(&mut hasher);
+            }
+            let key = hasher.finish();
+            if state.key.get() != key {
+                state.cache.clear();
+                state.key.set(key);
+            }
+            return vec![state.cache.draw(renderer, bounds.size(), render_sparkline)];
+        }
+
+        let mut frame = Frame::new(renderer, bounds.size());
+        render_sparkline(&mut frame);
         vec![frame.into_geometry()]
     }
 }
@@ -1119,6 +1167,7 @@ pub struct RingGaugeCanvas {
     pub accent: u32,
     pub palette: DesignPalette,
     pub accent_override: Option<[u8; 3]>,
+    pub show_halo: bool,
 }
 
 /// Alias for `RingGaugeCanvas` used by responsive Overview `Gauge` tiles.
@@ -1126,17 +1175,31 @@ pub struct RingGaugeCanvas {
 pub type RadialGaugeCanvas = RingGaugeCanvas;
 
 impl<Message> canvas::Program<Message> for RingGaugeCanvas {
-    type State = ();
+    type State = CachedLayerState;
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
+        let mut hasher = DefaultHasher::new();
+        ((bounds.width * 2.0).round() as i32).hash(&mut hasher);
+        ((bounds.height * 2.0).round() as i32).hash(&mut hasher);
+        ((self.percent.clamp(0.0, 100.0) * 10.0).round() as i32).hash(&mut hasher);
+        self.accent.hash(&mut hasher);
+        self.show_halo.hash(&mut hasher);
+        self.accent_override.hash(&mut hasher);
+        hash_palette_visuals(self.palette, &mut hasher);
+        let key = hasher.finish();
+        if state.key.get() != key {
+            state.cache.clear();
+            state.key.set(key);
+        }
+
+        let geom = state.cache.draw(renderer, bounds.size(), |frame| {
         let center = Point::new(bounds.width * 0.5, bounds.height * 0.5);
         let size = bounds.width.min(bounds.height).max(28.0);
         // Scale dynamically up to 92% of min(width, height) (outer_r = 46% of size)
@@ -1146,7 +1209,13 @@ impl<Message> canvas::Program<Message> for RingGaugeCanvas {
         let firefly = is_firefly_palette(self.palette);
         let col = resolve_semantic_or_accent(self.accent, self.palette, self.accent_override);
         let col_hi = mix_color(col, Color::WHITE, if self.palette.is_light { 0.08 } else { 0.34 });
-        let glow = if self.palette.square_corners { 0.18 } else { 0.90 };
+        let glow = if !self.show_halo {
+            0.0
+        } else if self.palette.square_corners {
+            0.18
+        } else {
+            0.90
+        };
         let cap = if self.palette.square_corners {
             LineCap::Butt
         } else {
@@ -1254,8 +1323,8 @@ impl<Message> canvas::Program<Message> for RingGaugeCanvas {
         // Soft 8% radial core glow + subtle inner concentric hairline ring
         let inner_gap = (size * 0.044).clamp(2.6, 6.4);
         let inner_r = (radius - stroke_w * 0.5 - inner_gap).max(4.0);
-        if !self.palette.square_corners && inner_r >= 10.0 {
-            fill_radial_glow(&mut frame, center, inner_r * 1.04, col, 0.085, 5);
+        if self.show_halo && !self.palette.square_corners && inner_r >= 10.0 {
+            fill_radial_glow(frame, center, inner_r * 1.04, col, 0.085, 5);
         }
 
         if inner_r >= 14.0 {
@@ -1377,19 +1446,25 @@ impl<Message> canvas::Program<Message> for RingGaugeCanvas {
             );
         }
 
-        // Bright glowing tip cap jewel
+        // Tip cap jewel (halo only when show_halo is enabled)
         if !self.palette.square_corners {
-            fill_radial_glow(
-                &mut frame,
-                tip_pt,
-                stroke_w * 1.75,
-                col_hi,
-                0.48 * glow,
-                4,
-            );
+            if glow > 0.05 {
+                fill_radial_glow(
+                    frame,
+                    tip_pt,
+                    stroke_w * 1.75,
+                    col_hi,
+                    0.48 * glow,
+                    4,
+                );
+            }
             frame.fill(
                 &Path::circle(tip_pt, (stroke_w * 0.36).clamp(1.8, 3.6)),
-                mix_color(col_hi, Color::WHITE, 0.72),
+                if glow > 0.05 {
+                    mix_color(col_hi, Color::WHITE, 0.72)
+                } else {
+                    col_hi
+                },
             );
         }
 
@@ -1421,8 +1496,9 @@ impl<Message> canvas::Program<Message> for RingGaugeCanvas {
                 });
             }
         }
+        });
 
-        vec![frame.into_geometry()]
+        vec![geom]
     }
 }
 
@@ -1434,6 +1510,7 @@ pub struct PowerGraphCanvas<'a> {
     pub palette: DesignPalette,
     pub accent_override: Option<[u8; 3]>,
     pub anim_t: f32,
+    pub show_halo: bool,
 }
 
 impl<'a, Message> canvas::Program<Message> for PowerGraphCanvas<'a> {
@@ -1558,7 +1635,13 @@ impl<'a, Message> canvas::Program<Message> for PowerGraphCanvas<'a> {
         } else {
             rgb(p.ink_2)
         };
-        let glow = if p.square_corners { 0.35 } else { 1.0 };
+        let glow = if !self.show_halo {
+            0.0
+        } else if p.square_corners {
+            0.35
+        } else {
+            1.0
+        };
         let scale_h = (plot_h / 72.0).clamp(0.85, 1.75);
 
         let gpu_pts = if self.gpu_w.len() >= 2 {
@@ -1634,14 +1717,18 @@ impl<'a, Message> canvas::Program<Message> for PowerGraphCanvas<'a> {
             if let Some(pts) = &gpu_pts
                 && let Some(pt) = sample_point_at_frac(pts, frac)
             {
-                fill_radial_glow(&mut frame, pt, 7.0, gpu_col, 0.50, 3);
+                if self.show_halo {
+                    fill_radial_glow(&mut frame, pt, 7.0, gpu_col, 0.50, 3);
+                }
                 frame.fill(&Path::circle(pt, 2.8), mix_color(gpu_col, Color::WHITE, 0.60));
                 anchor_y = pt.y;
             }
             if let Some(pts) = &cpu_pts
                 && let Some(pt) = sample_point_at_frac(pts, frac)
             {
-                fill_radial_glow(&mut frame, pt, 7.5, cpu_col, 0.55, 3);
+                if self.show_halo {
+                    fill_radial_glow(&mut frame, pt, 7.5, cpu_col, 0.55, 3);
+                }
                 frame.fill(&Path::circle(pt, 3.0), mix_color(cpu_col, Color::WHITE, 0.65));
                 anchor_y = anchor_y.min(pt.y);
             }
@@ -1821,26 +1908,28 @@ pub struct BarMeterCanvas {
     pub palette: DesignPalette,
     pub accent_override: Option<[u8; 3]>,
     pub anim_t: f32,
+    pub show_halo: bool,
 }
 
 impl<Message> canvas::Program<Message> for BarMeterCanvas {
-    type State = ();
+    type State = CachedLayerState;
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
         let p = self.palette;
         let frac = self.fraction.clamp(0.0, 1.0);
         let col = resolve_semantic_or_accent(self.accent, p, self.accent_override);
         let col_hi = mix_color(col, Color::WHITE, if p.is_light { 0.08 } else { 0.34 });
         let w = bounds.width.max(24.0);
         let full_h = bounds.height.max(10.0);
+
+        let render_bar = |frame: &mut Frame| {
 
         const SEGMENTS: usize = 24;
         let (block_h, block_y, base_y) = if full_h >= 22.0 {
@@ -1868,10 +1957,10 @@ impl<Message> canvas::Program<Message> for BarMeterCanvas {
         };
 
         // Soft ambient glow behind the lit bank & active frontier
-        if !p.square_corners && frac > 0.015 {
+        if self.show_halo && !p.square_corners && frac > 0.015 {
             let lit_w = (used_w * frac).clamp(bar_w, used_w);
             fill_radial_glow(
-                &mut frame,
+                frame,
                 Point::new(x0 + lit_w * 0.62, block_y + block_h * 0.55),
                 lit_w.min(block_h * 2.6) * 0.65,
                 col,
@@ -1879,7 +1968,7 @@ impl<Message> canvas::Program<Message> for BarMeterCanvas {
                 4,
             );
             fill_radial_glow(
-                &mut frame,
+                frame,
                 Point::new((x0 + lit_w).min(x0 + used_w), block_y + block_h * 0.5),
                 (block_h * 0.85).max(10.0),
                 col_hi,
@@ -1901,7 +1990,7 @@ impl<Message> canvas::Program<Message> for BarMeterCanvas {
 
             if seg_fill > 0.12 {
                 let prog = i as f32 / (SEGMENTS - 1) as f32;
-                let shimmer = if p.square_corners {
+                let shimmer = if p.square_corners || !self.show_halo {
                     0.0
                 } else {
                     0.09 * (0.5 + 0.5 * (self.anim_t * 2.2 - i as f32 * 0.26).sin())
@@ -2027,7 +2116,7 @@ impl<Message> canvas::Program<Message> for BarMeterCanvas {
         if frac > 0.008 {
             let active_end_x = (x0 + used_w * frac).clamp(x0 + 2.0, x0 + used_w);
             let base_line = Path::line(Point::new(x0, base_y), Point::new(active_end_x, base_y));
-            if !p.square_corners {
+            if self.show_halo && !p.square_corners {
                 frame.stroke(
                     &base_line,
                     Stroke::default()
@@ -2052,9 +2141,9 @@ impl<Message> canvas::Program<Message> for BarMeterCanvas {
                     ..Stroke::default()
                 },
             );
-            if !p.square_corners {
+            if self.show_halo && !p.square_corners {
                 fill_radial_glow(
-                    &mut frame,
+                    frame,
                     Point::new(active_end_x, base_y),
                     7.5,
                     col_hi,
@@ -2063,7 +2152,26 @@ impl<Message> canvas::Program<Message> for BarMeterCanvas {
                 );
             }
         }
+        };
 
+        if !self.show_halo {
+            let mut hasher = DefaultHasher::new();
+            ((w * 2.0).round() as i32).hash(&mut hasher);
+            ((full_h * 2.0).round() as i32).hash(&mut hasher);
+            ((frac * 200.0).round() as i32).hash(&mut hasher);
+            self.accent.hash(&mut hasher);
+            self.accent_override.hash(&mut hasher);
+            hash_palette_visuals(p, &mut hasher);
+            let key = hasher.finish();
+            if state.key.get() != key {
+                state.cache.clear();
+                state.key.set(key);
+            }
+            return vec![state.cache.draw(renderer, bounds.size(), render_bar)];
+        }
+
+        let mut frame = Frame::new(renderer, bounds.size());
+        render_bar(&mut frame);
         vec![frame.into_geometry()]
     }
 }
@@ -2080,20 +2188,20 @@ pub struct MiniFanCurveCanvas {
     pub spinning: bool,
     pub palette: DesignPalette,
     pub accent_override: Option<[u8; 3]>,
+    pub show_halo: bool,
 }
 
 impl<Message> canvas::Program<Message> for MiniFanCurveCanvas {
-    type State = ();
+    type State = CachedLayerState;
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
         let p = self.palette;
         let firefly = is_firefly_palette(p);
         let (accent, accent_hi) = resolve_accent(p, self.accent_override);
@@ -2103,7 +2211,13 @@ impl<Message> canvas::Program<Message> for MiniFanCurveCanvas {
             accent
         };
         let curve_hi = mix_color(curve_col, Color::WHITE, if p.is_light { 0.08 } else { 0.34 });
-        let glow = if p.square_corners { 0.25 } else { 0.90 };
+        let glow = if !self.show_halo {
+            0.0
+        } else if p.square_corners {
+            0.25
+        } else {
+            0.90
+        };
 
         const T_MIN: f32 = 25.0;
         const T_MAX: f32 = 95.0;
@@ -2124,10 +2238,29 @@ impl<Message> canvas::Program<Message> for MiniFanCurveCanvas {
             Point::new(pad_l + nx * plot_w, pad_t + (1.0 - ny) * plot_h)
         };
 
+        // Layer 1 (CACHED): static backdrop wash, gridlines, axis labels, and fan curve path
+        let mut hasher = DefaultHasher::new();
+        ((w * 2.0).round() as i32).hash(&mut hasher);
+        ((h * 2.0).round() as i32).hash(&mut hasher);
+        self.show_halo.hash(&mut hasher);
+        self.accent_override.hash(&mut hasher);
+        hash_palette_visuals(p, &mut hasher);
+        self.points.len().hash(&mut hasher);
+        for &(tc, dp) in &self.points {
+            ((tc * 10.0).round() as i32).hash(&mut hasher);
+            ((dp * 10.0).round() as i32).hash(&mut hasher);
+        }
+        let key = hasher.finish();
+        if state.key.get() != key {
+            state.cache.clear();
+            state.key.set(key);
+        }
+
+        let static_geom = state.cache.draw(renderer, bounds.size(), |frame| {
         // 1. Soft bottom-right ambient wash + subtle gridlines
-        if !p.square_corners {
+        if self.show_halo && !p.square_corners {
             fill_radial_glow(
-                &mut frame,
+                frame,
                 Point::new(pad_l + plot_w * 0.82, pad_t + plot_h * 0.82),
                 plot_w.min(plot_h * 2.2) * 0.62,
                 curve_col,
@@ -2143,7 +2276,7 @@ impl<Message> canvas::Program<Message> for MiniFanCurveCanvas {
         };
         for &duty_ref in &[35.0_f32, 70.0] {
             let gy = to_pt(T_MIN, duty_ref).y;
-            draw_dotted_guide(&mut frame, pad_l, pad_l + plot_w, gy, grid_col);
+            draw_dotted_guide(frame, pad_l, pad_l + plot_w, gy, grid_col);
         }
         for &temp_ref in &[45.0_f32, 65.0, 85.0] {
             let gx = to_pt(temp_ref, 0.0).x;
@@ -2294,7 +2427,10 @@ impl<Message> canvas::Program<Message> for MiniFanCurveCanvas {
                 }
             }
         }
+        });
 
+        // Layer 2 (DYNAMIC): Dotted live (temp, duty) crosshair + operating-point orb + fan emblem
+        let mut frame = Frame::new(renderer, bounds.size());
         // 3. Dotted live (temp, duty) crosshair + pulsing operating-point orb
         let live_temp = self.current_temp.unwrap_or(42.0).clamp(T_MIN, T_MAX);
         let live_duty = self.current_duty.clamp(0.0, 100.0);
@@ -2464,7 +2600,7 @@ impl<Message> canvas::Program<Message> for MiniFanCurveCanvas {
             });
         }
 
-        vec![frame.into_geometry()]
+        vec![static_geom, frame.into_geometry()]
     }
 }
 

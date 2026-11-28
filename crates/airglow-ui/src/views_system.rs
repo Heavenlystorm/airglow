@@ -333,6 +333,7 @@ pub fn view_fans<'a>(
             palette: p,
             accent_override: t.accent_override,
             anim_t: app.anim_t,
+            show_halo: true,
         })
         .width(Length::Fill)
         .height(Length::Fixed(34.0));
@@ -472,6 +473,7 @@ pub fn view_fans<'a>(
                 palette: p,
                 accent_override: t.accent_override,
                 anim_t: app.anim_t,
+                show_halo: true,
             })
             .width(Length::Fill)
             .height(Length::Fixed(18.0));
@@ -589,6 +591,7 @@ pub fn view_fans<'a>(
                 palette: p,
                 accent_override: t.accent_override,
                 anim_t: app.anim_t,
+                show_halo: true,
             })
             .width(Length::Fill)
             .height(Length::Fixed(18.0));
@@ -2130,6 +2133,7 @@ pub fn view_devices<'a>(
                 palette: p,
                 accent_override: t.accent_override,
                 anim_t: app.anim_t,
+                show_halo: true,
             })
             .width(Length::Fixed(86.0))
             .height(Length::Fixed(16.0));
@@ -2264,6 +2268,7 @@ pub fn view_devices<'a>(
                 palette: p,
                 accent_override: t.accent_override,
                 anim_t: app.anim_t,
+                show_halo: true,
             })
             .width(Length::Fixed(86.0))
             .height(Length::Fixed(16.0));
@@ -3383,6 +3388,20 @@ fn view_settings_appearance<'a>(
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center),
+            row![
+                row![
+                    pill_toggle(
+                        t,
+                        appr.overview_stage_animated,
+                        Message::ToggleOverviewStageAnimation
+                    ),
+                    text("Animate Overview canvas").size(12).font(font),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
                 row![
                     pill_toggle(t, appr.compact_density, Message::ToggleCompactDensity),
                     text("Compact density").size(12).font(font),
@@ -3711,6 +3730,7 @@ fn view_settings_updates<'a>(
                 palette: p,
                 accent_override: t.accent_override,
                 anim_t: app.anim_t,
+                show_halo: true,
             })
             .width(Length::Fill)
             .height(Length::Fixed(18.0));
@@ -4319,10 +4339,16 @@ fn view_settings_general<'a>(
                 Message::ToggleStartWithWindows(!settings.start_with_windows),
             ),
             toggle_card_row(
-                app.minimize_to_tray_on_close,
+                settings.minimize_to_tray_on_close,
                 "Keep engine running in system tray on window close",
                 "Closing the main window drops UI GPU usage to 0% while hardware control continues.",
-                Message::ToggleMinimizeToTray(!app.minimize_to_tray_on_close),
+                Message::ToggleMinimizeToTray(!settings.minimize_to_tray_on_close),
+            ),
+            toggle_card_row(
+                settings.global_hotkeys_enabled,
+                "Global Windows hotkeys (even while in-game or minimized to tray)",
+                "Ctrl+Alt+Shift+L toggles lights · Ctrl+Alt+Shift+P cycles profiles · Ctrl+Alt+Shift+A opens Airglow.",
+                Message::ToggleGlobalHotkeys(!settings.global_hotkeys_enabled),
             ),
             toggle_card_row(
                 settings.demo_mode,
@@ -4915,12 +4941,20 @@ fn view_settings_backup<'a>(
                         .on_submit(Message::ImportRigBundle)
                         .width(Length::Fill),
                         button(
+                            text("Browse…")
+                                .size(12)
+                                .font(font),
+                        )
+                        .padding([7, 12])
+                        .style(theme::btn_secondary(t, false))
+                        .on_press(Message::BrowseBackupFile),
+                        button(
                             text("Import")
                                 .size(12)
                                 .font(theme::ui_semibold(t.design)),
                         )
                         .padding([7, 14])
-                        .style(theme::btn_secondary(t, false))
+                        .style(theme::btn_primary(t))
                         .on_press(Message::ImportRigBundle),
                     ]
                     .spacing(8)

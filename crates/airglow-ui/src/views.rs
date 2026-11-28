@@ -857,31 +857,6 @@ fn tile_customize_overlay<'a>(
         .into()
 }
 
-fn tile_semantic_tint(tile: &OverviewTile, t: DesignTokens) -> Option<u32> {
-    if let Some(rgb) = tile.accent {
-        return Some(theme::rgb_arr_to_hex(rgb));
-    }
-    let p = t.p;
-    match &tile.kind {
-        OverviewTileKind::Lighting | OverviewTileKind::Profiles | OverviewTileKind::Lookbook => {
-            Some(p.brass)
-        }
-        OverviewTileKind::CpuTemp | OverviewTileKind::CpuLoad | OverviewTileKind::LiquidTemp => {
-            Some(t.data_primary)
-        }
-        OverviewTileKind::GpuTemp
-        | OverviewTileKind::GpuLoad
-        | OverviewTileKind::GpuHotspot => Some(t.data_secondary),
-        OverviewTileKind::Fans => Some(p.ok),
-        OverviewTileKind::RamUsage => Some(t.pink_rose),
-        OverviewTileKind::DriveTemp => Some(p.warm),
-        OverviewTileKind::PowerDraw | OverviewTileKind::CostEfficiency => Some(p.brass_hi),
-        OverviewTileKind::NetDown | OverviewTileKind::NetUp => Some(t.data_primary),
-        OverviewTileKind::Hardware | OverviewTileKind::DeskDisplay => Some(t.data_secondary),
-        OverviewTileKind::CustomSensor { .. } => Some(p.brass),
-    }
-}
-
 fn wrap_tile<'a>(
     app: &AirglowApp,
     tile: &OverviewTile,
@@ -898,7 +873,6 @@ fn wrap_tile<'a>(
         inner
     };
 
-    let tint = tile_semantic_tint(tile, t);
     let card = container(content)
         .padding([t.pad(14), t.pad(16)])
         .width(Length::Fill)
@@ -908,7 +882,7 @@ fn wrap_tile<'a>(
     if app.edit_tiles_mode {
         card.style(theme::editing_tile_style(t)).into()
     } else {
-        card.style(theme::rich_instrument_card_style(t, tint, false))
+        card.style(theme::rich_instrument_card_style(t, None, false))
             .into()
     }
 }
@@ -1001,6 +975,33 @@ fn render_lighting_tile<'a>(
             .push(
                 button(
                     row![
+                        icon_canvas(
+                            UiIcon::Sparkle,
+                            theme::rgb(if appr.overview_stage_animated {
+                                p.brass_hi
+                            } else {
+                                p.ink_3
+                            }),
+                            12.0,
+                        ),
+                        text(if appr.overview_stage_animated {
+                            "Live"
+                        } else {
+                            "Static"
+                        })
+                        .size(11.5)
+                        .font(font),
+                    ]
+                    .spacing(5)
+                    .align_y(Alignment::Center),
+                )
+                .padding([4, 10])
+                .style(theme::masthead_pill_btn(t, !appr.overview_stage_animated))
+                .on_press(Message::ToggleOverviewStageAnimation),
+            )
+            .push(
+                button(
+                    row![
                         icon_canvas(UiIcon::Expand, theme::rgb(p.ink_2), 12.0),
                         text("Theater").size(11.5).font(font),
                     ]
@@ -1043,12 +1044,17 @@ fn render_lighting_tile<'a>(
         selected_zone: None,
         active_effect: eff.effect,
         temp_unit: unit,
-        anim_t: app.anim_t,
+        anim_t: if appr.overview_stage_animated {
+            app.anim_t
+        } else {
+            0.0
+        },
         fan_duty: app.snapshot.fan_duty,
         cpu_temp: s.cpu_temp,
         gpu_temp: s.gpu_temp,
         ambient_rgb: app.snapshot.average_rgb,
         eyebrow: None,
+        animated: appr.overview_stage_animated,
     })
     .width(Length::Fill)
     .height(Length::Fill);
@@ -1066,14 +1072,21 @@ fn render_lighting_tile<'a>(
         eff.effect.label().to_string()
     };
 
-    let profile_subtitle = if let Some(rule_id) = &app.snapshot.automation_status.light_winner {
-        format!("Automation · {rule_id}")
-    } else if let Some(pid) = &app.snapshot.config.active_preset
-        && let Some(pr) = app.snapshot.config.presets.iter().find(|pr| &pr.id == pid)
-    {
-        format!("{} profile", pr.name)
-    } else {
-        "Custom lighting".to_string()
+    let profile_subtitle = {
+        let base = if let Some(rule_id) = &app.snapshot.automation_status.light_winner {
+            format!("Automation · {rule_id}")
+        } else if let Some(pid) = &app.snapshot.config.active_preset
+            && let Some(pr) = app.snapshot.config.presets.iter().find(|pr| &pr.id == pid)
+        {
+            format!("{} profile", pr.name)
+        } else {
+            "Custom lighting".to_string()
+        };
+        if appr.overview_stage_animated {
+            base
+        } else {
+            format!("{base} · Static")
+        }
     };
 
     let slider_w = if span >= 3 {
@@ -1381,6 +1394,7 @@ fn render_power_draw_tile<'a>(
         palette: p,
         accent_override: t.accent_override,
         anim_t: app.anim_t,
+        show_halo: false,
     })
     .width(Length::Fill)
     .height(Length::Fill);
@@ -1509,9 +1523,11 @@ fn render_fans_tile<'a>(
         current_temp: app.snapshot.fan_temp,
         current_duty: app.snapshot.fan_duty as f32,
         phase: app.anim_t,
-        spinning: app.snapshot.config.appearance.spinning_fans,
+        spinning: app.snapshot.config.appearance.spinning_fans
+            && app.snapshot.config.appearance.overview_stage_animated,
         palette: p,
         accent_override: t.accent_override,
+        show_halo: false,
     })
     .width(Length::Fill)
     .height(Length::Fill);
@@ -2333,6 +2349,7 @@ fn render_sensor_tile<'a>(
                 accent,
                 palette: p,
                 accent_override: t.accent_override,
+                show_halo: false,
             })
             .width(Length::Fixed(gauge_sz))
             .height(Length::Fixed(gauge_sz));
@@ -2425,6 +2442,7 @@ fn render_sensor_tile<'a>(
                 palette: p,
                 accent_override: t.accent_override,
                 anim_t: app.anim_t,
+                show_halo: false,
             })
             .width(Length::Fill)
             .height(Length::Fill);
@@ -2462,6 +2480,7 @@ fn render_sensor_tile<'a>(
                 palette: p,
                 accent_override: t.accent_override,
                 anim_t: app.anim_t,
+                show_halo: false,
             })
             .width(Length::Fill)
             .height(Length::Fill);
@@ -2533,6 +2552,7 @@ fn render_sensor_tile<'a>(
                     palette: p,
                     accent_override: t.accent_override,
                     anim_t: app.anim_t,
+                    show_halo: false,
                 })
                 .width(Length::Fill)
                 .height(Length::Fill);
@@ -2770,6 +2790,7 @@ pub fn view_theater_rig<'a>(
         gpu_temp: s.gpu_temp,
         ambient_rgb: app.snapshot.average_rgb,
         eyebrow: Some("AIRGLOW THEATER"),
+        animated: true,
     })
     .width(Length::Fill)
     .height(Length::Fill);
@@ -3008,6 +3029,7 @@ pub fn view_compact_companion<'a>(
         gpu_temp: s.gpu_temp,
         ambient_rgb: app.snapshot.average_rgb,
         eyebrow: Some("LIVING RIG"),
+        animated: true,
     })
     .width(Length::Fill)
     .height(Length::Fixed(148.0));
@@ -3611,6 +3633,7 @@ pub fn view_studio<'a>(
         gpu_temp: app.snapshot.sensors.gpu_temp,
         ambient_rgb: app.snapshot.average_rgb,
         eyebrow: Some("STUDIO LIVE RIG"),
+        animated: true,
     })
     .width(Length::Fill)
     .height(Length::Fill);
@@ -4026,6 +4049,7 @@ pub fn spark_metric_tile<'a>(
         palette: p,
         accent_override: t.accent_override,
         anim_t,
+        show_halo: true,
     })
     .width(Length::Fixed(90.0))
     .height(Length::Fixed(38.0));

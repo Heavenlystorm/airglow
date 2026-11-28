@@ -159,6 +159,20 @@ pub fn filtered_palette_items(app: &AirglowApp) -> Vec<PaletteItem> {
     });
 
     all.push(PaletteItem {
+        title: if app.snapshot.config.appearance.overview_stage_animated {
+            "Pause Overview Lighting Canvas Animation".to_string()
+        } else {
+            "Resume Overview Lighting Canvas Animation".to_string()
+        },
+        subtitle: "Switch Overview rig preview between Live animation and low-GPU Static mode"
+            .to_string(),
+        category: "Performance",
+        icon: UiIcon::Sparkle,
+        swatch: Some([165, 222, 206]),
+        message: Message::ToggleOverviewStageAnimation,
+    });
+
+    all.push(PaletteItem {
         title: "Add Overview Tile".to_string(),
         subtitle: "Open the Tile Catalog (Controls, 12 Sensors & live LHM sensors)".to_string(),
         category: "Workshop",
@@ -674,6 +688,7 @@ pub fn view_shortcuts_modal<'a>(t: DesignTokens, font: iced::Font) -> Element<'a
         shortcut_row("↑  /  ↓  /  Enter", "Navigate & run command"),
         shortcut_row("Ctrl + Z", "Studio Undo (30 steps)"),
         shortcut_row("Ctrl + Y  /  ⇧⌘Z", "Studio Redo"),
+        shortcut_row("Ctrl+Alt+Shift+L / P / A", "Global Lights / Profile / Open"),
         shortcut_row("Esc", "Close active overlay"),
     ]
     .spacing(8)
@@ -916,6 +931,16 @@ pub fn view_customize_drawer<'a>(
         row![
             pill_toggle(t, appr.firefly_particles, Message::ToggleFireflyParticles),
             text("Motes").size(11.5).font(font),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+        row![
+            pill_toggle(
+                t,
+                appr.overview_stage_animated,
+                Message::ToggleOverviewStageAnimation
+            ),
+            text("Overview canvas").size(11.5).font(font),
         ]
         .spacing(6)
         .align_y(Alignment::Center),

@@ -26,11 +26,11 @@
 </p>
 
 <p>
-  <a href="https://github.com/Heavenlystorm/airglow/releases/latest"><strong>Download v2.1.0</strong></a>
+  <a href="https://github.com/Heavenlystorm/airglow/releases/latest"><strong>Download v2.2.0</strong></a>
   &nbsp;·&nbsp;
   <a href="https://airglowrgb.com">Website</a>
   &nbsp;·&nbsp;
-  <a href="docs/RELEASE_NOTES_v2.1.0.md">v2.1.0 Release Notes</a>
+  <a href="docs/RELEASE_NOTES_v2.2.0.md">v2.2.0 Release Notes</a>
   &nbsp;·&nbsp;
   <a href="#keyboard-shortcuts">Shortcuts</a>
   &nbsp;·&nbsp;
@@ -57,10 +57,21 @@
 
 ---
 
-## What's New in 2.1.0
+## What's New in 2.2.0
 
 > [!TIP]
-> **Airglow 2.1.0 is out now.** Read the full [v2.1.0 Release Notes](docs/RELEASE_NOTES_v2.1.0.md) or grab `Airglow.exe` from [Latest Releases](https://github.com/Heavenlystorm/airglow/releases/latest).
+> **Airglow 2.2.0 is out now.** Read the full [v2.2.0 Release Notes](docs/RELEASE_NOTES_v2.2.0.md) or grab `Airglow.exe` from [Latest Releases](https://github.com/Heavenlystorm/airglow/releases/latest).
+
+- **Low-GPU Overview Mode & Widget Geometry Caching** — Toggle the Overview **Lighting canvas** between **Live** and **Static (low GPU)** right from the tile header (or Control Center / Settings / `Ctrl+K`), plus `canvas::Cache` on `UiIconCanvas` & Overview instruments and tab/focus-aware frame throttling (4 Hz when unfocused or on static tabs).
+- **Halo-Free Overview Telemetry Tiles** — Cleaner, crisper Overview cards and instrument charts without radial washes or neon glow halos.
+- **Hardened Tray Lifecycle & Single-Instance Focus** — Persists minimize-to-tray on close, supports `--background` silent autostart, and wakes/focuses the existing tray instance when re-launched instead of starting a duplicate process.
+- **Richer Tray Menu, Window Persistence, Global Hotkeys & Native File Picker** — Live checkmarks + Brightness presets in the system tray menu, persisted window size/position/last tab across restarts, toggleable global hotkeys (`Ctrl+Alt+Shift+L / P / A`), and a native Windows **Browse…** picker for `.json` rig backups.
+
+---
+
+## Previously in 2.1.0
+
+> Read the [v2.1.0 Release Notes](docs/RELEASE_NOTES_v2.1.0.md).
 
 - **Auto-HiDPI Scaling & Crisp Zoom** — Automatically scales crisp vector UI at `1.25×` on 1440p/ultrawide displays, `1.50×` on 4K displays, and `1.0×` at 1440×900 — plus manual `Auto / 100% / 115% / 125% / 140%` presets and `Ctrl +` / `Ctrl -` / `Ctrl 0` zoom shortcuts.
 - **Live 60 FPS 2D Bento Overview & Tile Workshop** — Grab any tile header (or anywhere in **`Customize`** mode) to drag-and-drop with snap-slot guides and automatic 2D reflow, resize corners smoothly (`1×1` up to `4×3`), manage multiple workspaces, and add Controls (*Desk Display*, *Lighting Lookbook*), built-in Sensors, or any of 222+ live LibreHardwareMonitor sensors.

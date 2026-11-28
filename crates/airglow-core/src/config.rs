@@ -819,6 +819,8 @@ pub struct AppearanceConfig {
     pub ambient_bloom: bool,
     #[serde(default = "default_true")]
     pub firefly_particles: bool,
+    #[serde(default = "default_true")]
+    pub overview_stage_animated: bool,
     #[serde(default)]
     pub compact_density: bool,
     #[serde(default)]
@@ -842,6 +844,7 @@ impl Default for AppearanceConfig {
             spinning_fans: true,
             ambient_bloom: true,
             firefly_particles: true,
+            overview_stage_animated: true,
             compact_density: false,
             ui_scale_pct: 0,
             ui_fps_cap: 30,
@@ -970,6 +973,10 @@ pub struct AppSettings {
     pub lights_off_on_lock: bool,
     #[serde(default)]
     pub start_with_windows: bool,
+    #[serde(default = "default_true")]
+    pub minimize_to_tray_on_close: bool,
+    #[serde(default = "default_true")]
+    pub global_hotkeys_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -990,6 +997,8 @@ impl Default for AppSettings {
             lights_off_on_sleep: true,
             lights_off_on_lock: false,
             start_with_windows: false,
+            minimize_to_tray_on_close: true,
+            global_hotkeys_enabled: true,
         }
     }
 }
@@ -1713,6 +1722,48 @@ fn slugify_id(raw: &str, fallback: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WindowState {
+    #[serde(default)]
+    pub width: Option<f32>,
+    #[serde(default)]
+    pub height: Option<f32>,
+    #[serde(default)]
+    pub x: Option<i32>,
+    #[serde(default)]
+    pub y: Option<i32>,
+    #[serde(default)]
+    pub maximized: bool,
+    #[serde(default)]
+    pub last_tab: Option<String>,
+}
+
+impl WindowState {
+    /// Clamps saved physical window dimensions and drops invalid or wildly off-screen positions.
+    pub fn normalized(mut self) -> Self {
+        self.width = self
+            .width
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v.clamp(800.0, 3840.0));
+        self.height = self
+            .height
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v.clamp(560.0, 2160.0));
+        match (self.x, self.y) {
+            (Some(x), Some(y)) if (-3840..=7680).contains(&x) && (-2160..=4320).contains(&y) => {}
+            _ => {
+                self.x = None;
+                self.y = None;
+            }
+        }
+        self.last_tab = self
+            .last_tab
+            .map(|t| t.trim().to_ascii_lowercase())
+            .filter(|t| !t.is_empty());
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
     pub settings: AppSettings,
@@ -1744,6 +1795,8 @@ pub struct AppConfig {
     pub auto_check_updates: bool,
     #[serde(default)]
     pub fullscreen_fill_width: bool,
+    #[serde(default)]
+    pub window_state: WindowState,
 }
 
 impl AppConfig {
@@ -1752,6 +1805,7 @@ impl AppConfig {
     pub fn normalize(&mut self) {
         self.appearance.normalize();
         self.settings.fan_hysteresis_c = self.settings.fan_hysteresis_c.clamp(0.0, 10.0);
+        self.window_state = self.window_state.clone().normalized();
 
         if self.overview_workspaces.is_empty() {
             self.overview_workspaces = default_overview_workspaces();
@@ -2193,6 +2247,7 @@ impl Default for AppConfig {
             update_channel: UpdateChannel::Stable,
             auto_check_updates: true,
             fullscreen_fill_width: false,
+            window_state: WindowState::default(),
         }
     }
 }
@@ -3115,5 +3170,85 @@ mod tests {
         app_cfg.appearance.ui_scale_pct = 180;
         app_cfg.normalize();
         assert_eq!(app_cfg.appearance.ui_scale_pct, 150);
+    }
+
+    #[test]
+    fn tray_and_overview_animation_flags_default_true_and_roundtrip() {
+        let def = AppConfig::default();
+        assert!(def.settings.minimize_to_tray_on_close);
+        assert!(def.appearance.overview_stage_animated);
+
+        // Legacy JSON missing both new fields defaults both to true
+        let mut legacy_val = serde_json::to_value(&def).unwrap();
+        legacy_val["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("minimize_to_tray_on_close");
+        legacy_val["appearance"]
+            .as_object_mut()
+            .unwrap()
+            .remove("overview_stage_animated");
+        let parsed: AppConfig = serde_json::from_value(legacy_val).unwrap();
+        assert!(parsed.settings.minimize_to_tray_on_close);
+        assert!(parsed.appearance.overview_stage_animated);
+
+        // Explicit false values persist cleanly across serialization roundtrip
+        let mut custom = def.clone();
+        custom.settings.minimize_to_tray_on_close = false;
+        custom.appearance.overview_stage_animated = false;
+        let json = serde_json::to_string(&custom).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(!back.settings.minimize_to_tray_on_close);
+        assert!(!back.appearance.overview_stage_animated);
+    }
+
+    #[test]
+    fn window_state_and_global_hotkeys_defaults_normalization_and_roundtrip() {
+        let def = AppConfig::default();
+        assert!(def.settings.global_hotkeys_enabled);
+        assert_eq!(def.window_state, WindowState::default());
+
+        // Legacy JSON missing global_hotkeys_enabled & window_state deserializes cleanly
+        let mut legacy = serde_json::to_value(&def).unwrap();
+        legacy["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("global_hotkeys_enabled");
+        legacy.as_object_mut().unwrap().remove("window_state");
+        let parsed: AppConfig = serde_json::from_value(legacy).unwrap();
+        assert!(parsed.settings.global_hotkeys_enabled);
+        assert_eq!(parsed.window_state, WindowState::default());
+
+        // Normalization clamps geometry and drops invalid off-screen coordinates
+        let clamped = WindowState {
+            width: Some(320.0),
+            height: Some(9000.0),
+            x: Some(99_999),
+            y: Some(120),
+            maximized: true,
+            last_tab: Some(" Fans ".to_string()),
+        }
+        .normalized();
+        assert_eq!(clamped.width, Some(800.0));
+        assert_eq!(clamped.height, Some(2160.0));
+        assert_eq!(clamped.x, None);
+        assert_eq!(clamped.y, None);
+        assert!(clamped.maximized);
+        assert_eq!(clamped.last_tab.as_deref(), Some("fans"));
+
+        let mut custom = def;
+        custom.settings.global_hotkeys_enabled = false;
+        custom.window_state = WindowState {
+            width: Some(1920.0),
+            height: Some(1080.0),
+            x: Some(100),
+            y: Some(50),
+            maximized: false,
+            last_tab: Some("lighting".to_string()),
+        };
+        let raw = serde_json::to_string(&custom).unwrap();
+        let back: AppConfig = serde_json::from_str(&raw).unwrap();
+        assert!(!back.settings.global_hotkeys_enabled);
+        assert_eq!(back.window_state, custom.window_state);
     }
 }

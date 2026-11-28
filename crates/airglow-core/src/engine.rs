@@ -182,6 +182,7 @@ pub enum EngineCommand {
     ExportCoolingCsv,
     UpdateSettings(AppSettings),
     UpdateAppearance(AppearanceConfig),
+    UpdateWindowState(crate::config::WindowState),
     SaveLook(String),
     ApplyLook(String),
     DeleteLook(String),
@@ -1697,6 +1698,10 @@ fn run_engine(
                 }
                 EngineCommand::UpdateAppearance(appearance) => {
                     config.appearance = appearance.normalized();
+                    dirty_save = true;
+                }
+                EngineCommand::UpdateWindowState(ws) => {
+                    config.window_state = ws.normalized();
                     dirty_save = true;
                 }
                 EngineCommand::SaveLook(name) => {

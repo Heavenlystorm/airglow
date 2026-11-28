@@ -49,6 +49,7 @@ pub struct CaseStageCanvas<'a> {
     pub gpu_temp: Option<f32>,
     pub ambient_rgb: [u8; 3],
     pub eyebrow: Option<&'a str>,
+    pub animated: bool,
 }
 
 #[derive(Default)]
@@ -56,6 +57,8 @@ pub struct StageDragState {
     dragging: Option<(String, [f32; 2])>,
     static_cache: canvas::Cache,
     static_key: Cell<u64>,
+    dynamic_cache: canvas::Cache,
+    dynamic_key: Cell<u64>,
 }
 
 fn is_firefly_palette(p: DesignPalette) -> bool {
@@ -992,7 +995,7 @@ fn stage_static_hash(stage: &CaseStageCanvas<'_>, bounds: Rectangle) -> u64 {
     rig_style_id(stage.rig_style).hash(&mut h);
     stage.arrange_mode.hash(&mut h);
     stage.show_labels.hash(&mut h);
-    stage.spinning_fans.hash(&mut h);
+    (stage.spinning_fans && stage.animated).hash(&mut h);
     stage.eyebrow.is_some().hash(&mut h);
     stage.frames.len().hash(&mut h);
     for z in stage.frames {
@@ -1016,6 +1019,68 @@ fn stage_static_hash(stage: &CaseStageCanvas<'_>, bounds: Rectangle) -> u64 {
         let (lx, ly) = z.layout.center();
         ((lx * 1000.0).round() as i32).hash(&mut h);
         ((ly * 1000.0).round() as i32).hash(&mut h);
+    }
+    h.finish()
+}
+
+fn stage_dynamic_hash(
+    stage: &CaseStageCanvas<'_>,
+    bounds: Rectangle,
+    hovered_zone_id: Option<&str>,
+    hovered_pos: Option<Point>,
+    dragging_id: Option<&str>,
+) -> u64 {
+    let mut h = DefaultHasher::new();
+    ((bounds.width * 2.0).round() as i32).hash(&mut h);
+    ((bounds.height * 2.0).round() as i32).hash(&mut h);
+    stage.palette.ground.hash(&mut h);
+    stage.palette.panel.hash(&mut h);
+    stage.palette.raised.hash(&mut h);
+    stage.palette.well.hash(&mut h);
+    stage.palette.brass.hash(&mut h);
+    stage.palette.brass_hi.hash(&mut h);
+    stage.palette.ink.hash(&mut h);
+    stage.palette.ink_3.hash(&mut h);
+    stage.palette.square_corners.hash(&mut h);
+    stage.accent_override.hash(&mut h);
+    rig_style_id(stage.rig_style).hash(&mut h);
+    stage.lights_on.hash(&mut h);
+    stage.show_labels.hash(&mut h);
+    stage.arrange_mode.hash(&mut h);
+    stage.selected_zone.hash(&mut h);
+    hovered_zone_id.hash(&mut h);
+    if hovered_zone_id.is_some()
+        && let Some(hp) = hovered_pos
+    {
+        ((hp.x / 8.0).round() as i32).hash(&mut h);
+        ((hp.y / 8.0).round() as i32).hash(&mut h);
+    }
+    dragging_id.hash(&mut h);
+    stage.active_effect.label().hash(&mut h);
+    matches!(stage.temp_unit, TempUnit::F).hash(&mut h);
+    stage.fan_duty.hash(&mut h);
+    stage.cpu_temp.map(|t| t.round() as i32).hash(&mut h);
+    stage.gpu_temp.map(|t| t.round() as i32).hash(&mut h);
+    [
+        stage.ambient_rgb[0] / 8,
+        stage.ambient_rgb[1] / 8,
+        stage.ambient_rgb[2] / 8,
+    ]
+    .hash(&mut h);
+    stage.eyebrow.hash(&mut h);
+    stage.zone_overrides.len().hash(&mut h);
+    for (zid, ov) in stage.zone_overrides {
+        zid.hash(&mut h);
+        ov.effect.label().hash(&mut h);
+    }
+    stage.frames.len().hash(&mut h);
+    for z in stage.frames {
+        z.zone_id.hash(&mut h);
+        z.enabled.hash(&mut h);
+        z.colors.len().hash(&mut h);
+        for c in &z.colors {
+            [c[0] / 8, c[1] / 8, c[2] / 8].hash(&mut h);
+        }
     }
     h.finish()
 }
@@ -1170,6 +1235,11 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
             state.static_cache.clear();
             state.static_key.set(key);
         }
+
+        let eff_spinning_fans = self.spinning_fans && self.animated;
+        let eff_airflow = self.airflow_lines && self.animated;
+        let eff_bloom = self.ambient_bloom && self.animated;
+        let eff_anim_t = if self.animated { self.anim_t } else { 0.0 };
 
         let static_geom = state.static_cache.draw(renderer, bounds.size(), |frame| {
             let architectural = self.rig_style == RigStyle::Architectural;
@@ -1821,7 +1891,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                             Color::from_rgba(1.0, 0.97, 1.0, 0.03),
                         );
                     }
-                    if !self.spinning_fans && !minimal {
+                    if !eff_spinning_fans && !minimal {
                         draw_fan_blades(frame, center, r, 0.35, firefly, architectural, s_fac);
                     }
                     frame.stroke(
@@ -1841,7 +1911,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                                 .with_width((0.8 * s_fac.sqrt()).clamp(0.7, 1.4)),
                         );
                     }
-                    if !self.spinning_fans {
+                    if !eff_spinning_fans {
                         frame.fill(
                             &Path::circle(center, hub_r),
                             if firefly {
@@ -1972,7 +2042,16 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
         // AIO LCD pump temp screen, GPU temp badge, airflow ribbons, spinning blades,
         // volumetric LEDs, Arrange snap crosshairs, and Hover Zone X-Ray tooltip!
         // =========================================================================
-        let mut frame = Frame::new(renderer, bounds.size());
+        let hovered_pos = cursor.position_in(bounds);
+        let hovered_zone = hovered_pos.and_then(|hp| {
+            if state.dragging.is_some() {
+                None
+            } else {
+                hit_test_zone(self.frames, self.arrange_mode, ox, oy, scale, hp)
+            }
+        });
+
+        let render_layer2 = |frame: &mut Frame| {
         let architectural = self.rig_style == RigStyle::Architectural;
         let minimal = self.rig_style == RigStyle::Minimal;
 
@@ -1986,7 +2065,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
             + self.ambient_rgb[1] as f32
             + self.ambient_rgb[2] as f32)
             / (3.0 * 255.0);
-        if self.lights_on && self.ambient_bloom && amb_lum > 0.03 {
+        if self.lights_on && eff_bloom && amb_lum > 0.03 {
             let wash_r = stage_w.max(stage_h) * 0.58;
 
             // Sample actual left-wing & right-wing active zone colors for authentic directional spill!
@@ -2027,7 +2106,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                 let wing_spill_r = (wide_margin * 1.25 + ch_h * 0.42).max(110.0);
 
                 fill_radial_bloom(
-                    &mut frame,
+                    frame,
                     Point::new((ch_x - wide_margin * 0.26).max(20.0), ch_y + ch_h * 0.50),
                     wing_spill_r,
                     left_spill,
@@ -2035,7 +2114,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                     5,
                 );
                 fill_radial_bloom(
-                    &mut frame,
+                    frame,
                     Point::new(
                         (ch_r + wide_margin * 0.26).min(bounds.width - 20.0),
                         ch_y + ch_h * 0.54,
@@ -2046,7 +2125,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                     5,
                 );
                 fill_radial_bloom(
-                    &mut frame,
+                    frame,
                     Point::new(ch_x + ch_w * 0.5, desk_y),
                     (ch_w * 0.76).min(bounds.width * 0.48),
                     amb,
@@ -2089,7 +2168,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
             }
 
             fill_radial_bloom(
-                &mut frame,
+                frame,
                 to_pt(0.48, 0.52),
                 wash_r,
                 amb,
@@ -2097,7 +2176,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                 5,
             );
             fill_radial_bloom(
-                &mut frame,
+                frame,
                 to_pt(0.22, 0.48),
                 wash_r * 0.54,
                 amb,
@@ -2106,7 +2185,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
             );
             if firefly && !architectural {
                 fill_radial_bloom(
-                    &mut frame,
+                    frame,
                     to_pt(0.76, 0.28),
                     wash_r * 0.42,
                     accent,
@@ -2129,9 +2208,9 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                     })
                     .with_width((2.2 * s_fac.sqrt()).clamp(1.6, 3.4)),
             );
-        } else if firefly && !minimal && !architectural && self.ambient_bloom {
+        } else if firefly && !minimal && !architectural && eff_bloom {
             fill_radial_bloom(
-                &mut frame,
+                frame,
                 to_pt(0.50, 0.55),
                 stage_w * 0.44,
                 Color::from_rgb8(98, 72, 114),
@@ -2142,7 +2221,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
 
         // 2. Dynamic Living Internals: PCB trace pulses & AIO coolant glints
         // (AIO LCD pump screen & GPU temp badge are drawn AFTER airflow ribbons & LEDs for clean Z-order!)
-        if self.rig_style == RigStyle::Living {
+        if self.rig_style == RigStyle::Living && self.animated {
             let pulse_a = if firefly {
                 Color::from_rgb8(165, 222, 206) // mint
             } else {
@@ -2150,8 +2229,8 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
             };
             let pulse_b = accent;
 
-            draw_pcb_trace_pulse(&mut frame, &trace_a, pulse_a, self.anim_t * 0.22 + 0.15, s_fac);
-            draw_pcb_trace_pulse(&mut frame, &trace_b, pulse_b, self.anim_t * 0.18 + 0.62, s_fac);
+            draw_pcb_trace_pulse(frame, &trace_a, pulse_a, eff_anim_t * 0.22 + 0.15, s_fac);
+            draw_pcb_trace_pulse(frame, &trace_b, pulse_b, eff_anim_t * 0.18 + 0.62, s_fac);
 
             // Faint coolant flow glint along curved AIO hoses
             for (idx, dx) in [-0.012_f32, 0.014_f32].iter().enumerate() {
@@ -2162,7 +2241,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                 let h1 = to_pt(0.58 + dx, 0.22);
                 let h2 = to_pt(0.66 + dx, 0.14);
                 let h3 = to_pt(0.61 + dx, 0.06);
-                let cu = (self.anim_t * 0.26 + idx as f32 * 0.45).fract();
+                let cu = (eff_anim_t * 0.26 + idx as f32 * 0.45).fract();
                 let glint = cubic_point(h0, h1, h2, h3, cu);
                 frame.fill(
                     &Path::circle(glint, (1.5 * s_fac).clamp(1.1, 3.0)),
@@ -2175,7 +2254,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
         }
 
         // 3. Animated Airflow & Thermal Ribbons
-        if self.airflow_lines && !minimal {
+        if eff_airflow && !minimal {
             let peak_temp = match (self.cpu_temp, self.gpu_temp) {
                 (Some(c), Some(g)) => c.max(g),
                 (Some(c), None) => c,
@@ -2190,52 +2269,52 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                 mix_color(flow_tint, accent_hi, 0.35)
             };
             draw_airflow_ribbon(
-                &mut frame,
+                frame,
                 to_pt(0.08, 0.31),
                 to_pt(0.32, 0.28),
                 to_pt(0.58, 0.22),
                 to_pt(0.92, 0.24),
                 flow_tint,
-                self.anim_t,
+                eff_anim_t,
                 flow_speed,
                 0.05,
                 architectural,
                 s_fac,
             );
             draw_airflow_ribbon(
-                &mut frame,
+                frame,
                 to_pt(0.08, 0.50),
                 to_pt(0.34, 0.47),
                 to_pt(0.54, 0.31),
                 to_pt(0.64, 0.06),
                 secondary_ribbon_tint,
-                self.anim_t,
+                eff_anim_t,
                 flow_speed * 0.94,
                 0.34,
                 architectural,
                 s_fac,
             );
             draw_airflow_ribbon(
-                &mut frame,
+                frame,
                 to_pt(0.10, 0.69),
                 to_pt(0.42, 0.68),
                 to_pt(0.72, 0.52),
                 to_pt(0.92, 0.30),
                 flow_tint,
-                self.anim_t,
+                eff_anim_t,
                 flow_speed * 0.86,
                 0.67,
                 architectural,
                 s_fac,
             );
             draw_airflow_ribbon(
-                &mut frame,
+                frame,
                 to_pt(0.42, 0.86),
                 to_pt(0.46, 0.66),
                 to_pt(0.66, 0.48),
                 to_pt(0.88, 0.28),
                 mix_color(flow_tint, secondary_ribbon_tint, 0.45),
-                self.anim_t,
+                eff_anim_t,
                 flow_speed * 0.78,
                 0.22,
                 architectural,
@@ -2243,17 +2322,8 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
             );
         }
 
-        // 4. Spinning 7-blade fans (dynamic when spinning_fans is true) + selected/override accents
-        let hovered_pos = cursor.position_in(bounds);
-        let hovered_zone = hovered_pos.and_then(|hp| {
-            if state.dragging.is_some() {
-                None
-            } else {
-                hit_test_zone(self.frames, self.arrange_mode, ox, oy, scale, hp)
-            }
-        });
-
-        let blade_theta = self.anim_t * (1.2 + (self.fan_duty as f32 / 100.0) * 9.5);
+        // 4. Spinning 7-blade fans (dynamic when eff_spinning_fans is true) + selected/override accents
+        let blade_theta = eff_anim_t * (1.2 + (self.fan_duty as f32 / 100.0) * 9.5);
         for zone in self.frames {
             if !zone.enabled && !self.arrange_mode {
                 continue;
@@ -2277,9 +2347,9 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                 let center = Point::new(ox + cx * scale, oy + cy * scale);
                 let r = (r_norm * scale).max(5.5);
                 let hub_r = r * 0.29;
-                if self.spinning_fans && !minimal {
+                if eff_spinning_fans && !minimal {
                     draw_fan_blades(
-                        &mut frame,
+                        frame,
                         center,
                         r,
                         blade_theta,
@@ -2380,7 +2450,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                     (rgb_arr[0] as f32 + rgb_arr[1] as f32 + rgb_arr[2] as f32) / (3.0 * 255.0);
                 if lit && lum > 0.02 {
                     let k = lum.sqrt();
-                    if self.ambient_bloom {
+                    if eff_bloom {
                         let spread = if is_matrix { 2.8 } else { 4.3 };
                         // 4-layer volumetric halo
                         frame.fill(
@@ -2452,7 +2522,7 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                     iced::border::Radius::from(6.0),
                 );
                 if is_selected {
-                    let pulse = 0.65 + 0.30 * (self.anim_t * 3.2).sin();
+                    let pulse = 0.65 + 0.30 * (eff_anim_t * 3.2).sin();
                     frame.stroke(
                         &sel_rect,
                         Stroke {
@@ -2654,8 +2724,8 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                     .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.12))
                     .with_width((0.8 * s_fac.sqrt()).clamp(0.7, 1.4)),
             );
-            if self.ambient_bloom {
-                fill_radial_bloom(&mut frame, aio_c, lcd_r * 1.18, cpu_col, 0.22, 3);
+            if eff_bloom {
+                fill_radial_bloom(frame, aio_c, lcd_r * 1.18, cpu_col, 0.22, 3);
             }
             // Subtle top-left glass specular crescent
             let glass_arc = Path::new(|b| {
@@ -2934,8 +3004,8 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
             } else {
                 accent_hi
             };
-            if self.lights_on && self.ambient_bloom {
-                fill_radial_bloom(&mut frame, dot_pt, 7.5, dot_col, 0.42, 4);
+            if self.lights_on && eff_bloom {
+                fill_radial_bloom(frame, dot_pt, 7.5, dot_col, 0.42, 4);
             }
             frame.fill(&Path::circle(dot_pt, 3.0), dot_col);
             frame.fill_text(canvas::Text {
@@ -2969,8 +3039,30 @@ impl<'a> canvas::Program<StageMessage> for CaseStageCanvas<'a> {
                 ..canvas::Text::default()
             });
         }
+        };
 
-        vec![static_geom, frame.into_geometry()]
+        let dynamic_geom = if self.animated {
+            let mut frame = Frame::new(renderer, bounds.size());
+            render_layer2(&mut frame);
+            frame.into_geometry()
+        } else {
+            let dyn_key = stage_dynamic_hash(
+                self,
+                bounds,
+                hovered_zone.map(|hz| hz.zone_id.as_str()),
+                hovered_pos,
+                state.dragging.as_ref().map(|(id, _)| id.as_str()),
+            );
+            if state.dynamic_key.get() != dyn_key {
+                state.dynamic_cache.clear();
+                state.dynamic_key.set(dyn_key);
+            }
+            state.dynamic_cache.draw(renderer, bounds.size(), |frame| {
+                render_layer2(frame);
+            })
+        };
+
+        vec![static_geom, dynamic_geom]
     }
 
     fn mouse_interaction(

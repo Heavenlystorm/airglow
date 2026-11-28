@@ -475,6 +475,12 @@ impl UiIcon {
     ];
 }
 
+#[derive(Default)]
+struct IconCacheState {
+    cache: canvas::Cache,
+    key: Cell<u64>,
+}
+
 struct UiIconCanvas {
     icon: UiIcon,
     color: Color,
@@ -535,18 +541,32 @@ fn star4_path(cx: f32, cy: f32, outer_r: f32, inner_r: f32) -> Path {
 }
 
 impl<Message> canvas::Program<Message> for UiIconCanvas {
-    type State = ();
+    type State = IconCacheState;
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
+        let mut h = DefaultHasher::new();
+        self.icon.hash(&mut h);
+        ((bounds.width * 2.0).round() as i32).hash(&mut h);
+        ((bounds.height * 2.0).round() as i32).hash(&mut h);
+        self.color.r.to_bits().hash(&mut h);
+        self.color.g.to_bits().hash(&mut h);
+        self.color.b.to_bits().hash(&mut h);
+        self.color.a.to_bits().hash(&mut h);
+        let key = h.finish();
+        if state.key.get() != key {
+            state.cache.clear();
+            state.key.set(key);
+        }
+
+        let geom = state.cache.draw(renderer, bounds.size(), |frame| {
         let dim = bounds.width.min(bounds.height).max(8.0);
-        let mut frame = Frame::new(renderer, bounds.size());
         // Normalized 20x20 icon grid centered in bounds
         let ox = (bounds.width - dim) * 0.5;
         let oy = (bounds.height - dim) * 0.5;
@@ -828,8 +848,9 @@ impl<Message> canvas::Program<Message> for UiIconCanvas {
                 frame.stroke(&head, st);
             }
         }
+        });
 
-        vec![frame.into_geometry()]
+        vec![geom]
     }
 }
 

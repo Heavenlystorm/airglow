@@ -9,6 +9,7 @@ mod canvas_colorwheel;
 mod canvas_curves;
 mod canvas_stage;
 mod canvas_widgets;
+mod platform;
 mod theme;
 mod tray;
 mod views;
@@ -16,12 +17,13 @@ mod views_lighting;
 mod views_palette;
 mod views_system;
 
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use airglow_core::automations::{ALL_DAYS_MASK, Action, AutomationRule, Trigger};
 use airglow_core::config::{
     ACCENT_SWATCHES, CurvePoint, DesignId, FanChannelMode, OverviewTileKind, RigStyle, TempSource,
-    TempUnit, UpdateChannel, ZoneConfig, ZoneOverride, format_hex_rgb, parse_hex_rgb,
+    TempUnit, UpdateChannel, WindowState, ZoneConfig, ZoneOverride, format_hex_rgb, parse_hex_rgb,
 };
 use airglow_core::effects::{EffectId, HARMONIES, Layer, LayerKind, LayerStack, SceneParams};
 use airglow_core::engine::{EngineCommand, EngineHandle, EngineSnapshot};
@@ -31,15 +33,19 @@ use iced::widget::{
     Space, button, column, container, image, operation, row, scrollable, stack, text,
 };
 use iced::{
-    Alignment, Element, Event, Length, Size, Subscription, Task, Theme, keyboard, time, window,
+    Alignment, Element, Event, Length, Point, Size, Subscription, Task, Theme, keyboard, time,
+    window,
 };
 
 use crate::canvas_ambient::{UiIcon, WindowBackdropCanvas, icon_canvas};
 use crate::canvas_stage::StageMessage;
 use crate::canvas_widgets::{BrandMarkCanvas, HeaderGlowCanvas};
+use crate::platform::{GlobalHotkeyAction, GlobalHotkeyManager, SingleInstanceGuard, SingleInstanceResult};
 use crate::theme::DesignTokens;
-use crate::tray::{TrayAction, TrayController};
+use crate::tray::{TrayAction, TrayController, TrayMenuState};
 use crate::views_palette::{PALETTE_INPUT_ID, filtered_palette_items};
+
+static SINGLE_INSTANCE: Mutex<Option<SingleInstanceGuard>> = Mutex::new(None);
 
 const MAX_UNDO_DEPTH: usize = 30;
 const TOAST_DURATION_SECS: f32 = 3.5;
@@ -77,6 +83,18 @@ impl Tab {
             Self::Automations => "Automations",
             Self::Devices => "Devices",
             Self::Settings => "Settings",
+        }
+    }
+
+    pub fn as_key(self) -> &'static str {
+        match self {
+            Self::Overview => "overview",
+            Self::Lighting => "lighting",
+            Self::Studio => "studio",
+            Self::Fans => "fans",
+            Self::Automations => "automations",
+            Self::Devices => "devices",
+            Self::Settings => "settings",
         }
     }
 }
@@ -216,6 +234,8 @@ pub enum Message {
     Tick,
     WindowOpened(window::Id),
     WindowResized(window::Id, Size),
+    WindowMoved(Point),
+    WindowFocusChanged(bool),
     CloseRequested(window::Id),
     SelectTab(Tab),
     SetPulseSpan(PulseSpan),
@@ -294,6 +314,7 @@ pub enum Message {
     ToggleSpinningFans,
     ToggleAmbientBloom,
     ToggleFireflyParticles,
+    ToggleOverviewStageAnimation,
     ToggleCompactDensity,
     ToggleOverviewTile(String),
     ToggleHeaderPin(String),
@@ -400,7 +421,10 @@ pub enum Message {
     ExportRigBundle,
     ImportBackupPathChanged(String),
     ImportRigBundle,
+    BrowseBackupFile,
+    BackupFilePicked(Option<String>),
     ToggleMinimizeToTray(bool),
+    ToggleGlobalHotkeys(bool),
     ToggleLhmFanControl(bool),
     SetDesign(DesignId),
     SetTempUnit(TempUnit),
@@ -421,18 +445,25 @@ pub struct AirglowApp {
     pub engine: EngineHandle,
     pub snapshot: EngineSnapshot,
     pub tray: Option<TrayController>,
+    single_instance: Option<SingleInstanceGuard>,
+    hotkeys: Option<GlobalHotkeyManager>,
     pub main_window: Option<window::Id>,
     pub tab: Tab,
     pub pulse_span: PulseSpan,
 
     // Live Viewport, Fullscreen, Auto-HiDPI Scale & Theater Rig
     pub window_size: Size,
+    window_pos: Option<Point>,
+    saved_window_size_phys: Option<(f32, f32)>,
+    window_state_dirty_at: Option<Instant>,
+    window_focused: bool,
     pub approx_physical_width: f32,
     pub auto_scale: f32,
     pub applied_scale: f32,
     pub is_fullscreen: bool,
     pub theater_rig: bool,
-    pub minimize_to_tray_on_close: bool,
+    tray_retry_at: Option<Instant>,
+    browsing_backup_file: bool,
     start_fullscreen: bool,
     start_maximized: bool,
 
@@ -513,6 +544,18 @@ pub struct AirglowApp {
 }
 
 fn main() -> iced::Result {
+    let launch = parse_launch_flags();
+    match SingleInstanceGuard::acquire(!launch.background) {
+        SingleInstanceResult::Primary(guard) => {
+            if let Ok(mut slot) = SINGLE_INSTANCE.lock() {
+                *slot = Some(guard);
+            }
+        }
+        SingleInstanceResult::AlreadyRunning => {
+            return Ok(());
+        }
+    }
+
     iced::daemon(AirglowApp::boot, AirglowApp::update, AirglowApp::view)
         .title(AirglowApp::title)
         .theme(AirglowApp::theme)
@@ -529,14 +572,12 @@ pub fn resolve_auto_scale_with_hysteresis(approx_phys_w: f32, current_auto_scale
         return 1.50;
     }
     if (current_auto_scale - 1.25).abs() < 0.02
-        && approx_phys_w >= 2200.0 - BAND
-        && approx_phys_w < 3250.0
+        && (2200.0 - BAND..3250.0).contains(&approx_phys_w)
     {
         return 1.25;
     }
     if (current_auto_scale - 1.10).abs() < 0.02
-        && approx_phys_w >= 1820.0 - BAND
-        && approx_phys_w < 2200.0
+        && (1820.0 - BAND..2200.0).contains(&approx_phys_w)
     {
         return 1.10;
     }
@@ -549,15 +590,36 @@ pub fn resolve_auto_scale_with_hysteresis(approx_phys_w: f32, current_auto_scale
 
 impl AirglowApp {
     fn boot() -> (Self, Task<Message>) {
+        let single_instance = SINGLE_INSTANCE.lock().ok().and_then(|mut s| s.take());
         let engine = EngineHandle::start();
         let snapshot = engine.rx.borrow().clone();
+        let launch = parse_launch_flags();
+
         let presets: Vec<(String, String)> = snapshot
             .config
             .presets
             .iter()
             .map(|p| (p.id.clone(), p.name.clone()))
             .collect();
-        let tray = TrayController::new(&presets);
+        let tray_state = TrayMenuState {
+            lights_on: snapshot.effective_scene.on,
+            brightness: snapshot.config.scene.brightness,
+            active_preset: snapshot.config.active_preset.as_deref(),
+            active_effect: snapshot.effective_scene.effect,
+            active_curve: snapshot.effective_curve.as_str(),
+            overview_stage_animated: snapshot.config.appearance.overview_stage_animated,
+        };
+        let tray = TrayController::new(&presets, &tray_state);
+        let tray_retry_at = if tray.is_some() {
+            None
+        } else {
+            Some(Instant::now())
+        };
+        let hotkeys = if snapshot.config.settings.global_hotkeys_enabled {
+            Some(GlobalHotkeyManager::start())
+        } else {
+            None
+        };
         let selected_layer = snapshot
             .config
             .scene
@@ -580,8 +642,18 @@ impl AirglowApp {
             .map(|p| p.id.clone())
             .unwrap_or_else(|| "gaming".to_string());
 
-        let launch = parse_launch_flags();
-        if launch.tab == Tab::Studio {
+        let initial_tab = if launch.tab_explicit {
+            launch.tab
+        } else {
+            snapshot
+                .config
+                .window_state
+                .last_tab
+                .as_deref()
+                .and_then(parse_tab_name)
+                .unwrap_or(launch.tab)
+        };
+        if initial_tab == Tab::Studio {
             engine.send(EngineCommand::SetStudioPreviewActive(true));
         }
         if launch.check_updates {
@@ -605,7 +677,18 @@ impl AirglowApp {
         );
         let compact_window = launch.compact_window;
         let (clock_hhmm, clock_date) = local_clock_strings();
-        let approx_physical_width = 1440.0_f32;
+
+        let ws = snapshot.config.window_state.clone().normalized();
+        let saved_window_size_phys = match (ws.width, ws.height) {
+            (Some(w), Some(h)) => Some((w, h)),
+            _ => None,
+        };
+        let window_pos = match (ws.x, ws.y) {
+            (Some(x), Some(y)) => Some(Point::new(x as f32, y as f32)),
+            _ => None,
+        };
+        let approx_physical_width = saved_window_size_phys.map(|(w, _)| w).unwrap_or(1440.0);
+        let approx_physical_height = saved_window_size_phys.map(|(_, h)| h).unwrap_or(900.0);
         let auto_scale = resolve_auto_scale_with_hysteresis(approx_physical_width, 1.0);
         let applied_scale = if compact_window {
             1.0
@@ -615,25 +698,42 @@ impl AirglowApp {
         let initial_window_size = if compact_window {
             Size::new(430.0, 404.0)
         } else {
-            Size::new(1440.0 / applied_scale, 900.0 / applied_scale)
+            Size::new(
+                approx_physical_width / applied_scale,
+                approx_physical_height / applied_scale,
+            )
+        };
+        let initial_position = if compact_window {
+            window::Position::Default
+        } else if let Some(pt) = window_pos {
+            window::Position::Specific(pt)
+        } else {
+            window::Position::Default
         };
 
         let app = Self {
             engine,
             snapshot,
             tray,
+            single_instance,
+            hotkeys,
             main_window: None,
-            tab: launch.tab,
+            tab: initial_tab,
             pulse_span,
             window_size: initial_window_size,
+            window_pos,
+            saved_window_size_phys,
+            window_state_dirty_at: None,
+            window_focused: true,
             approx_physical_width,
             auto_scale,
             applied_scale,
             is_fullscreen: launch.fullscreen,
             theater_rig: launch.theater_rig,
-            minimize_to_tray_on_close: true,
+            tray_retry_at,
+            browsing_backup_file: false,
             start_fullscreen: launch.fullscreen,
-            start_maximized: launch.maximized,
+            start_maximized: launch.maximized || ws.maximized,
             boot_instant: Instant::now(),
             anim_t: 0.0,
             moth_art: image::Handle::from_bytes(FIREFLY_MOTH_PNG),
@@ -695,7 +795,12 @@ impl AirglowApp {
             sync_drafts_pending: false,
         };
 
-        (app, open_main_window(compact_window, initial_window_size))
+        let startup_task = if launch.background && app.tray.is_some() {
+            Task::none()
+        } else {
+            open_main_window(compact_window, initial_window_size, initial_position)
+        };
+        (app, startup_task)
     }
 
     pub fn effective_scale_factor(&self) -> f32 {
@@ -729,20 +834,36 @@ impl AirglowApp {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let tick_ms = if self.main_window.is_some() {
+        let overview_static = self.tab == Tab::Overview
+            && !self.theater_rig
+            && !self.compact_window
+            && !self.snapshot.config.appearance.overview_stage_animated;
+        let tick_ms = if self.main_window.is_none() {
+            300
+        } else if !self.window_focused || overview_static {
+            250
+        } else if !self.theater_rig
+            && !self.compact_window
+            && (matches!(self.tab, Tab::Automations | Tab::Devices)
+                || (self.tab == Tab::Settings
+                    && self.settings_section != SettingsSection::Appearance))
+        {
+            200
+        } else {
             match self.snapshot.config.appearance.ui_fps_cap {
                 15 => 66,
                 60 => 16,
                 _ => 33,
             }
-        } else {
-            300
         };
         Subscription::batch([
             time::every(Duration::from_millis(tick_ms)).map(|_| Message::Tick),
             window::close_requests().map(Message::CloseRequested),
             window::resize_events().map(|(id, size)| Message::WindowResized(id, size)),
             iced::event::listen_with(|ev, status, _win| match ev {
+                Event::Window(window::Event::Focused) => Some(Message::WindowFocusChanged(true)),
+                Event::Window(window::Event::Unfocused) => Some(Message::WindowFocusChanged(false)),
+                Event::Window(window::Event::Moved(pos)) => Some(Message::WindowMoved(pos)),
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     match key {
                         keyboard::Key::Named(keyboard::key::Named::F11) => {
@@ -883,6 +1004,110 @@ impl AirglowApp {
         self.engine.send(EngineCommand::UpdateAppearance(appr));
     }
 
+    fn ensure_tray(&mut self) {
+        if self.tray.is_some() {
+            self.tray_retry_at = None;
+            return;
+        }
+        let presets: Vec<(String, String)> = self
+            .snapshot
+            .config
+            .presets
+            .iter()
+            .map(|p| (p.id.clone(), p.name.clone()))
+            .collect();
+        let tray_state = TrayMenuState {
+            lights_on: self.snapshot.effective_scene.on,
+            brightness: self.snapshot.config.scene.brightness,
+            active_preset: self.snapshot.config.active_preset.as_deref(),
+            active_effect: self.snapshot.effective_scene.effect,
+            active_curve: self.snapshot.effective_curve.as_str(),
+            overview_stage_animated: self.snapshot.config.appearance.overview_stage_animated,
+        };
+        if let Some(tray) = TrayController::new(&presets, &tray_state) {
+            self.tray = Some(tray);
+            self.tray_retry_at = None;
+        } else {
+            self.tray_retry_at = Some(Instant::now());
+        }
+    }
+
+    fn current_window_position(&self) -> window::Position {
+        if self.compact_window {
+            window::Position::Default
+        } else if let Some(pt) = self.window_pos {
+            window::Position::Specific(pt)
+        } else {
+            window::Position::Default
+        }
+    }
+
+    fn current_restore_size(&self) -> Size {
+        if self.compact_window {
+            Size::new(430.0, 404.0)
+        } else if let Some((w, h)) = self.saved_window_size_phys {
+            let s = self.effective_scale_factor();
+            Size::new(w / s, h / s)
+        } else {
+            let s = self.effective_scale_factor();
+            Size::new(1440.0 / s, 900.0 / s)
+        }
+    }
+
+    fn open_or_restore_main_window(&mut self) -> Task<Message> {
+        if let Some(id) = self.main_window {
+            return Task::batch([window::minimize(id, false), window::gain_focus(id)]);
+        }
+        let sz = self.current_restore_size();
+        let pos = self.current_window_position();
+        open_main_window(self.compact_window, sz, pos)
+    }
+
+    fn flush_window_state(&mut self) {
+        self.window_state_dirty_at = None;
+        let next = WindowState {
+            width: self.saved_window_size_phys.map(|(w, _)| w),
+            height: self.saved_window_size_phys.map(|(_, h)| h),
+            x: self.window_pos.map(|pt| pt.x.round() as i32),
+            y: self.window_pos.map(|pt| pt.y.round() as i32),
+            maximized: self.snapshot.config.window_state.maximized,
+            last_tab: Some(self.tab.as_key().to_string()),
+        }
+        .normalized();
+        if next != self.snapshot.config.window_state {
+            self.snapshot.config.window_state = next.clone();
+            self.engine.send(EngineCommand::UpdateWindowState(next));
+        }
+    }
+
+    fn shutdown_and_exit(&mut self) -> Task<Message> {
+        self.flush_window_state();
+        self.hotkeys = None;
+        self.single_instance = None;
+        self.engine.shutdown();
+        iced::exit()
+    }
+
+    fn cycle_profile(&mut self) {
+        let presets = &self.snapshot.config.presets;
+        if presets.is_empty() {
+            return;
+        }
+        let next_idx = self
+            .snapshot
+            .config
+            .active_preset
+            .as_deref()
+            .and_then(|cur| presets.iter().position(|p| p.id == cur))
+            .map(|i| (i + 1) % presets.len())
+            .unwrap_or(0);
+        let pid = presets[next_idx].id.clone();
+        let pname = presets[next_idx].name.clone();
+        self.snapshot.config.active_preset = Some(pid.clone());
+        self.engine.send(EngineCommand::ApplyPreset(pid));
+        self.show_toast(format!("Profile: \"{pname}\""), self.current_accent_hex());
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Noop => Task::none(),
@@ -961,7 +1186,50 @@ impl AirglowApp {
                             .map(|l| l.id);
                     }
                 }
-                if let Some(tray) = self.tray.as_mut() {
+                if self
+                    .single_instance
+                    .as_ref()
+                    .is_some_and(|g| g.poll_show_requested())
+                {
+                    return self.open_or_restore_main_window();
+                }
+
+                let hk_actions = self
+                    .hotkeys
+                    .as_ref()
+                    .map(|h| h.poll_actions())
+                    .unwrap_or_default();
+                for act in hk_actions {
+                    match act {
+                        GlobalHotkeyAction::ToggleLights => {
+                            let next = !self.snapshot.config.scene.on;
+                            self.snapshot.config.scene.on = next;
+                            self.engine.send(EngineCommand::SetPower(next));
+                        }
+                        GlobalHotkeyAction::CycleProfile => {
+                            self.cycle_profile();
+                        }
+                        GlobalHotkeyAction::OpenWindow => {
+                            return self.open_or_restore_main_window();
+                        }
+                    }
+                }
+
+                if self
+                    .window_state_dirty_at
+                    .is_some_and(|t| t.elapsed() >= Duration::from_millis(800))
+                {
+                    self.flush_window_state();
+                }
+
+                if self.tray.is_none()
+                    && self
+                        .tray_retry_at
+                        .is_none_or(|t| t.elapsed() >= Duration::from_secs(2))
+                {
+                    self.ensure_tray();
+                }
+                let tray_actions = if let Some(tray) = self.tray.as_mut() {
                     let presets: Vec<(String, String)> = self
                         .snapshot
                         .config
@@ -969,7 +1237,19 @@ impl AirglowApp {
                         .iter()
                         .map(|p| (p.id.clone(), p.name.clone()))
                         .collect();
-                    tray.sync_presets(&presets);
+                    let tray_state = TrayMenuState {
+                        lights_on: self.snapshot.effective_scene.on,
+                        brightness: self.snapshot.config.scene.brightness,
+                        active_preset: self.snapshot.config.active_preset.as_deref(),
+                        active_effect: self.snapshot.effective_scene.effect,
+                        active_curve: self.snapshot.effective_curve.as_str(),
+                        overview_stage_animated: self
+                            .snapshot
+                            .config
+                            .appearance
+                            .overview_stage_animated,
+                    };
+                    tray.sync_state(&presets, &tray_state);
 
                     let unit = self.snapshot.config.settings.temp_unit;
                     let cpu = sensors::format_temp(self.snapshot.sensors.cpu_temp, unit);
@@ -983,62 +1263,68 @@ impl AirglowApp {
                         self.snapshot.effective_scene.on,
                         &tip,
                     );
-                    for action in tray.poll_actions() {
-                        match action {
-                            TrayAction::OpenWindow => {
-                                if let Some(id) = self.main_window {
-                                    return window::gain_focus(id);
-                                }
-                                let sz = if self.compact_window {
+                    tray.poll_actions()
+                } else {
+                    Vec::new()
+                };
+                for action in tray_actions {
+                    match action {
+                        TrayAction::OpenWindow => {
+                            return self.open_or_restore_main_window();
+                        }
+                        TrayAction::ToggleCompactMode => {
+                            if let Some(id) = self.main_window {
+                                let prev_scale = self.applied_scale.max(0.5);
+                                self.compact_window = !self.compact_window;
+                                self.palette_open = false;
+                                let next_scale = self.effective_scale_factor();
+                                self.applied_scale = next_scale;
+                                let target = if self.compact_window {
                                     Size::new(430.0, 404.0)
                                 } else {
-                                    let s = self.effective_scale_factor();
-                                    Size::new(1440.0 / s, 900.0 / s)
+                                    self.current_restore_size()
                                 };
-                                return open_main_window(self.compact_window, sz);
+                                let _ = prev_scale;
+                                self.window_size = target;
+                                self.titlebar_applied = false;
+                                self.sync_window_titlebar();
+                                return Task::batch([
+                                    window::resize(id, target),
+                                    window::gain_focus(id),
+                                ]);
                             }
-                            TrayAction::ToggleCompactMode => {
-                                if let Some(id) = self.main_window {
-                                    let prev_scale = self.applied_scale.max(0.5);
-                                    self.compact_window = !self.compact_window;
-                                    self.palette_open = false;
-                                    let next_scale = self.effective_scale_factor();
-                                    self.applied_scale = next_scale;
-                                    let target = if self.compact_window {
-                                        Size::new(430.0, 404.0)
-                                    } else {
-                                        Size::new(1440.0 / next_scale, 900.0 / next_scale)
-                                    };
-                                    let _ = prev_scale;
-                                    self.window_size = target;
-                                    self.titlebar_applied = false;
-                                    self.sync_window_titlebar();
-                                    return Task::batch([
-                                        window::resize(id, target),
-                                        window::gain_focus(id),
-                                    ]);
-                                }
-                                self.compact_window = true;
-                                self.applied_scale = 1.0;
-                                return open_main_window(true, Size::new(430.0, 404.0));
-                            }
-                            TrayAction::ToggleLights => {
-                                let next = !self.snapshot.config.scene.on;
-                                self.engine.send(EngineCommand::SetPower(next));
-                            }
-                            TrayAction::ApplyPreset(pid) => {
-                                self.engine.send(EngineCommand::ApplyPreset(pid));
-                            }
-                            TrayAction::SelectEffect(eff) => {
-                                self.engine.send(EngineCommand::SetEffect(eff));
-                            }
-                            TrayAction::SelectFanCurve(cid) => {
-                                self.engine.send(EngineCommand::SelectFanCurve(cid));
-                            }
-                            TrayAction::Quit => {
-                                self.engine.shutdown();
-                                return iced::exit();
-                            }
+                            self.compact_window = true;
+                            self.applied_scale = 1.0;
+                            return open_main_window(
+                                true,
+                                Size::new(430.0, 404.0),
+                                window::Position::Default,
+                            );
+                        }
+                        TrayAction::ToggleLights => {
+                            let next = !self.snapshot.config.scene.on;
+                            self.snapshot.config.scene.on = next;
+                            self.engine.send(EngineCommand::SetPower(next));
+                        }
+                        TrayAction::ToggleOverviewStageAnimation => {
+                            let mut appr = self.snapshot.config.appearance.clone();
+                            appr.overview_stage_animated = !appr.overview_stage_animated;
+                            self.send_appearance(appr);
+                        }
+                        TrayAction::SetBrightness(val) => {
+                            self.engine.send(EngineCommand::SetBrightness(val));
+                        }
+                        TrayAction::ApplyPreset(pid) => {
+                            self.engine.send(EngineCommand::ApplyPreset(pid));
+                        }
+                        TrayAction::SelectEffect(eff) => {
+                            self.engine.send(EngineCommand::SetEffect(eff));
+                        }
+                        TrayAction::SelectFanCurve(cid) => {
+                            self.engine.send(EngineCommand::SelectFanCurve(cid));
+                        }
+                        TrayAction::Quit => {
+                            return self.shutdown_and_exit();
                         }
                     }
                 }
@@ -1048,6 +1334,9 @@ impl AirglowApp {
                 self.main_window = Some(id);
                 self.titlebar_applied = false;
                 self.sync_window_titlebar();
+                if self.tray.is_none() {
+                    self.ensure_tray();
+                }
                 if self.start_fullscreen && !self.compact_window {
                     self.start_fullscreen = false;
                     self.is_fullscreen = true;
@@ -1076,20 +1365,47 @@ impl AirglowApp {
                             size.width * prev_scale / next_scale,
                             size.height * prev_scale / next_scale,
                         );
+                        if !self.is_fullscreen && size.width >= 200.0 && size.height >= 150.0 {
+                            self.saved_window_size_phys =
+                                Some((size.width * next_scale, size.height * next_scale));
+                            self.window_state_dirty_at = Some(Instant::now());
+                        }
                     }
                 }
                 Task::none()
             }
+            Message::WindowMoved(pos) => {
+                if !self.compact_window
+                    && !self.is_fullscreen
+                    && pos.x > -10000.0
+                    && pos.y > -10000.0
+                {
+                    self.window_pos = Some(pos);
+                    self.window_state_dirty_at = Some(Instant::now());
+                }
+                Task::none()
+            }
+            Message::WindowFocusChanged(focused) => {
+                self.window_focused = focused;
+                Task::none()
+            }
             Message::CloseRequested(id) => {
+                self.flush_window_state();
+                if self.snapshot.config.settings.minimize_to_tray_on_close {
+                    if self.tray.is_none() {
+                        self.ensure_tray();
+                    }
+                    if self.tray.is_some() {
+                        if self.main_window == Some(id) {
+                            self.main_window = None;
+                        }
+                        return window::close(id);
+                    }
+                }
                 if self.main_window == Some(id) {
                     self.main_window = None;
                 }
-                if self.tray.is_some() && self.minimize_to_tray_on_close {
-                    window::close(id)
-                } else {
-                    self.engine.shutdown();
-                    iced::exit()
-                }
+                self.shutdown_and_exit()
             }
             Message::ToggleFullscreen => {
                 if self.compact_window {
@@ -1422,6 +1738,7 @@ impl AirglowApp {
                 self.tab = tab;
                 self.engine
                     .send(EngineCommand::SetStudioPreviewActive(tab == Tab::Studio));
+                self.flush_window_state();
                 Task::none()
             }
             Message::SetPulseSpan(span) => {
@@ -1711,6 +2028,21 @@ impl AirglowApp {
                 let mut appr = self.snapshot.config.appearance.clone();
                 appr.firefly_particles = !appr.firefly_particles;
                 self.send_appearance(appr);
+                Task::none()
+            }
+            Message::ToggleOverviewStageAnimation => {
+                let mut appr = self.snapshot.config.appearance.clone();
+                appr.overview_stage_animated = !appr.overview_stage_animated;
+                let on = appr.overview_stage_animated;
+                self.send_appearance(appr);
+                self.show_toast(
+                    if on {
+                        "Overview lighting canvas: Live"
+                    } else {
+                        "Overview lighting canvas: Static (low GPU)"
+                    },
+                    self.current_accent_hex(),
+                );
                 Task::none()
             }
             Message::ToggleCompactDensity => {
@@ -2473,8 +2805,7 @@ impl AirglowApp {
             Message::ApplyStagedUpdateAndRestart => {
                 self.engine.send(EngineCommand::ApplyStagedUpdateAndRestart);
                 self.show_toast("Applying update & restarting Airglow…", self.current_accent_hex());
-                self.engine.shutdown();
-                iced::exit()
+                self.shutdown_and_exit()
             }
             Message::SetUpdateChannel(ch) => {
                 self.snapshot.config.update_channel = ch;
@@ -2519,8 +2850,63 @@ impl AirglowApp {
                 }
                 Task::none()
             }
+            Message::BrowseBackupFile => {
+                if self.browsing_backup_file {
+                    return Task::none();
+                }
+                self.browsing_backup_file = true;
+                Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(platform::pick_json_backup_file)
+                            .await
+                            .ok()
+                            .flatten()
+                    },
+                    Message::BackupFilePicked,
+                )
+            }
+            Message::BackupFilePicked(opt) => {
+                self.browsing_backup_file = false;
+                if let Some(path) = opt {
+                    self.import_backup_path_draft = path;
+                    self.show_toast(
+                        "Backup file selected — click Import to restore",
+                        0xa5dece,
+                    );
+                }
+                Task::none()
+            }
             Message::ToggleMinimizeToTray(enabled) => {
-                self.minimize_to_tray_on_close = enabled;
+                self.snapshot.config.settings.minimize_to_tray_on_close = enabled;
+                self.engine
+                    .send(EngineCommand::UpdateSettings(self.snapshot.config.settings.clone()));
+                self.show_toast(
+                    if enabled {
+                        "Closing window minimizes Airglow to tray"
+                    } else {
+                        "Closing window exits Airglow"
+                    },
+                    self.current_accent_hex(),
+                );
+                Task::none()
+            }
+            Message::ToggleGlobalHotkeys(enabled) => {
+                self.snapshot.config.settings.global_hotkeys_enabled = enabled;
+                self.engine
+                    .send(EngineCommand::UpdateSettings(self.snapshot.config.settings.clone()));
+                self.hotkeys = if enabled {
+                    Some(GlobalHotkeyManager::start())
+                } else {
+                    None
+                };
+                self.show_toast(
+                    if enabled {
+                        "Global hotkeys enabled (Ctrl+Alt+Shift+L / P / A)"
+                    } else {
+                        "Global hotkeys disabled"
+                    },
+                    self.current_accent_hex(),
+                );
                 Task::none()
             }
             Message::ToggleLhmFanControl(enable_curve) => {
@@ -3168,6 +3554,7 @@ fn parse_settings_section(raw: &str) -> Option<SettingsSection> {
 
 struct LaunchFlags {
     tab: Tab,
+    tab_explicit: bool,
     palette_open: bool,
     palette_query: String,
     customize_open: bool,
@@ -3180,11 +3567,13 @@ struct LaunchFlags {
     add_tile: bool,
     settings_section: SettingsSection,
     check_updates: bool,
+    background: bool,
 }
 
 fn parse_launch_flags_from<I: IntoIterator<Item = String>>(iter: I) -> LaunchFlags {
     let mut flags = LaunchFlags {
         tab: Tab::Overview,
+        tab_explicit: false,
         palette_open: false,
         palette_query: String::new(),
         customize_open: false,
@@ -3197,6 +3586,7 @@ fn parse_launch_flags_from<I: IntoIterator<Item = String>>(iter: I) -> LaunchFla
         add_tile: false,
         settings_section: SettingsSection::Appearance,
         check_updates: false,
+        background: false,
     };
     let mut args = iter.into_iter();
     while let Some(arg) = args.next() {
@@ -3204,21 +3594,25 @@ fn parse_launch_flags_from<I: IntoIterator<Item = String>>(iter: I) -> LaunchFla
             && let Some(tab) = parse_tab_name(val)
         {
             flags.tab = tab;
+            flags.tab_explicit = true;
         } else if arg == "--tab"
             && let Some(val) = args.next()
             && let Some(tab) = parse_tab_name(&val)
         {
             flags.tab = tab;
+            flags.tab_explicit = true;
         } else if let Some(val) = arg.strip_prefix("--settings-section=")
             && let Some(sec) = parse_settings_section(val)
         {
             flags.tab = Tab::Settings;
+            flags.tab_explicit = true;
             flags.settings_section = sec;
         } else if arg == "--settings-section"
             && let Some(val) = args.next()
             && let Some(sec) = parse_settings_section(&val)
         {
             flags.tab = Tab::Settings;
+            flags.tab_explicit = true;
             flags.settings_section = sec;
         } else if arg == "--palette" {
             flags.palette_open = true;
@@ -3249,6 +3643,8 @@ fn parse_launch_flags_from<I: IntoIterator<Item = String>>(iter: I) -> LaunchFla
             flags.add_tile = true;
         } else if arg == "--check-updates" {
             flags.check_updates = true;
+        } else if arg == "--background" {
+            flags.background = true;
         }
     }
     flags
@@ -3261,11 +3657,13 @@ fn parse_launch_flags() -> LaunchFlags {
         && let Some(tab) = parse_tab_name(&env_tab)
     {
         flags.tab = tab;
+        flags.tab_explicit = true;
     }
     if let Ok(env_sec) = std::env::var("AIRGLOW_SETTINGS_SECTION")
         && let Some(sec) = parse_settings_section(&env_sec)
     {
         flags.tab = Tab::Settings;
+        flags.tab_explicit = true;
         flags.settings_section = sec;
     }
     if !flags.palette_open
@@ -3338,6 +3736,13 @@ fn parse_launch_flags() -> LaunchFlags {
             .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
     {
         flags.check_updates = true;
+    }
+    if !flags.background
+        && std::env::var("AIRGLOW_BACKGROUND")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    {
+        flags.background = true;
     }
     flags
 }
@@ -3412,12 +3817,13 @@ fn parse_hhmm(raw: &str) -> Option<(u8, u8)> {
     }
 }
 
-fn open_main_window(compact: bool, size: Size) -> Task<Message> {
+fn open_main_window(compact: bool, size: Size, position: window::Position) -> Task<Message> {
     let rgba = brand::app_icon_rgba(64);
     let icon = window::icon::from_rgba(rgba, 64, 64).ok();
     let _ = compact;
     let (_id, task) = window::open(window::Settings {
         size,
+        position,
         min_size: Some(Size::new(390.0, 370.0)),
         icon,
         exit_on_close_request: false,
@@ -3490,8 +3896,14 @@ mod tests {
         assert!(f.add_tile);
         assert!(f.theater_rig);
         assert_eq!(f.tab, Tab::Settings);
+        assert!(f.tab_explicit);
         assert_eq!(f.settings_section, super::SettingsSection::Updates);
         assert!(f.check_updates);
+        assert!(!f.background);
+
+        let bg = parse_launch_flags_from(["--background"].into_iter().map(String::from));
+        assert!(bg.background);
+        assert!(!bg.tab_explicit);
     }
 
     #[test]
