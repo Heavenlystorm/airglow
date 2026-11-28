@@ -2803,9 +2803,10 @@ impl AirglowApp {
                 Task::none()
             }
             Message::ApplyStagedUpdateAndRestart => {
+                self.flush_window_state();
                 self.engine.send(EngineCommand::ApplyStagedUpdateAndRestart);
                 self.show_toast("Applying update & restarting Airglow…", self.current_accent_hex());
-                self.shutdown_and_exit()
+                Task::none()
             }
             Message::SetUpdateChannel(ch) => {
                 self.snapshot.config.update_channel = ch;

@@ -597,6 +597,65 @@ where
     }
 }
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+#[cfg(windows)]
+const UPDATE_SPAWNER_CREATION_FLAGS: u32 = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP;
+
+#[cfg(windows)]
+fn build_swap_script(pid: u32, staged: &Path, target: &Path, self_script: &Path) -> String {
+    let staged_q = ps_single_quote(&staged.to_string_lossy());
+    let target_q = ps_single_quote(&target.to_string_lossy());
+    let self_q = ps_single_quote(&self_script.to_string_lossy());
+    let backup_q = ps_single_quote(&format!("{}.bak", target.to_string_lossy()));
+
+    format!(
+        "$ErrorActionPreference = 'Stop'\r\n\
+$appPid = {pid}\r\n\
+$staged = {staged_q}\r\n\
+$target = {target_q}\r\n\
+$backup = {backup_q}\r\n\
+$self = {self_q}\r\n\
+$targetDir = Split-Path -Parent $target\r\n\
+$errLog = Join-Path $targetDir 'update-last-error.log'\r\n\
+for ($i = 0; $i -lt 50; $i++) {{\r\n\
+    if (-not (Get-Process -Id $appPid -ErrorAction SilentlyContinue)) {{ break }}\r\n\
+    Start-Sleep -Milliseconds 300\r\n\
+}}\r\n\
+Start-Sleep -Milliseconds 300\r\n\
+$swapped = $false\r\n\
+$lastErr = ''\r\n\
+for ($attempt = 0; $attempt -lt 16; $attempt++) {{\r\n\
+    try {{\r\n\
+        if (Test-Path -LiteralPath $target) {{\r\n\
+            if (Test-Path -LiteralPath $backup) {{ Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }}\r\n\
+            Move-Item -LiteralPath $target -Destination $backup -Force\r\n\
+        }}\r\n\
+        Move-Item -LiteralPath $staged -Destination $target -Force\r\n\
+        $swapped = $true\r\n\
+        break\r\n\
+    }} catch {{\r\n\
+        $lastErr = $_.Exception.Message\r\n\
+        Start-Sleep -Milliseconds 350\r\n\
+    }}\r\n\
+}}\r\n\
+if ($swapped) {{\r\n\
+    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue\r\n\
+    Remove-Item -LiteralPath $errLog -Force -ErrorAction SilentlyContinue\r\n\
+    Start-Process -FilePath $target -WorkingDirectory $targetDir\r\n\
+}} else {{\r\n\
+    if ($lastErr) {{ Set-Content -LiteralPath $errLog -Value $lastErr -Encoding UTF8 -ErrorAction SilentlyContinue }}\r\n\
+    if (Test-Path -LiteralPath $backup) {{\r\n\
+        Move-Item -LiteralPath $backup -Destination $target -Force -ErrorAction SilentlyContinue\r\n\
+        Start-Process -FilePath $target -WorkingDirectory $targetDir\r\n\
+    }}\r\n\
+}}\r\n\
+Remove-Item -LiteralPath $self -Force -ErrorAction SilentlyContinue\r\n"
+    )
+}
+
 /// Spawns a detached PowerShell swap script that waits for the current Airglow process to exit,
 /// replaces `current_exe()` with `staged_exe`, and relaunches Airglow cleanly.
 pub fn apply_staged_update_and_restart(staged_exe: &str) -> Result<()> {
@@ -610,48 +669,10 @@ pub fn apply_staged_update_and_restart(staged_exe: &str) -> Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
 
         let script_path =
             std::env::temp_dir().join(format!("airglow-apply-update-{pid}.ps1"));
-        let staged_q = ps_single_quote(&staged.to_string_lossy());
-        let target_q = ps_single_quote(&current.to_string_lossy());
-        let self_q = ps_single_quote(&script_path.to_string_lossy());
-        let backup_q = ps_single_quote(&format!("{}.bak", current.to_string_lossy()));
-
-        let script = format!(
-            "$ErrorActionPreference = 'Stop'\r\n\
-$appPid = {pid}\r\n\
-$staged = {staged_q}\r\n\
-$target = {target_q}\r\n\
-$backup = {backup_q}\r\n\
-$self = {self_q}\r\n\
-for ($i = 0; $i -lt 50; $i++) {{\r\n\
-    if (-not (Get-Process -Id $appPid -ErrorAction SilentlyContinue)) {{ break }}\r\n\
-    Start-Sleep -Milliseconds 300\r\n\
-}}\r\n\
-$swapped = $false\r\n\
-for ($attempt = 0; $attempt -lt 12; $attempt++) {{\r\n\
-    try {{\r\n\
-        if (Test-Path -LiteralPath $backup) {{ Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }}\r\n\
-        if (Test-Path -LiteralPath $target) {{ Move-Item -LiteralPath $target -Destination $backup -Force }}\r\n\
-        Move-Item -LiteralPath $staged -Destination $target -Force\r\n\
-        $swapped = $true\r\n\
-        break\r\n\
-    }} catch {{\r\n\
-        Start-Sleep -Milliseconds 350\r\n\
-    }}\r\n\
-}}\r\n\
-if ($swapped) {{\r\n\
-    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue\r\n\
-    Start-Process -FilePath $target\r\n\
-}} elseif (Test-Path -LiteralPath $backup) {{\r\n\
-    Move-Item -LiteralPath $backup -Destination $target -Force -ErrorAction SilentlyContinue\r\n\
-    Start-Process -FilePath $target\r\n\
-}}\r\n\
-Remove-Item -LiteralPath $self -Force -ErrorAction SilentlyContinue\r\n"
-        );
+        let script = build_swap_script(pid, &staged, &current, &script_path);
 
         fs::write(&script_path, script).context("write update swap script")?;
         std::process::Command::new("powershell.exe")
@@ -665,7 +686,7 @@ Remove-Item -LiteralPath $self -Force -ErrorAction SilentlyContinue\r\n"
                 "-File",
                 &script_path.to_string_lossy(),
             ])
-            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+            .creation_flags(UPDATE_SPAWNER_CREATION_FLAGS)
             .spawn()
             .context("launch detached update swapper")?;
         Ok(())
@@ -824,5 +845,38 @@ mod tests {
         );
         assert_eq!(parse_sha256_sums(&hash_a, "Airglow.exe"), Some(hash_a));
         assert_eq!(parse_sha256_sums("invalid line", "Airglow.exe"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_updater_spawn_flags_are_valid_and_swap_script_preserves_backup() {
+        use std::os::windows::process::CommandExt;
+
+        // Mutually exclusive CREATE_NO_WINDOW | DETACHED_PROCESS causes ERROR_INVALID_PARAMETER (87).
+        assert_eq!(
+            UPDATE_SPAWNER_CREATION_FLAGS & 0x0000_0008,
+            0,
+            "DETACHED_PROCESS must never be combined with CREATE_NO_WINDOW"
+        );
+
+        let status = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
+            .creation_flags(UPDATE_SPAWNER_CREATION_FLAGS)
+            .status()
+            .expect("powershell.exe spawn with UPDATE_SPAWNER_CREATION_FLAGS must succeed");
+        assert!(status.success());
+
+        let script = build_swap_script(
+            4242,
+            Path::new(r"C:\Users\demo\AppData\Local\Airglow\Airglow.new.exe"),
+            Path::new(r"C:\Users\demo\AppData\Local\Airglow\Airglow.exe"),
+            Path::new(r"C:\Temp\airglow-apply-update-4242.ps1"),
+        );
+        // Must only delete old $backup inside `if (Test-Path -LiteralPath $target)` so retries stay safe
+        let target_if = script.find("if (Test-Path -LiteralPath $target)").unwrap();
+        let backup_rm = script.find("Remove-Item -LiteralPath $backup").unwrap();
+        assert!(backup_rm > target_if);
+        assert!(script.contains("-WorkingDirectory $targetDir"));
+        assert!(script.contains("update-last-error.log"));
     }
 }

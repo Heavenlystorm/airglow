@@ -26,11 +26,11 @@
 </p>
 
 <p>
-  <a href="https://github.com/Heavenlystorm/airglow/releases/latest"><strong>Download v2.2.0</strong></a>
+  <a href="https://github.com/Heavenlystorm/airglow/releases/latest"><strong>Download v2.2.1</strong></a>
   &nbsp;·&nbsp;
   <a href="https://airglowrgb.com">Website</a>
   &nbsp;·&nbsp;
-  <a href="docs/RELEASE_NOTES_v2.2.0.md">v2.2.0 Release Notes</a>
+  <a href="docs/RELEASE_NOTES_v2.2.1.md">v2.2.1 Release Notes</a>
   &nbsp;·&nbsp;
   <a href="#keyboard-shortcuts">Shortcuts</a>
   &nbsp;·&nbsp;
@@ -57,10 +57,14 @@
 
 ---
 
-## What's New in 2.2.0
+## What's New in 2.2.1
 
 > [!TIP]
-> **Airglow 2.2.0 is out now.** Read the full [v2.2.0 Release Notes](docs/RELEASE_NOTES_v2.2.0.md) or grab `Airglow.exe` from [Latest Releases](https://github.com/Heavenlystorm/airglow/releases/latest).
+> **Airglow 2.2.1 is out now.** Read the [v2.2.1 Hotfix Notes](docs/RELEASE_NOTES_v2.2.1.md) & [v2.2.0 Release Notes](docs/RELEASE_NOTES_v2.2.0.md), or grab `Airglow.exe` from [Latest Releases](https://github.com/Heavenlystorm/airglow/releases/latest).
+
+- **In-App Updater & Restart Fix (`v2.2.1`)** — Fixed Windows `CreateProcessW` creation flags (`CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`) so **Update & Restart** reliably launches the swap script, replaces `Airglow.exe`, and restarts automatically.
+
+### Highlights from 2.2.0
 
 - **Low-GPU Overview Mode & Widget Geometry Caching** — Toggle the Overview **Lighting canvas** between **Live** and **Static (low GPU)** right from the tile header (or Control Center / Settings / `Ctrl+K`), plus `canvas::Cache` on `UiIconCanvas` & Overview instruments and tab/focus-aware frame throttling (4 Hz when unfocused or on static tabs).
 - **Halo-Free Overview Telemetry Tiles** — Cleaner, crisper Overview cards and instrument charts without radial washes or neon glow halos.
